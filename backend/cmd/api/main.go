@@ -1,9 +1,89 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/repobounty/repobounty-ai/internal/ai"
+	"github.com/repobounty/repobounty-ai/internal/config"
+	"github.com/repobounty/repobounty-ai/internal/github"
+	handler "github.com/repobounty/repobounty-ai/internal/http"
+	"github.com/repobounty/repobounty-ai/internal/solana"
+	"github.com/repobounty/repobounty-ai/internal/store"
+	"go.uber.org/zap"
 )
 
 func main() {
-	fmt.Println("RepoBounty AI API Server")
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatal("failed to load config:", err)
+	}
+
+	env := os.Getenv("ENV")
+	if env == "" {
+		env = "development"
+	}
+
+	handler.InitLogger(env)
+	logger := handler.GetLogger()
+	defer logger.Sync()
+
+	logger.Info("starting RepoBounty AI API",
+		zap.String("port", cfg.Port),
+		zap.String("env", env),
+	)
+
+	campaignStore := store.New()
+	ghClient := github.NewClient(cfg.GitHubToken)
+	aiAllocator := ai.NewAllocator(cfg.OpenRouterAPIKey, cfg.Model)
+
+	solClient, err := solana.NewClient(cfg.SolanaRPCURL, cfg.SolanaPrivateKey, cfg.ProgramID)
+	if err != nil {
+		logger.Fatal("failed to init solana client", zap.Error(err))
+	}
+
+	logger.Info("configuration loaded",
+		zap.String("solana_rpc", cfg.SolanaRPCURL),
+		zap.Bool("solana_configured", solClient.IsConfigured()),
+		zap.Bool("github_token_set", cfg.GitHubToken != ""),
+		zap.String("ai_model", aiAllocator.Model()),
+	)
+
+	handlers := handler.NewHandlers(campaignStore, ghClient, aiAllocator, solClient)
+	router := handler.NewRouter(handlers, env)
+
+	srv := &http.Server{
+		Addr:         fmt.Sprintf(":%s", cfg.Port),
+		Handler:      router,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	go func() {
+		logger.Info("server starting", zap.String("addr", srv.Addr))
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Fatal("server failed", zap.Error(err))
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	logger.Info("shutting down server...")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("server shutdown error", zap.Error(err))
+	}
+
+	logger.Info("server stopped")
 }
