@@ -143,6 +143,9 @@ vite.config.ts.timestamp-*
 .idea/
 .vscode/
 
+# Claude Code
+.claude/
+
 # Node / Frontend
 node_modules/
 dist/
