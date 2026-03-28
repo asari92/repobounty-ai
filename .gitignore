@@ -67,6 +67,7 @@ web_modules/
 
 # dotenv environment variable files
 .env
+.env.local
 .env.*
 !.env.example
 
@@ -93,7 +94,6 @@ dist
 
 # vuepress v2.x temp and cache directory
 .temp
-.cache
 
 # Sveltekit cache directory
 .svelte-kit/
@@ -137,3 +137,34 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Node / Frontend
+node_modules/
+dist/
+build/
+.next/
+coverage/
+
+# Go / Backend
+bin/
+vendor/
+*.test
+*.out
+
+# Rust / Solana / Anchor
+target/
+.anchor/
+test-ledger/
+**/*.rs.bk
+
+# Logs
+*.log
+
+# Python cache just in case
+__pycache__/
+*.pyc
