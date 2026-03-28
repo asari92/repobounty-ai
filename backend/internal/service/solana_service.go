@@ -8,8 +8,6 @@ import (
 	"github.com/yourusername/repobounty-ai/internal/domain/models"
 )
 
-// SolanaClient is the interface the campaign service depends on.
-// Swap MockSolanaService for a real implementation when Mukhan provides the contract.
 type SolanaClient interface {
 	FinalizeCampaign(ctx context.Context, campaignID uuid.UUID, allocations []models.Allocation) error
 }
