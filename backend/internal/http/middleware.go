@@ -9,7 +9,6 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 var logger *zap.Logger
@@ -19,8 +18,6 @@ func InitLogger(env string) {
 	if env == "production" {
 		logger, err = zap.NewProduction()
 	} else {
-		config := zap.NewDevelopmentConfig()
-		config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 		logger, err = zap.NewDevelopment()
 	}
 	if err != nil {
@@ -91,6 +88,7 @@ func RecoveryMiddleware(next http.Handler) http.Handler {
 					zap.String("path", r.URL.Path),
 					zap.String("method", r.Method),
 				)
+				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
 				w.Write([]byte(`{"error":"Internal server error"}`))
 			}

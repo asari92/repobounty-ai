@@ -9,18 +9,23 @@ import (
 	"golang.org/x/time/rate"
 )
 
+type ipEntry struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
 type RateLimiter struct {
-	limits map[string]*rate.Limiter
-	mu     sync.RWMutex
-	r      rate.Limit
-	b      int
+	entries map[string]*ipEntry
+	mu      sync.Mutex
+	r       rate.Limit
+	b       int
 }
 
 func NewRateLimiter(rps int, burst int) *RateLimiter {
 	return &RateLimiter{
-		limits: make(map[string]*rate.Limiter),
-		r:      rate.Limit(rps),
-		b:      burst,
+		entries: make(map[string]*ipEntry),
+		r:       rate.Limit(rps),
+		b:       burst,
 	}
 }
 
@@ -28,20 +33,28 @@ func (rl *RateLimiter) getLimiter(ip string) *rate.Limiter {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	limiter, exists := rl.limits[ip]
+	entry, exists := rl.entries[ip]
 	if !exists {
-		limiter = rate.NewLimiter(rl.r, rl.b)
-		rl.limits[ip] = limiter
+		entry = &ipEntry{
+			limiter:  rate.NewLimiter(rl.r, rl.b),
+			lastSeen: time.Now(),
+		}
+		rl.entries[ip] = entry
+	} else {
+		entry.lastSeen = time.Now()
 	}
-	return limiter
+	return entry.limiter
 }
 
-func (rl *RateLimiter) cleanup() {
+func (rl *RateLimiter) cleanup(maxAge time.Duration) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	for k := range rl.limits {
-		delete(rl.limits, k)
+	now := time.Now()
+	for ip, entry := range rl.entries {
+		if now.Sub(entry.lastSeen) > maxAge {
+			delete(rl.entries, ip)
+		}
 	}
 }
 
@@ -52,7 +65,7 @@ func RateLimitMiddleware(rps int, burst int) func(http.Handler) http.Handler {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
-			limiter.cleanup()
+			limiter.cleanup(10 * time.Minute)
 		}
 	}()
 

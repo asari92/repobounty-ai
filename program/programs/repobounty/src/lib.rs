@@ -32,7 +32,10 @@ pub mod repobounty {
         require!(pool_amount > 0, RepoBountyError::InvalidPoolAmount);
 
         let clock = Clock::get()?;
-        require!(deadline > clock.unix_timestamp, RepoBountyError::DeadlineInPast);
+        require!(
+            deadline > clock.unix_timestamp,
+            RepoBountyError::DeadlineInPast
+        );
 
         let campaign = &mut ctx.accounts.campaign;
         campaign.authority = ctx.accounts.authority.key();
@@ -62,10 +65,7 @@ pub mod repobounty {
         ctx: Context<FinalizeCampaign>,
         allocations: Vec<AllocationInput>,
     ) -> Result<()> {
-        require!(
-            !allocations.is_empty(),
-            RepoBountyError::EmptyAllocations
-        );
+        require!(!allocations.is_empty(), RepoBountyError::EmptyAllocations);
         require!(
             allocations.len() <= MAX_ALLOCATIONS,
             RepoBountyError::TooManyAllocations
@@ -96,16 +96,18 @@ pub mod repobounty {
         let campaign = &mut ctx.accounts.campaign;
         campaign.allocations = allocations
             .iter()
-            .map(|a| Allocation {
-                contributor: a.contributor.clone(),
-                percentage: a.percentage,
-                amount: campaign
+            .map(|a| {
+                let amount = campaign
                     .pool_amount
                     .checked_mul(a.percentage as u64)
-                    .unwrap()
-                    / BPS_100 as u64,
+                    .ok_or(RepoBountyError::AllocationOverflow)?;
+                Ok(Allocation {
+                    contributor: a.contributor.clone(),
+                    percentage: a.percentage,
+                    amount: amount / BPS_100 as u64,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         campaign.state = CampaignState::Finalized;
         campaign.finalized_at = Some(Clock::get()?.unix_timestamp);
@@ -190,7 +192,7 @@ impl Campaign {
         + (4 + MAX_ALLOCATIONS * Allocation::SIZE) // allocations vec
         + 1                                     // bump
         + 8                                     // created_at
-        + (1 + 8)                               // finalized_at (Option<i64>)
+        + (1 + 8) // finalized_at (Option<i64>)
     }
 }
 
@@ -231,6 +233,8 @@ pub enum RepoBountyError {
     RepoNameTooLong,
     #[msg("Pool amount must be greater than zero")]
     InvalidPoolAmount,
+    #[msg("Allocation calculation overflow")]
+    AllocationOverflow,
     #[msg("Deadline must be in the future")]
     DeadlineInPast,
     #[msg("Campaign has already been finalized")]

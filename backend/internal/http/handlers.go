@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	"github.com/repobounty/repobounty-ai/internal/ai"
 	"github.com/repobounty/repobounty-ai/internal/github"
@@ -209,7 +210,20 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 	campaign.TxSignature = txSig
 
 	if err := h.store.Update(campaign); err != nil {
-		log.Printf("store update failed after finalization: %v", err)
+		logger := GetLogger()
+		logger.Error("store update failed after on-chain finalization",
+			zap.String("campaign_id", campaign.CampaignID),
+			zap.String("tx_signature", txSig),
+			zap.Error(err),
+		)
+		writeJSON(w, http.StatusOK, models.FinalizeResponse{
+			CampaignID:        campaign.CampaignID,
+			State:             models.StateFinalized,
+			Allocations:       allocations,
+			TxSignature:       txSig,
+			SolanaExplorerURL: fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig),
+		})
+		return
 	}
 
 	explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
@@ -226,7 +240,9 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Printf("failed to encode JSON response: %v", err)
+	}
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
