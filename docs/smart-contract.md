@@ -4,7 +4,7 @@
 
 The RepoBounty program is an Anchor-based Solana smart contract that manages reward campaign lifecycle. It stores campaign metadata and AI-generated contributor allocations on-chain.
 
-**Program ID:** `BontyRePo1111111111111111111111111111111111` (placeholder — update after deployment)
+**Program ID:** `8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ` (placeholder — update after deployment)
 
 ---
 

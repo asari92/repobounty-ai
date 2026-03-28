@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("BontyRePo1111111111111111111111111111111111");
+declare_id!("8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ");
 
 /// Maximum repo identifier length (e.g. "owner/repo-name").
 const MAX_REPO_LEN: usize = 64;
