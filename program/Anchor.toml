@@ -3,10 +3,10 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
-repobounty = "BontyRePo1111111111111111111111111111111111"
+repobounty = "8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ"
 
 [programs.devnet]
-repobounty = "BontyRePo1111111111111111111111111111111111"
+repobounty = "8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ"
 
 [registry]
 url = "https://api.apr.dev"

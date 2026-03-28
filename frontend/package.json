@@ -12,6 +12,14 @@
     "format": "prettier --write src/**/*.{ts,tsx,css}",
     "format:check": "prettier --check src/**/*.{ts,tsx,css}"
   },
+  "overrides": {
+    "@types/react": "^18.3.4",
+    "@types/react-dom": "^18.3.0"
+  },
+  "resolutions": {
+    "@types/react": "^18.3.4",
+    "@types/react-dom": "^18.3.0"
+  }
   "dependencies": {
     "@solana/wallet-adapter-base": "^0.9.23",
     "@solana/wallet-adapter-react": "^0.15.35",
