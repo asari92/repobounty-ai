@@ -138,6 +138,11 @@ func (h *Handlers) FinalizePreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if time.Now().Before(campaign.Deadline) {
+		writeError(w, http.StatusBadRequest, "campaign deadline has not passed yet")
+		return
+	}
+
 	contributors, err := h.github.FetchContributors(r.Context(), campaign.Repo)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, fmt.Sprintf("github fetch failed: %v", err))
@@ -173,6 +178,11 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 
 	if campaign.State == models.StateFinalized {
 		writeError(w, http.StatusConflict, "campaign already finalized")
+		return
+	}
+
+	if time.Now().Before(campaign.Deadline) {
+		writeError(w, http.StatusBadRequest, "campaign deadline has not passed yet")
 		return
 	}
 
@@ -216,12 +226,14 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 			zap.String("tx_signature", txSig),
 			zap.Error(err),
 		)
+		w.Header().Set("X-Warning", "on-chain finalization succeeded but local store update failed")
 		writeJSON(w, http.StatusOK, models.FinalizeResponse{
 			CampaignID:        campaign.CampaignID,
 			State:             models.StateFinalized,
 			Allocations:       allocations,
 			TxSignature:       txSig,
 			SolanaExplorerURL: fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig),
+			Warning:           "on-chain finalization succeeded but local store update failed",
 		})
 		return
 	}

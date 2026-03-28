@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 
 	openai "github.com/sashabaranov/go-openai"
+	"go.uber.org/zap"
 
 	"github.com/repobounty/repobounty-ai/internal/models"
 )
@@ -42,13 +42,13 @@ func (a *Allocator) Allocate(ctx context.Context, repo string, contributors []mo
 	if a.client != nil {
 		allocs, err := a.allocateWithAI(ctx, repo, contributors, poolAmount)
 		if err != nil {
-			log.Printf("ai: LLM allocation failed (%v), using deterministic fallback", err)
+			zap.L().Warn("LLM allocation failed, using deterministic fallback", zap.Error(err))
 			return deterministicAllocate(contributors, poolAmount), nil
 		}
 		return allocs, nil
 	}
 
-	log.Printf("ai: no API key configured, using deterministic fallback")
+	zap.L().Info("no API key configured, using deterministic fallback")
 	return deterministicAllocate(contributors, poolAmount), nil
 }
 
@@ -128,7 +128,7 @@ func deterministicAllocate(contributors []models.Contributor, poolAmount uint64)
 	entries := make([]weighted, len(contributors))
 	totalWeight := 0
 	for i, c := range contributors {
-		w := c.Commits*3 + c.PullRequests*5 + c.Reviews*2
+		w := c.Commits*3 + c.PullRequests*5 + c.Reviews*2 + (c.LinesAdded+c.LinesDeleted)/100
 		if w < 1 {
 			w = 1
 		}

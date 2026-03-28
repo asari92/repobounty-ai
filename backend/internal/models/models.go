@@ -68,6 +68,7 @@ type FinalizeResponse struct {
 	Allocations       []Allocation  `json:"allocations"`
 	TxSignature       string        `json:"tx_signature"`
 	SolanaExplorerURL string        `json:"solana_explorer_url"`
+	Warning           string        `json:"warning,omitempty"`
 }
 
 type ErrorResponse struct {

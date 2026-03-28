@@ -57,6 +57,7 @@ export interface FinalizeResponse {
   allocations: Allocation[];
   tx_signature: string;
   solana_explorer_url: string;
+  warning?: string;
 }
 
 export interface ApiError {

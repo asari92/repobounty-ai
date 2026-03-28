@@ -75,6 +75,9 @@ export default function CampaignDetails() {
           : null
       );
       setPreview(null);
+      if (result.warning) {
+        setError(result.warning);
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Finalization failed");
     } finally {
