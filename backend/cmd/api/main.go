@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/yourusername/repobounty-ai/config"
 	"github.com/yourusername/repobounty-ai/internal/adapter/http/handler"
 	"github.com/yourusername/repobounty-ai/internal/adapter/http/server"
 	"github.com/yourusername/repobounty-ai/internal/adapter/repository"
@@ -20,6 +21,10 @@ import (
 )
 
 func main() {
+	cfg := config.MustLoad()
+
+	fmt.Println(cfg)
+
 	repo := &repository.CampaignRepositoryImpl{
 		Campiagns: make(map[uuid.UUID]*models.Campaign),
 	}
@@ -35,7 +40,7 @@ func main() {
 	server.SetupRoutes(r, handler)
 
 	server := &http.Server{
-		Addr:    ":8080",
+		Addr:    fmt.Sprintf(":%s", cfg.Port),
 		Handler: r,
 	}
 
