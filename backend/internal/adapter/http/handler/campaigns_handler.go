@@ -2,11 +2,13 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/yourusername/repobounty-ai/internal/domain/types"
 	"github.com/yourusername/repobounty-ai/internal/service"
 )
 
@@ -56,7 +58,12 @@ func (h *CampaignsHandler) GetCampaign(c *gin.Context) {
 
 	campaign, err := h.service.GetCampaign(ctx, id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		if errors.Is(err, types.ErrCampaignNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -76,6 +83,16 @@ func (h *CampaignsHandler) FinalizeCampaign(c *gin.Context) {
 	defer cancel()
 
 	if err := h.service.FinalizeCampaign(ctx, id); err != nil {
+		if errors.Is(err, types.ErrCampaignNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+
+		if errors.Is(err, types.ErrCapaignAlreadyFinalized) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

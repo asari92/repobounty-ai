@@ -4,9 +4,13 @@ import (
 	"context"
 	"time"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/yourusername/repobounty-ai/internal/domain/models"
+	"github.com/yourusername/repobounty-ai/internal/domain/types"
 )
+
+var validate = validator.New()
 
 type CampaingRepository interface {
 	Save(ctx context.Context, campaign *models.Campaign) error
@@ -52,6 +56,10 @@ func (s *CampaignService) CreateCampaign(ctx context.Context, repoURL string, re
 		UpdatedAt:  time.Now(),
 	}
 
+	if err := validate.Struct(campaign); err != nil {
+		return nil, err
+	}
+
 	if err := s.repo.Save(ctx, campaign); err != nil {
 		return nil, err
 	}
@@ -62,6 +70,10 @@ func (s *CampaignService) FinalizeCampaign(ctx context.Context, id uuid.UUID) er
 	campaign, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
+	}
+
+	if campaign.Status != models.CampaignStatusPending {
+		return types.ErrCapaignAlreadyFinalized
 	}
 
 	contributors, err := s.github.GetContributors(ctx, campaign.RepoURL)
