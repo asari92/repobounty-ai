@@ -18,7 +18,7 @@ type githubProvider interface {
 }
 
 type aiAllocator interface {
-	ComputeAllocations(contributors []models.Contributor, rewardPool float64) []models.Allocation
+	ComputeAllocations(id uuid.UUID, contributors []models.Contributor, rewardPool float64) []models.Allocation
 }
 
 type CampaignService struct {
@@ -48,6 +48,8 @@ func (s *CampaignService) CreateCampaign(ctx context.Context, repoURL string, re
 		RewardPool: rewardPool,
 		Deadline:   deadline,
 		Status:     models.CampaignStatusPending,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
 	}
 
 	if err := s.repo.Save(ctx, campaign); err != nil {
@@ -67,7 +69,7 @@ func (s *CampaignService) FinalizeCampaign(ctx context.Context, id uuid.UUID) er
 		return err
 	}
 
-	allocations := s.ai.ComputeAllocations(contributors, campaign.RewardPool)
+	allocations := s.ai.ComputeAllocations(campaign.ID, contributors, campaign.RewardPool)
 	for i := range allocations {
 		allocations[i].CampaignID = campaign.ID
 	}
@@ -78,5 +80,6 @@ func (s *CampaignService) FinalizeCampaign(ctx context.Context, id uuid.UUID) er
 
 	campaign.Allocations = allocations
 	campaign.Status = models.CampaignStatusFinalized
+	campaign.UpdatedAt = time.Now()
 	return s.repo.Save(ctx, campaign)
 }

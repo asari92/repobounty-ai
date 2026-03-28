@@ -45,7 +45,12 @@ func (h *CampaignsHandler) CreateCampaign(c *gin.Context) {
 func (h *CampaignsHandler) GetCampaign(c *gin.Context) {
 	idStr := c.Param("id")
 
-	id := uuid.MustParse(idStr)
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid campaign id"})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 100*time.Second)
 	defer cancel()
 

@@ -12,10 +12,16 @@ const (
 )
 
 type Campaign struct {
-	ID          uuid.UUID    `json:"id" validate:"required"`
-	RepoURL     string       `json:"repo_url" validate:"required,url"`
-	RewardPool  float64      `json:"reward_pool" validate:"required,gt=0"`
-	Deadline    time.Time    `json:"deadline" validate:"required,datetime=2006-01-02T15:04:05Z07:00"`
+	ID uuid.UUID `json:"id" validate:"required"`
+
+	RepoURL    string    `json:"repo_url" validate:"required,url"`
+	RewardPool float64   `json:"reward_pool" validate:"required,gt=0"`
+	Deadline   time.Time `json:"deadline" validate:"required,datetime=2006-01-02T15:04:05Z07:00"`
+
 	Status      string       `json:"status"`
 	Allocations []Allocation `json:"allocations,omitempty"`
+
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }

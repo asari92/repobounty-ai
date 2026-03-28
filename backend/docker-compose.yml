@@ -5,4 +5,6 @@ services:
       dockerfile: Dockerfile
     container_name: repobounty-api
     ports:
-      - '8080:8080'
+      - '8080:${PORT:-8080}'
+    env_file:
+      - .env

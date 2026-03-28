@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/yourusername/repobounty-ai/internal/domain/models"
@@ -9,7 +10,7 @@ import (
 
 type AIAllocationService struct{}
 
-func (s *AIAllocationService) ComputeAllocations(contributors []models.Contributor, rewardPool float64) []models.Allocation {
+func (s *AIAllocationService) ComputeAllocations(compaingID uuid.UUID, contributors []models.Contributor, rewardPool float64) []models.Allocation {
 	totalWeight := 0
 	for _, c := range contributors {
 		totalWeight += c.Commits + c.PRs*2
@@ -24,9 +25,12 @@ func (s *AIAllocationService) ComputeAllocations(contributors []models.Contribut
 		amount := float64(weight) / float64(totalWeight) * rewardPool
 		allocations = append(allocations, models.Allocation{
 			ID:          uuid.New(),
+			CampaignID:  compaingID,
 			Contributor: c.Username,
 			Amount:      amount,
 			Reason:      fmt.Sprintf("commits: %d, prs: %d", c.Commits, c.PRs),
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
 		})
 	}
 	return allocations
