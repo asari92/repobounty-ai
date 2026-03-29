@@ -62,6 +62,33 @@ pub mod repobounty {
         Ok(())
     }
 
+    /// Sponsor funds the campaign by transferring SOL to vault.
+    /// Must be called in the same transaction as SystemProgram.transfer.
+    pub fn fund_campaign(ctx: Context<FundCampaign>) -> Result<()> {
+        let campaign = &mut ctx.accounts.campaign;
+        let vault = &ctx.accounts.vault;
+
+        require!(
+            campaign.state == CampaignState::Created,
+            RepoBountyError::AlreadyFunded,
+        );
+
+        let vault_balance = vault.lamports();
+        require!(
+            vault_balance >= campaign.pool_amount,
+            RepoBountyError::InsufficientFunds,
+        );
+
+        campaign.state = CampaignState::Funded;
+
+        msg!(
+            "Campaign funded: {} | vault_balance={} | state=Funded",
+            campaign.repo,
+            vault_balance,
+        );
+        Ok(())
+    }
+
     /// Backend finalizes the campaign with AI-generated allocations.
     ///
     /// Validates that percentages sum to 100 % (10 000 bps), that contributor
@@ -148,6 +175,27 @@ pub struct CreateCampaign<'info> {
         bump,
     )]
     pub vault: SystemAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct FundCampaign<'info> {
+    #[account(
+        mut,
+        seeds = [b"campaign", campaign.campaign_id.as_bytes()],
+        bump = campaign.bump,
+    )]
+    pub campaign: Account<'info, Campaign>,
+    #[account(
+        mut,
+        seeds = [b"vault", campaign.key().as_ref()],
+        bump = campaign.vault_bump,
+    )]
+    pub vault: SystemAccount<'info>,
+    #[account(
+        constraint = sponsor.key() == campaign.sponsor @ RepoBountyError::InvalidSponsor,
+    )]
+    pub sponsor: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -270,4 +318,14 @@ pub enum RepoBountyError {
     ContributorNameTooLong,
     #[msg("Duplicate contributor in allocations")]
     DuplicateContributor,
+    #[msg("Campaign has already been funded")]
+    AlreadyFunded,
+    #[msg("Insufficient funds in vault")]
+    InsufficientFunds,
+    #[msg("Invalid sponsor")]
+    InvalidSponsor,
+    #[msg("Allocation already claimed")]
+    AlreadyClaimed,
+    #[msg("Contributor not found in allocations")]
+    ContributorNotFound,
 }
