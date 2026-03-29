@@ -39,13 +39,16 @@ pub mod repobounty {
 
         let campaign = &mut ctx.accounts.campaign;
         campaign.authority = ctx.accounts.authority.key();
+        campaign.sponsor = ctx.accounts.authority.key();
         campaign.campaign_id = campaign_id;
         campaign.repo = repo;
         campaign.pool_amount = pool_amount;
+        campaign.total_claimed = 0;
         campaign.deadline = deadline;
         campaign.state = CampaignState::Created;
         campaign.allocations = vec![];
         campaign.bump = ctx.bumps.campaign;
+        campaign.vault_bump = 0;
         campaign.created_at = clock.unix_timestamp;
 
         msg!(
@@ -156,22 +159,28 @@ pub struct FinalizeCampaign<'info> {
 
 #[account]
 pub struct Campaign {
-    /// Wallet that created and controls this campaign.
+    /// Wallet that created and controls this campaign (backend key).
     pub authority: Pubkey,
+    /// Wallet that funds the campaign (sponsor).
+    pub sponsor: Pubkey,
     /// Short identifier used as PDA seed.
     pub campaign_id: String,
     /// GitHub repository in "owner/repo" format.
     pub repo: String,
     /// Total reward pool in lamports (or smallest token unit).
     pub pool_amount: u64,
+    /// Total amount claimed (in lamports).
+    pub total_claimed: u64,
     /// Unix timestamp after which finalization is allowed.
     pub deadline: i64,
-    /// Current lifecycle state.
+    /// Current lifecycle state (Created, Funded, Finalized, Completed).
     pub state: CampaignState,
     /// AI-generated allocation results (populated on finalization).
     pub allocations: Vec<Allocation>,
     /// PDA bump seed.
     pub bump: u8,
+    /// PDA bump seed for vault account.
+    pub vault_bump: u8,
     /// Unix timestamp of creation.
     pub created_at: i64,
     /// Unix timestamp of finalization (None until finalized).
