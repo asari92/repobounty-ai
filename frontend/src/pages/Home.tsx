@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { useWallet } from "@solana/wallet-adapter-react";
 import { api } from "../api/client";
 import CampaignCard from "../components/CampaignCard";
 import type { Campaign } from "../types";
 
 export default function Home() {
+  const { publicKey } = useWallet();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [view, setView] = useState<"all" | "mine">("all");
 
   useEffect(() => {
     api
@@ -16,6 +19,14 @@ export default function Home() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  const walletAddress = publicKey?.toBase58();
+  const visibleCampaigns =
+    view === "mine" && walletAddress
+      ? campaigns.filter((campaign) => campaign.authority === walletAddress)
+      : view === "mine"
+        ? []
+        : campaigns;
 
   return (
     <div>
@@ -32,6 +43,37 @@ export default function Home() {
         <Link to="/create" className="btn-primary">
           + New Campaign
         </Link>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+        <div className="inline-flex rounded-xl border border-solana-border bg-solana-dark/70 p-1">
+          <button
+            onClick={() => setView("all")}
+            className={`px-4 py-2 text-sm rounded-lg transition-colors ${
+              view === "all"
+                ? "bg-solana-purple text-white"
+                : "text-gray-400 hover:text-white"
+            }`}
+          >
+            All Campaigns
+          </button>
+          <button
+            onClick={() => setView("mine")}
+            className={`px-4 py-2 text-sm rounded-lg transition-colors ${
+              view === "mine"
+                ? "bg-solana-purple text-white"
+                : "text-gray-400 hover:text-white"
+            }`}
+          >
+            My Campaigns
+          </button>
+        </div>
+
+        <p className="text-sm text-gray-400">
+          Showing {visibleCampaigns.length} campaign
+          {visibleCampaigns.length === 1 ? "" : "s"}
+          {view === "mine" && walletAddress ? " for your wallet" : ""}
+        </p>
       </div>
 
       {loading && (
@@ -53,12 +95,27 @@ export default function Home() {
         </div>
       )}
 
-      {!loading && !error && campaigns.length === 0 && (
+      {!loading && !error && view === "mine" && !walletAddress && (
+        <div className="card text-center py-16">
+          <h3 className="text-xl font-semibold mb-2">
+            Connect your wallet
+          </h3>
+          <p className="text-gray-400">
+            Connect a wallet to view campaigns created by your address.
+          </p>
+        </div>
+      )}
+
+      {!loading && !error && visibleCampaigns.length === 0 && !(view === "mine" && !walletAddress) && (
         <div className="card text-center py-16">
           <div className="text-4xl mb-4">{"{ }"}</div>
-          <h3 className="text-xl font-semibold mb-2">No campaigns yet</h3>
+          <h3 className="text-xl font-semibold mb-2">
+            {view === "mine" ? "No campaigns for this wallet" : "No campaigns yet"}
+          </h3>
           <p className="text-gray-400 mb-6">
-            Create your first campaign to fund open-source contributors
+            {view === "mine"
+              ? "Create a campaign from the connected wallet to see it here."
+              : "Create your first campaign to fund open-source contributors"}
           </p>
           <Link to="/create" className="btn-primary">
             Create Campaign
@@ -66,9 +123,9 @@ export default function Home() {
         </div>
       )}
 
-      {!loading && !error && campaigns.length > 0 && (
+      {!loading && !error && visibleCampaigns.length > 0 && (
         <div className="grid gap-4 md:grid-cols-2">
-          {campaigns.map((c) => (
+          {visibleCampaigns.map((c) => (
             <CampaignCard key={c.campaign_id} campaign={c} />
           ))}
         </div>

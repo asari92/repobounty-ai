@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,7 +34,11 @@ func NewHandlers(s *store.Store, gh *github.Client, alloc *ai.Allocator, sol *so
 }
 
 func (h *Handlers) ListCampaigns(w http.ResponseWriter, r *http.Request) {
-	campaigns := h.store.List()
+	campaigns, err := h.listCampaigns(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("failed to load campaigns: %v", err))
+		return
+	}
 	writeJSON(w, http.StatusOK, campaigns)
 }
 
@@ -108,7 +113,7 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) GetCampaign(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	campaign, err := h.store.Get(id)
+	campaign, err := h.loadCampaign(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "campaign not found")
@@ -122,7 +127,7 @@ func (h *Handlers) GetCampaign(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) FinalizePreview(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	campaign, err := h.store.Get(id)
+	campaign, err := h.loadCampaign(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "campaign not found")
@@ -160,7 +165,7 @@ func (h *Handlers) FinalizePreview(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	campaign, err := h.store.Get(id)
+	campaign, err := h.loadCampaign(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "campaign not found")
@@ -209,7 +214,13 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 	campaign.TxSignature = txSig
 
 	if err := h.store.Update(campaign); err != nil {
-		log.Printf("store update failed after finalization: %v", err)
+		if errors.Is(err, store.ErrNotFound) {
+			if createErr := h.store.Create(campaign); createErr != nil {
+				log.Printf("store create failed after finalization: %v", createErr)
+			}
+		} else {
+			log.Printf("store update failed after finalization: %v", err)
+		}
 	}
 
 	explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
@@ -241,4 +252,36 @@ func (h *Handlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
 		"ai_model": h.ai.Model(),
 		"store":    h.store != nil,
 	})
+}
+
+func (h *Handlers) listCampaigns(ctx context.Context) ([]*models.Campaign, error) {
+	if h.solana != nil && h.solana.IsConfigured() {
+		campaigns, err := h.solana.ListCampaigns(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if campaigns != nil {
+			return campaigns, nil
+		}
+	}
+	return h.store.List(), nil
+}
+
+func (h *Handlers) loadCampaign(ctx context.Context, id string) (*models.Campaign, error) {
+	campaign, err := h.store.Get(id)
+	if err == nil {
+		return campaign, nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return nil, err
+	}
+
+	if h.solana != nil && h.solana.IsConfigured() {
+		campaign, err := h.solana.GetCampaign(ctx, id)
+		if err == nil {
+			return campaign, nil
+		}
+	}
+
+	return nil, store.ErrNotFound
 }
