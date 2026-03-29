@@ -11,6 +11,17 @@ import (
 
 var ErrNotFound = errors.New("campaign not found")
 
+type CampaignStore interface {
+	Create(c *models.Campaign) error
+	Get(id string) (*models.Campaign, error)
+	Update(c *models.Campaign) error
+	List() []*models.Campaign
+	GetUser(username string) (*User, error)
+	CreateUser(u *User) error
+	UpdateUser(u *User) error
+	GetWalletForGitHub(githubUsername string) (string, error)
+}
+
 type Store struct {
 	mu        sync.RWMutex
 	campaigns map[string]*models.Campaign

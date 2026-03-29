@@ -15,13 +15,13 @@ var userContextKey contextKey = "user"
 
 type AuthMiddleware struct {
 	jwtMgr *JWTManager
-	store  *store.Store
+	store  store.CampaignStore
 }
 
-func NewAuthMiddleware(jwtMgr *JWTManager, store *store.Store) *AuthMiddleware {
+func NewAuthMiddleware(jwtMgr *JWTManager, s store.CampaignStore) *AuthMiddleware {
 	return &AuthMiddleware{
 		jwtMgr: jwtMgr,
-		store:  store,
+		store:  s,
 	}
 }
 
@@ -61,7 +61,7 @@ func GetUserFromContext(ctx context.Context) (*store.User, bool) {
 	return user, ok
 }
 
-func OptionalAuthMiddleware(jwtMgr *JWTManager, s *store.Store) func(http.Handler) http.Handler {
+func OptionalAuthMiddleware(jwtMgr *JWTManager, s store.CampaignStore) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")

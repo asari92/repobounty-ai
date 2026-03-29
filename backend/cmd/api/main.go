@@ -40,7 +40,18 @@ func main() {
 		zap.String("env", env),
 	)
 
-	campaignStore := store.New()
+	var campaignStore store.CampaignStore
+	if cfg.DatabasePath != "" {
+		sqliteStore, err := store.NewSQLite(cfg.DatabasePath)
+		if err != nil {
+			logger.Fatal("failed to open sqlite database", zap.Error(err))
+		}
+		campaignStore = sqliteStore
+		logger.Info("using SQLite storage", zap.String("path", cfg.DatabasePath))
+	} else {
+		campaignStore = store.New()
+		logger.Info("using in-memory storage")
+	}
 	ghClient := github.NewClient(cfg.GitHubToken)
 	aiAllocator := ai.NewAllocator(cfg.OpenRouterAPIKey, cfg.Model)
 
@@ -71,6 +82,11 @@ func main() {
 
 	router := handler.NewRouter(handlers, env)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	handler.StartAutoFinalizeWorker(ctx, campaignStore, ghClient, aiAllocator, solClient, logger, 5*time.Minute)
+
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),
 		Handler:      router,
@@ -91,10 +107,11 @@ func main() {
 	<-quit
 
 	logger.Info("shutting down server...")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("server shutdown error", zap.Error(err))
 	}
 

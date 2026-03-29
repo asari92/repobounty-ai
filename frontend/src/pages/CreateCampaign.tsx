@@ -19,7 +19,7 @@ export default function CreateCampaign() {
   const [error, setError] = useState<string | null>(null);
   const [createdId, setCreatedId] = useState<string | null>(null);
 
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().split("T")[0];
+  const minDeadline = new Date(Date.now() + 3600000).toISOString().slice(0, 16);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -181,15 +181,16 @@ export default function CreateCampaign() {
           <div>
             <label className="block text-sm font-medium mb-2">Deadline</label>
             <input
-              type="date"
+              type="datetime-local"
               value={deadline}
               onChange={(e) => setDeadline(e.target.value)}
-              min={tomorrow}
+              min={minDeadline}
               className="input"
               required
             />
             <p className="text-xs text-gray-500 mt-1">
-              After this date, the campaign can be finalized
+              After this date, the campaign can be finalized (interpreted as your
+              local timezone)
             </p>
           </div>
 

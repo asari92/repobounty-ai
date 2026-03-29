@@ -28,7 +28,7 @@ import (
 var repoPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$`)
 
 type Handlers struct {
-	store       *store.Store
+	store       store.CampaignStore
 	github      *github.Client
 	solana      *solana.Client
 	ai          *ai.Allocator
@@ -38,7 +38,7 @@ type Handlers struct {
 }
 
 func NewHandlers(
-	s *store.Store,
+	s store.CampaignStore,
 	gh *github.Client,
 	sol *solana.Client,
 	alloc *ai.Allocator,
@@ -255,6 +255,11 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if time.Now().Before(campaign.Deadline) {
+		writeError(w, http.StatusConflict, "campaign deadline has not been reached yet")
+		return
+	}
+
 	contributors, err := h.github.FetchContributors(r.Context(), campaign.Repo)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, fmt.Sprintf("github fetch failed: %v", err))
@@ -431,6 +436,10 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 		TxSignature:       txSig,
 		SolanaExplorerURL: explorerURL,
 	})
+}
+
+func (h *Handlers) ClaimPermit(w http.ResponseWriter, r *http.Request) {
+	h.Claim(w, r)
 }
 
 func (h *Handlers) GetClaims(w http.ResponseWriter, r *http.Request) {

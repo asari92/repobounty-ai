@@ -15,6 +15,7 @@ describe("repobounty", () => {
   const repo = "anthropics/claude-code";
   const poolAmount = new anchor.BN(1_000_000_000); // 1 SOL in lamports
   const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 86400); // +24h
+  const pastDeadline = new anchor.BN(Math.floor(Date.now() / 1000) - 86400); // -24h
 
   let campaignPda: anchor.web3.PublicKey;
   let campaignBump: number;
@@ -34,7 +35,7 @@ describe("repobounty", () => {
 
   it("creates campaign with sponsor and vault", async () => {
     const tx = await program.methods
-      .createCampaign(campaignId, repo, poolAmount, deadline, sponsor)
+      .createCampaign(campaignId, repo, poolAmount, pastDeadline, sponsor)
       .accounts({
         campaign: campaignPda,
         authority: authority,
@@ -98,6 +99,58 @@ describe("repobounty", () => {
     }
   });
 
+  it("rejects finalizing before deadline", async () => {
+    const idDeadline = "test-campaign-deadline";
+    const [pdaDeadline] = anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from("campaign"), Buffer.from(idDeadline)],
+      program.programId
+    );
+    const [vaultDeadline] = anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), pdaDeadline.toBuffer()],
+      program.programId
+    );
+
+    await program.methods
+      .createCampaign(idDeadline, repo, poolAmount, deadline, sponsor)
+      .accounts({
+        campaign: pdaDeadline,
+        authority: authority,
+        vault: vaultDeadline,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
+
+    const transferIx = anchor.web3.SystemProgram.transfer({
+      fromPubkey: sponsor,
+      toPubkey: vaultDeadline,
+      lamports: poolAmount.toNumber(),
+    });
+
+    await program.methods
+      .fundCampaign()
+      .accounts({
+        campaign: pdaDeadline,
+        vault: vaultDeadline,
+        sponsor: sponsor,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .preInstructions([transferIx])
+      .rpc();
+
+    try {
+      await program.methods
+        .finalizeCampaign([{ contributor: "alice", percentage: 10000 }])
+        .accounts({
+          campaign: pdaDeadline,
+          authority: authority,
+        })
+        .rpc();
+      expect.fail("should have thrown");
+    } catch (err: any) {
+      expect(err.error.errorCode.code).to.equal("DeadlineNotReached");
+    }
+  });
+
   it("rejects finalizing unfunded campaign", async () => {
     const id2 = "test-campaign-002";
     const [pda2] = anchor.web3.PublicKey.findProgramAddressSync(
@@ -110,7 +163,7 @@ describe("repobounty", () => {
     );
 
     await program.methods
-      .createCampaign(id2, repo, poolAmount, deadline, sponsor)
+      .createCampaign(id2, repo, poolAmount, pastDeadline, sponsor)
       .accounts({
         campaign: pda2,
         authority: authority,
@@ -239,7 +292,7 @@ describe("repobounty", () => {
     );
 
     await program.methods
-      .createCampaign(id3, repo, poolAmount, deadline, sponsor)
+      .createCampaign(id3, repo, poolAmount, pastDeadline, sponsor)
       .accounts({
         campaign: pda3,
         authority: authority,

@@ -23,6 +23,7 @@ type Config struct {
 	AllowedOrigins      string
 	GitHubAppID         int64
 	GitHubAppPrivateKey string
+	DatabasePath        string
 }
 
 func Load() (*Config, error) {
@@ -44,6 +45,7 @@ func Load() (*Config, error) {
 		AllowedOrigins:      os.Getenv("ALLOWED_ORIGINS"),
 		GitHubAppID:         envOrDefaultInt64("GITHUB_APP_ID", 0),
 		GitHubAppPrivateKey: os.Getenv("GITHUB_APP_PRIVATE_KEY"),
+		DatabasePath:        envOrDefault("DATABASE_PATH", "repobounty.db"),
 	}
 	return cfg, nil
 }

@@ -23,7 +23,7 @@ export default function Home() {
   const walletAddress = publicKey?.toBase58();
   const visibleCampaigns =
     view === "mine" && walletAddress
-      ? campaigns.filter((campaign) => campaign.authority === walletAddress)
+      ? campaigns.filter((campaign) => campaign.sponsor === walletAddress)
       : view === "mine"
         ? []
         : campaigns;

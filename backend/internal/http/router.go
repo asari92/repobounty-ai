@@ -56,6 +56,7 @@ func NewRouter(h *Handlers, env string) http.Handler {
 			r.Post("/{id}/finalize-preview", h.FinalizePreview)
 			r.Post("/{id}/finalize", h.Finalize)
 			r.Post("/{id}/claim", h.Claim)
+			r.With(requireAuth).Post("/{id}/claim-permit", h.ClaimPermit)
 			r.Post("/{id}/fund-tx", h.FundTx)
 		})
 	})

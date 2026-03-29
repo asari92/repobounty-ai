@@ -103,6 +103,12 @@ pub mod repobounty {
             RepoBountyError::TooManyAllocations
         );
 
+        let clock = Clock::get()?;
+        require!(
+            clock.unix_timestamp >= ctx.accounts.campaign.deadline,
+            RepoBountyError::DeadlineNotReached
+        );
+
         // --- percentage validation -------------------------------------------
         let total_bps: u64 = allocations.iter().map(|a| a.percentage as u64).sum();
         require!(
@@ -407,4 +413,6 @@ pub enum RepoBountyError {
     InvalidClaimant,
     #[msg("Insufficient funds in vault for claim")]
     InsufficientVaultFunds,
+    #[msg("Campaign deadline has not been reached yet")]
+    DeadlineNotReached,
 }
