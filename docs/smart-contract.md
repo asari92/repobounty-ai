@@ -2,7 +2,15 @@
 
 ## Overview
 
-The RepoBounty program is an Anchor-based Solana smart contract that manages reward campaign lifecycle. It stores campaign metadata and AI-generated contributor allocations on-chain.
+The RepoBounty program is an Anchor-based Solana smart contract that manages reward campaign lifecycle.
+
+The agreed target contract model is:
+
+- sponsor wallet owns the campaign on-chain
+- campaign funds move into escrow
+- backend uses a dedicated trusted finalizer key after deadline
+- finalization records GitHub-based entitlements because contributor wallets may be unknown initially
+- contributors later authenticate with GitHub, bind wallets, and claim or receive released rewards
 
 **Program ID:** `BontyRePo1111111111111111111111111111111111` (placeholder — update after deployment)
 
@@ -30,19 +38,21 @@ Creates a new campaign account as a PDA.
 | Account | Signer | Mutable | Description |
 |---------|--------|---------|-------------|
 | `campaign` | No | Yes | PDA to be initialized |
-| `authority` | Yes | Yes | Sponsor's wallet (pays rent) |
+| `authority` | Yes | Yes | Sponsor's wallet (campaign owner and payer) |
 | `system_program` | No | No | System program |
 
 **Effects:**
+
 - Initializes campaign account with `Created` state
 - Sets `created_at` to current clock timestamp
 - Empty allocations vector
+- In the target escrow design, also funds campaign escrow
 
 ---
 
 ### `finalize_campaign`
 
-Stores AI-generated allocations and marks campaign as finalized.
+Stores AI-generated GitHub-based entitlements and marks campaign as finalized.
 
 **Arguments:**
 
@@ -54,7 +64,7 @@ Stores AI-generated allocations and marks campaign as finalized.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `contributor` | String | GitHub username, max 39 chars |
+| `contributor` | String | GitHub username or normalized GitHub identity, max 39 chars in the current MVP |
 | `percentage` | u16 | Basis points (0-10000) |
 
 **Accounts:**
@@ -62,21 +72,38 @@ Stores AI-generated allocations and marks campaign as finalized.
 | Account | Signer | Mutable | Description |
 |---------|--------|---------|-------------|
 | `campaign` | No | Yes | Existing campaign PDA |
-| `authority` | Yes | No | Must match campaign authority |
+| `finalizer` | Yes | No | Trusted backend finalizer authority |
 
 **Validations:**
-1. Campaign must be in `Created` state (not already finalized)
-2. `authority` must match the campaign's stored authority
-3. Allocations must not be empty
-4. Max 10 allocations
-5. All percentages must sum to exactly 10000 (100%)
-6. No duplicate contributor usernames
-7. Each contributor name must be <= 39 characters
+
+1. Campaign must be in `Created` state
+2. Deadline has passed
+3. `finalizer` must match the configured trusted finalizer authority
+4. Allocations must not be empty
+5. Max 10 allocations
+6. All percentages must sum to exactly 10000 (100%)
+7. No duplicate contributor identities
+8. Each contributor identity must be <= 39 characters in the current MVP
 
 **Effects:**
-- Stores allocations with computed amounts (`pool_amount * percentage / 10000`)
+
+- Stores entitlement amounts (`pool_amount * percentage / 10000`)
 - Sets state to `Finalized`
 - Sets `finalized_at` to current clock timestamp
+
+---
+
+### `claim_reward` (planned)
+
+Transfers an allocated reward from escrow to a contributor wallet after GitHub auth and wallet binding.
+
+Expected high-level flow:
+
+1. Contributor authenticates off-chain with GitHub.
+2. Contributor binds a Solana wallet.
+3. Backend verifies that the GitHub identity is entitled to a reward and not yet claimed.
+4. Backend authorizes claim or release.
+5. Smart contract transfers the escrowed amount to the bound wallet and marks the entitlement claimed.
 
 ---
 
@@ -93,14 +120,21 @@ Stores AI-generated allocations and marks campaign as finalized.
 | pool_amount | u64 | 8 | Reward pool in lamports |
 | deadline | i64 | 8 | Campaign deadline (unix) |
 | state | enum | 1 | Created(0) or Finalized(1) |
-| allocations | Vec\<Allocation\> | 4 + 10 * 53 | Up to 10 allocations |
+| allocations / entitlements | Vec\<Allocation\> | 4 + 10 * 53 | Up to 10 GitHub-based entitlements |
 | bump | u8 | 1 | PDA bump seed |
 | created_at | i64 | 8 | Creation timestamp |
 | finalized_at | Option\<i64\> | 1 + 8 | Finalization timestamp |
 
-**Total space:** ~699 bytes
+**Total space:** ~699 bytes for the current simple layout.
 
-### Allocation (nested in Campaign)
+The target escrow revision will likely extend the account model with:
+
+- escrow vault PDA
+- trusted finalizer authority
+- claim status per entitlement
+- bound wallet or release metadata
+
+### Allocation / Entitlement
 
 | Field | Type | Size (bytes) |
 |-------|------|-------------|
@@ -111,6 +145,8 @@ Stores AI-generated allocations and marks campaign as finalized.
 ---
 
 ## Error Codes
+
+Current codebase errors:
 
 | Code | Name | Message |
 |------|------|---------|
@@ -125,17 +161,25 @@ Stores AI-generated allocations and marks campaign as finalized.
 | 6008 | ContributorNameTooLong | Contributor username must be 39 characters or fewer |
 | 6009 | DuplicateContributor | Duplicate contributor in allocations |
 
+The escrow-and-claim revision will likely add:
+
+- unauthorized finalizer
+- deadline not reached
+- reward already claimed
+- wallet binding / release authorization errors
+
 ---
 
 ## PDA Derivation
 
 Campaign accounts are Program Derived Addresses:
 
-```
+```text
 seeds = ["campaign", authority_pubkey, campaign_id_as_bytes]
 ```
 
 To derive in TypeScript:
+
 ```typescript
 const [campaignPda, bump] = PublicKey.findProgramAddressSync(
   [
@@ -147,7 +191,8 @@ const [campaignPda, bump] = PublicKey.findProgramAddressSync(
 );
 ```
 
-To derive in Go (using solana-go):
+To derive in Go:
+
 ```go
 campaignPDA, bump, _ := solana.FindProgramAddress(
     [][]byte{
@@ -169,11 +214,20 @@ yarn install
 anchor test
 ```
 
-The test suite covers:
+The current test suite covers:
+
 1. Campaign creation with valid parameters
 2. Campaign finalization with 3 contributors
 3. Rejection of double finalization
 4. Rejection of allocations not summing to 100%
+
+The next revision should add tests for:
+
+1. sponsor-owned campaign creation
+2. escrow funding
+3. trusted finalizer authorization
+4. claim or release after GitHub-authenticated wallet binding
+5. double-claim prevention
 
 ---
 

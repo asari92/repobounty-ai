@@ -6,6 +6,24 @@ import { VersionedTransaction, Connection } from "@solana/web3.js";
 import bs58 from "bs58";
 import { api } from "../api/client";
 
+function pad(value: number): string {
+  return value.toString().padStart(2, "0");
+}
+
+function toDateTimeLocalValue(date: Date): string {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate()
+  )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function toStableRFC3339(value: string): string | null {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
 export default function CreateCampaign() {
   const { publicKey, sendTransaction } = useWallet();
   const { setVisible } = useWalletModal();
@@ -19,7 +37,9 @@ export default function CreateCampaign() {
   const [error, setError] = useState<string | null>(null);
   const [createdId, setCreatedId] = useState<string | null>(null);
 
-  const minDeadline = new Date(Date.now() + 3600000).toISOString().slice(0, 16);
+  const minDeadline = toDateTimeLocalValue(
+    new Date(Date.now() + 15 * 60 * 1000)
+  );
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -41,12 +61,18 @@ export default function CreateCampaign() {
       return;
     }
 
+    const deadlineRFC3339 = toStableRFC3339(deadline);
+    if (!deadlineRFC3339) {
+      setError("Deadline must include a valid date and time");
+      return;
+    }
+
     setSubmitting(true);
     try {
       const result = await api.createCampaign({
         repo,
         pool_amount: poolLamports,
-        deadline: new Date(deadline).toISOString(),
+        deadline: deadlineRFC3339,
         sponsor_wallet: publicKey.toBase58(),
       });
       setCreatedId(result.campaign_id);
@@ -185,12 +211,12 @@ export default function CreateCampaign() {
               value={deadline}
               onChange={(e) => setDeadline(e.target.value)}
               min={minDeadline}
+              step="60"
               className="input"
               required
             />
             <p className="text-xs text-gray-500 mt-1">
-              After this date, the campaign can be finalized (interpreted as your
-              local timezone)
+              Choose the exact date and time when finalization becomes available
             </p>
           </div>
 

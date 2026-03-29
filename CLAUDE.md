@@ -50,48 +50,60 @@ anchor deploy --provider.cluster devnet
 ```
 Frontend (React + Solana wallet-adapter)
     → Backend (Go + Chi router)
-        → GitHub API (contributor metrics)
-        → AI Engine (OpenRouter, configurable model)
+        → GitHub API (contributor metrics + code diffs)
+        → AI Engine (OpenRouter, multi-dimensional impact scoring)
     → Solana Program (Anchor)
-        → On-chain campaign state
+        → On-chain campaign state + escrow vault
 ```
 
 ### Backend (`backend/`)
-- **Entry point:** `cmd/api/main.go` — loads config, injects services, starts server with graceful shutdown
+- **Entry point:** `cmd/api/main.go` — loads config, injects services, starts server + auto-finalize worker
 - **Services in `internal/`:**
   - `config/` — env loading via godotenv with defaults
-  - `models/` — shared types: Campaign, Allocation, Contributor
-  - `store/memory.go` — thread-safe in-memory campaign cache (RWMutex)
-  - `github/client.go` — fetches contributors + PRs; falls back to mock data on failure; retries 3x
-  - `ai/allocator.go` — OpenRouter LLM allocation or deterministic fallback (weighted: commits×3 + PRs×5 + reviews×2)
+  - `models/` — shared types: Campaign, Allocation, Contributor, User
+  - `store/sqlite.go` — SQLite persistent storage (fallback: in-memory)
+  - `auth/` — GitHub OAuth, JWT (HS256), auth middleware
+  - `github/client.go` — fetches contributors, PR diffs, reviews; adaptive selection; 5-concurrent limit
+  - `ai/allocator.go` — OpenRouter LLM with code diff analysis or deterministic fallback
   - `solana/client.go` — builds/sends Solana transactions; mock mode when no private key
   - `http/` — Chi router, handlers, middleware (CORS, rate limiting, structured zap logging)
+  - `http/worker.go` — auto-finalize background worker (scans campaigns past deadline)
 - **Handler pattern:** `Handlers` struct holds all services; methods are endpoint handlers
 - **Allocations use basis points:** percentages sum to 10000 (100%)
+- **Dual authority model:** `authority` = backend key (finalizes), `sponsor` = user wallet (funds)
 
 ### Frontend (`frontend/`)
 - React 18 + TypeScript + React Router v6 + Tailwind CSS (Solana theme colors)
 - Wallet: `@solana/wallet-adapter` with Phantom on devnet
-- API client in `src/api/client.ts` — fetch wrapper
-- Pages: Home (campaign list with all/my filter), CreateCampaign, CampaignDetails (preview + finalize)
-- Vite dev server proxies `/api` to backend at localhost:8080
+- GitHub OAuth login + JWT auth context (`hooks/useAuth.tsx`)
+- API client in `src/api/client.ts` — fetch wrapper with JWT injection
+- Pages: Home (campaign list, all/my filter by sponsor), CreateCampaign (2-step: create → fund), CampaignDetails (preview + finalize + claim), Profile (wallet linking + claims)
 
 ### Solana Program (`program/`)
 - Program ID: `8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ`
-- Campaign PDA seeds: `["campaign", authority, campaign_id]`
-- Two instructions: `create_campaign` (init state) and `finalize_campaign` (store allocations)
-- Constraints: percentages must sum to 10000 bps, max 10 allocations, no duplicate contributors
-- Tests in `tests/repobounty.ts` using ts-mocha + Chai
+- Campaign PDA seeds: `["campaign", campaign_id]`
+- Vault PDA seeds: `["vault", campaign_pda]` — holds escrowed SOL
+- State machine: Created → Funded → Finalized → Completed
+- Instructions: `create_campaign`, `fund_campaign`, `finalize_campaign` (deadline enforced), `claim`
+- Constraints: percentages sum to 10000 bps, max 10 allocations, deadline check on finalize
 
 ## API Endpoints
 
 ```
 GET  /api/health                         — Health check
+GET  /api/auth/github/url                — GitHub OAuth URL
+POST /api/auth/github/callback           — OAuth code exchange → JWT
+GET  /api/auth/me                        — Current user (protected)
+POST /api/wallet/link                    — Link Solana wallet (protected)
+GET  /api/claims                         — List claimable allocations (protected)
 GET  /api/campaigns                      — List campaigns
 POST /api/campaigns                      — Create campaign
 GET  /api/campaigns/{id}                 — Get campaign
 POST /api/campaigns/{id}/finalize-preview — AI preview (no on-chain)
 POST /api/campaigns/{id}/finalize        — AI allocate + Solana finalize
+POST /api/campaigns/{id}/claim           — Claim allocation (protected)
+POST /api/campaigns/{id}/claim-permit    — Claim permit (protected)
+POST /api/campaigns/{id}/fund-tx         — Get funding transaction
 ```
 
 ## Environment Variables
@@ -99,9 +111,11 @@ POST /api/campaigns/{id}/finalize        — AI allocate + Solana finalize
 See `backend/.env.example`. The backend works without external keys using mock data and deterministic allocation:
 - `PORT` (default 8080), `GITHUB_TOKEN`, `OPENROUTER_API_KEY`, `MODEL` (default: nvidia/nemotron free tier)
 - `SOLANA_RPC_URL` (default devnet), `SOLANA_PRIVATE_KEY`, `PROGRAM_ID`
+- `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `JWT_SECRET`, `FRONTEND_URL`
+- `DATABASE_PATH` (default: in-memory, set path for SQLite persistence)
 
-## MVP Scope Boundaries
+## Scope
 
-**In scope:** public repos, deadline-based campaigns, AI allocation, on-chain finalization.
+**Implemented:** public repos, deadline-based campaigns, escrow funding (vault PDA), AI allocation with code diff analysis, on-chain finalization with deadline enforcement, GitHub OAuth + wallet linking, contributor claim flow, auto-finalize worker, SQLite persistence.
 
-**Out of scope:** goal-based campaigns, GitHub App integration, wallet binding, anti-fraud, claim flow, notifications.
+**Not in scope:** goal-based campaigns, GitHub App integration (PR comments), anti-fraud, notifications, multi-sponsor campaigns.
