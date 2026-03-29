@@ -1,51 +1,12 @@
 import { Link } from "react-router-dom";
 import type { Campaign } from "../types";
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-}
-
-function formatSOL(lamports: number): string {
-  return (lamports / 1e9).toFixed(2);
-}
+import { getStateConfig, formatSOL, formatDate } from "../utils/campaign";
 
 export default function CampaignCard({ campaign }: { campaign: Campaign }) {
   const isFinalized = campaign.state === "finalized";
   const isCompleted = campaign.state === "completed";
   const isPastDeadline = new Date(campaign.deadline) < new Date();
-
-  const getStateColor = () => {
-    switch (campaign.state) {
-      case "completed":
-        return "bg-solana-green/20 text-solana-green";
-      case "finalized":
-        return "bg-solana-green/20 text-solana-green";
-      case "funded":
-        return "bg-blue-500/20 text-blue-400";
-      case "created":
-        return isPastDeadline ? "bg-yellow-500/20 text-yellow-400" : "bg-solana-purple/20 text-solana-purple";
-      default:
-        return "bg-solana-purple/20 text-solana-purple";
-    }
-  };
-
-  const getStateLabel = () => {
-    switch (campaign.state) {
-      case "completed":
-        return "Completed";
-      case "finalized":
-        return "Finalized";
-      case "funded":
-        return "Funded";
-      case "created":
-        return isPastDeadline ? "Ready to Fund" : "Created";
-      default:
-        return "Active";
-    }
-  };
+  const stateConfig = getStateConfig(campaign.state, isPastDeadline);
 
   return (
     <Link to={`/campaign/${campaign.campaign_id}`} className="block">
@@ -63,9 +24,9 @@ export default function CampaignCard({ campaign }: { campaign: Campaign }) {
             )}
           </div>
           <span
-            className={`text-xs font-semibold px-3 py-1 rounded-full ${getStateColor()}`}
+            className={`text-xs font-semibold px-3 py-1 rounded-full ${stateConfig.classes}`}
           >
-            {getStateLabel()}
+            {stateConfig.label}
           </span>
         </div>
 

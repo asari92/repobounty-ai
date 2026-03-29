@@ -191,6 +191,7 @@ func (c *Client) ClaimAllocation(ctx context.Context, campaignID, contributorGit
 		solana.AccountMetaSlice{
 			solana.NewAccountMeta(campaignPDA, true, false),
 			solana.NewAccountMeta(vaultPDA, true, false),
+			solana.NewAccountMeta(c.privateKey.PublicKey(), false, true), // authority signer
 			solana.NewAccountMeta(contributorKey, true, false),
 			solana.NewAccountMeta(solana.SystemProgramID, false, false),
 		},

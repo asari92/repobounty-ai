@@ -4,18 +4,8 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
+import { getStateConfig, formatSOL, formatDate } from "../utils/campaign";
 import type { Campaign, FinalizePreviewResponse } from "../types";
-
-function formatSOL(lamports: number): string {
-  return (lamports / 1e9).toFixed(4);
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-}
 
 function AllocationBar({ percentage }: { percentage: number }) {
   const pct = percentage / 100;
@@ -27,21 +17,6 @@ function AllocationBar({ percentage }: { percentage: number }) {
       />
     </div>
   );
-}
-
-function getStateConfig(state: Campaign["state"]) {
-  switch (state) {
-    case "completed":
-      return { label: "Completed", classes: "bg-solana-green/20 text-solana-green" };
-    case "finalized":
-      return { label: "Finalized", classes: "bg-solana-green/20 text-solana-green" };
-    case "funded":
-      return { label: "Funded", classes: "bg-blue-500/20 text-blue-400" };
-    case "created":
-      return { label: "Created", classes: "bg-solana-purple/20 text-solana-purple" };
-    default:
-      return { label: state, classes: "bg-solana-purple/20 text-solana-purple" };
-  }
 }
 
 export default function CampaignDetails() {
@@ -229,7 +204,7 @@ export default function CampaignDetails() {
           <div className="mt-4 pt-4 border-t border-solana-border">
             <span className="text-xs text-gray-400">Transaction: </span>
             <a
-              href={`https://explorer.solana.com/tx/${campaign.tx_signature}?cluster=devnet`}
+              href={`https://explorer.solana.com/tx/${campaign.tx_signature}?cluster=${import.meta.env.VITE_SOLANA_NETWORK || "devnet"}`}
               target="_blank"
               rel="noopener noreferrer"
               className="text-sm text-solana-purple hover:underline font-mono"

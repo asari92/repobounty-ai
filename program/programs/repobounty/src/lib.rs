@@ -430,8 +430,6 @@ pub enum RepoBountyError {
     InvalidPoolAmount,
     #[msg("Deadline must be in the future")]
     DeadlineInPast,
-    #[msg("Campaign has already been finalized")]
-    CampaignAlreadyFinalized,
     #[msg("Allocations must not be empty")]
     EmptyAllocations,
     #[msg("Maximum 10 allocations allowed")]

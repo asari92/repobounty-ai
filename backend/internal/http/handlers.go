@@ -27,6 +27,11 @@ import (
 )
 
 var repoPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$`)
+var base58Pattern = regexp.MustCompile(`^[1-9A-HJ-NP-Za-km-z]{32,44}$`)
+
+func isValidSolanaAddress(addr string) bool {
+	return base58Pattern.MatchString(addr)
+}
 
 type Handlers struct {
 	store       store.CampaignStore
@@ -88,6 +93,10 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.PoolAmount == 0 {
 		writeError(w, http.StatusBadRequest, "pool_amount must be greater than 0")
+		return
+	}
+	if req.SponsorWallet != "" && !isValidSolanaAddress(req.SponsorWallet) {
+		writeError(w, http.StatusBadRequest, "invalid sponsor wallet address")
 		return
 	}
 
@@ -412,6 +421,10 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 
 	if req.ContributorGithub == "" || req.WalletAddress == "" {
 		writeError(w, http.StatusBadRequest, "contributor_github and wallet_address are required")
+		return
+	}
+	if !isValidSolanaAddress(req.WalletAddress) {
+		writeError(w, http.StatusBadRequest, "invalid wallet address format")
 		return
 	}
 

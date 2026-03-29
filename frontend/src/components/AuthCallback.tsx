@@ -7,6 +7,8 @@ export function AuthCallback() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let redirectTimer: ReturnType<typeof setTimeout>;
+
     const handleCallback = async () => {
       const urlParams = new URLSearchParams(window.location.search);
       const code = urlParams.get("code");
@@ -17,21 +19,21 @@ export function AuthCallback() {
       }
 
       try {
-        const params = new URLSearchParams(window.location.search);
-        const state = params.get("state") || undefined;
+        const state = urlParams.get("state") || undefined;
         const response = await api.githubCallback({ code, state });
         localStorage.setItem("token", response.token);
         navigate("/");
       } catch (err) {
         console.error("Auth callback failed:", err);
         setError("Authentication failed. Please try again.");
-        setTimeout(() => {
+        redirectTimer = setTimeout(() => {
           navigate("/");
         }, 3000);
       }
     };
 
     handleCallback();
+    return () => clearTimeout(redirectTimer);
   }, [navigate]);
 
   if (error) {

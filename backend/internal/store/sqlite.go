@@ -173,7 +173,10 @@ func (s *SQLiteStore) GetUser(username string) (*User, error) {
 		}
 		return nil, fmt.Errorf("get user: %w", err)
 	}
-	u.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	u.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		u.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	}
 	return &u, nil
 }
 
