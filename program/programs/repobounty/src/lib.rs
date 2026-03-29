@@ -151,6 +151,60 @@ pub mod repobounty {
         );
         Ok(())
     }
+
+    /// Contributor claims their allocated reward.
+    pub fn claim(ctx: Context<Claim>, contributor_github: String) -> Result<()> {
+        let campaign = &mut ctx.accounts.campaign;
+        let vault = &mut ctx.accounts.vault;
+        let contributor = &ctx.accounts.contributor;
+
+        require!(
+            campaign.state == CampaignState::Finalized,
+            RepoBountyError::CampaignNotFinalized,
+        );
+
+        let allocation = campaign
+            .allocations
+            .iter_mut()
+            .find(|a| a.contributor == contributor_github)
+            .ok_or(RepoBountyError::ContributorNotFound)?;
+
+        require!(!allocation.claimed, RepoBountyError::AlreadyClaimed,);
+
+        require!(
+            allocation.claimant.is_none() || Some(contributor.key()) == allocation.claimant,
+            RepoBountyError::InvalidClaimant,
+        );
+
+        let vault_lamports = vault.lamports();
+        let transfer_amount = allocation.amount;
+
+        require!(
+            vault_lamports >= transfer_amount,
+            RepoBountyError::InsufficientVaultFunds,
+        );
+
+        **vault.to_account_info().try_borrow_mut_lamports()? -= transfer_amount;
+        **contributor.to_account_info().try_borrow_mut_lamports()? += transfer_amount;
+
+        allocation.claimed = true;
+        allocation.claimant = Some(contributor.key());
+
+        campaign.total_claimed += transfer_amount;
+
+        let all_claimed = campaign.allocations.iter().all(|a| a.claimed);
+        if all_claimed {
+            campaign.state = CampaignState::Completed;
+        }
+
+        msg!(
+            "Claim successful: {} | amount={} | contributor={}",
+            campaign.campaign_id,
+            transfer_amount,
+            contributor_github,
+        );
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -196,6 +250,25 @@ pub struct FundCampaign<'info> {
         constraint = sponsor.key() == campaign.sponsor @ RepoBountyError::InvalidSponsor,
     )]
     pub sponsor: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct Claim<'info> {
+    #[account(
+        mut,
+        seeds = [b"campaign", campaign.campaign_id.as_bytes()],
+        bump = campaign.bump,
+    )]
+    pub campaign: Account<'info, Campaign>,
+    #[account(
+        mut,
+        seeds = [b"vault", campaign.key().as_ref()],
+        bump = campaign.vault_bump,
+    )]
+    pub vault: SystemAccount<'info>,
+    #[account(mut)]
+    pub contributor: SystemAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -328,4 +401,10 @@ pub enum RepoBountyError {
     AlreadyClaimed,
     #[msg("Contributor not found in allocations")]
     ContributorNotFound,
+    #[msg("Campaign is not finalized")]
+    CampaignNotFinalized,
+    #[msg("Invalid claimant wallet")]
+    InvalidClaimant,
+    #[msg("Insufficient funds in vault for claim")]
+    InsufficientVaultFunds,
 }
