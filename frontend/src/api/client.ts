@@ -22,7 +22,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   createCampaign(data: CreateCampaignRequest): Promise<CreateCampaignResponse> {
-    return request("/campaigns", {
+    return request("/campaigns/", {
       method: "POST",
       body: JSON.stringify(data),
     });
@@ -33,7 +33,7 @@ export const api = {
   },
 
   listCampaigns(): Promise<Campaign[]> {
-    return request("/campaigns");
+    return request("/campaigns/");
   },
 
   finalizePreview(id: string): Promise<FinalizePreviewResponse> {

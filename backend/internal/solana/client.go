@@ -104,7 +104,7 @@ func (c *Client) CreateCampaign(ctx context.Context, campaignID, repo string, po
 	instruction := solana.NewInstruction(
 		c.programID,
 		solana.AccountMetaSlice{
-			solana.NewAccountMeta(campaignPDA, false, true),
+			solana.NewAccountMeta(campaignPDA, true, false),
 			solana.NewAccountMeta(authority, true, true),
 			solana.NewAccountMeta(solana.SystemProgramID, false, false),
 		},
@@ -150,8 +150,8 @@ func (c *Client) FinalizeCampaign(ctx context.Context, campaignID string, alloca
 	instruction := solana.NewInstruction(
 		c.programID,
 		solana.AccountMetaSlice{
-			solana.NewAccountMeta(campaignPDA, false, true),
-			solana.NewAccountMeta(authority, true, false),
+			solana.NewAccountMeta(campaignPDA, true, false),
+			solana.NewAccountMeta(authority, false, true),
 		},
 		data,
 	)

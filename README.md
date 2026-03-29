@@ -72,9 +72,7 @@ AI is not advisory — its decision directly creates on-chain state.
 The simplest way to run the full MVP locally is with Docker Compose:
 
 ```bash
-cd /home/asari/go/src/repobounty-ai
-docker compose build
-docker compose up
+docker compose up --build
 ```
 
 Services:
