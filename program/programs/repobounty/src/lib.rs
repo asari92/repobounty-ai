@@ -32,7 +32,10 @@ pub mod repobounty {
         require!(pool_amount > 0, RepoBountyError::InvalidPoolAmount);
 
         let clock = Clock::get()?;
-        require!(deadline > clock.unix_timestamp, RepoBountyError::DeadlineInPast);
+        require!(
+            deadline > clock.unix_timestamp,
+            RepoBountyError::DeadlineInPast
+        );
 
         let campaign = &mut ctx.accounts.campaign;
         campaign.authority = ctx.accounts.authority.key();
@@ -62,10 +65,7 @@ pub mod repobounty {
         ctx: Context<FinalizeCampaign>,
         allocations: Vec<AllocationInput>,
     ) -> Result<()> {
-        require!(
-            !allocations.is_empty(),
-            RepoBountyError::EmptyAllocations
-        );
+        require!(!allocations.is_empty(), RepoBountyError::EmptyAllocations);
         require!(
             allocations.len() <= MAX_ALLOCATIONS,
             RepoBountyError::TooManyAllocations
@@ -182,6 +182,7 @@ impl Campaign {
     pub fn space() -> usize {
         8                                       // discriminator
         + 32                                    // authority
+        + 32                                    // sponsor (new)
         + (4 + 32)                              // campaign_id (String)
         + (4 + MAX_REPO_LEN)                    // repo (String)
         + 8                                     // pool_amount
@@ -189,15 +190,19 @@ impl Campaign {
         + 1                                     // state enum
         + (4 + MAX_ALLOCATIONS * Allocation::SIZE) // allocations vec
         + 1                                     // bump
+        + 1                                     // vault_bump (new)
+        + 8                                     // total_claimed (new)
         + 8                                     // created_at
-        + (1 + 8)                               // finalized_at (Option<i64>)
+        + (1 + 8) // finalized_at (Option<i64>)
     }
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
 pub enum CampaignState {
     Created,
+    Funded,
     Finalized,
+    Completed,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
