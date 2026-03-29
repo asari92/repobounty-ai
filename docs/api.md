@@ -4,6 +4,8 @@ Base URL: `http://localhost:8080/api`
 
 All responses are JSON. Errors return `{"error": "message", "details": "optional"}`.
 
+This file documents the currently implemented HTTP API. The agreed next contract revision adds sponsor-owned escrow and GitHub-based claim/release, but those claim endpoints are not implemented yet.
+
 ---
 
 ## Health
@@ -175,6 +177,8 @@ Execute full finalization: GitHub fetch + AI allocation + Solana `finalize_campa
 
 This is **irreversible**. The campaign state changes to `finalized` on-chain.
 
+In the agreed target architecture, this call is expected to be authorized by a dedicated backend finalizer key after the deadline, while campaign ownership remains with the sponsor wallet.
+
 **Response** `200 OK`:
 ```json
 {
@@ -226,3 +230,16 @@ All timestamps are in **RFC3339** format (e.g. `2025-04-01T00:00:00Z`).
 |-------|-------------|
 | `created` | Campaign exists on-chain, waiting for deadline |
 | `finalized` | AI allocation stored on-chain, irreversible |
+
+---
+
+## Planned API Extensions
+
+The next escrow-and-claim revision is expected to add endpoints similar to:
+
+- GitHub OAuth endpoints for contributor login
+- wallet binding endpoints for authenticated GitHub users
+- claim listing endpoints for pending rewards
+- claim or release endpoints that trigger payout from escrow
+
+These endpoints are architectural intent only and do not exist in the current backend.

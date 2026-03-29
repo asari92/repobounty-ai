@@ -4,12 +4,20 @@
 
 RepoBounty AI connects public GitHub contribution data, AI-based reward allocation, and Solana smart contract state.
 
+This document reflects the agreed target architecture for the next contract revision:
+
+- sponsor wallet is the on-chain campaign `authority`
+- backend uses a dedicated service/finalizer key after deadline
+- contributors are identified by GitHub first, because wallets may be unknown at finalization time
+- contributors later authenticate with GitHub, bind wallets, and claim or receive released rewards
+
 Main flow:
 
-**Frontend → Backend API → GitHub Public API**  
-**Frontend → Backend API → AI Allocation Engine**  
-**Backend API → Solana Program**  
-**Frontend ← Backend API ← Solana state / allocation results**
+**Frontend -> Backend API -> GitHub Public API**  
+**Frontend -> Backend API -> AI Allocation Engine**  
+**Sponsor Wallet -> Solana Program**  
+**Backend Finalizer -> Solana Program**  
+**Frontend <- Backend API <- Solana state / entitlement results**
 
 ## Components
 
@@ -21,12 +29,15 @@ Responsibilities:
 - input repository URL, reward pool, deadline
 - display campaign state
 - display final contributor allocation
+- show `All Campaigns` and `My Campaigns`
+- support future GitHub login and wallet binding for contributor claims
 
 Main screens:
 
 - Create Campaign
 - Campaign Details
-- Final Allocation Results
+- Campaign List
+- Future Claim Screen
 
 ### 2. Backend API
 
@@ -38,8 +49,10 @@ Responsibilities:
 - prepare normalized contributor dataset
 - call AI allocation engine
 - validate AI response format
-- send finalize transaction to Solana
-- return final campaign result to frontend
+- trigger trusted finalization after deadline
+- maintain GitHub identity to wallet binding
+- authorize claim or release after GitHub auth
+- return campaign state and results to frontend
 
 Suggested modules:
 
@@ -47,13 +60,15 @@ Suggested modules:
 - github service
 - ai allocation service
 - solana service
+- auth / wallet binding service
 
 ### 3. GitHub Data Layer
 
 Responsibilities:
 
 - fetch public repository contribution data
-- collect basic contributor metrics for the MVP
+- collect contributor metrics for the MVP
+- act as the off-chain identity source for future claims
 
 MVP metrics:
 
@@ -102,39 +117,42 @@ MVP implementation options:
 
 Responsibilities:
 
-- create campaign account
+- create sponsor-owned campaign account
+- hold escrowed campaign funds in the target design
 - store campaign metadata
-- receive final allocations
+- receive final GitHub-based entitlements
 - mark campaign finalized
 - expose campaign state for UI
+- release claimed rewards to bound contributor wallets
 
 Core entities:
 
 - Campaign
-- ContributorAllocation
+- ContributorEntitlement
 
 Core instructions:
 
 - create_campaign
 - finalize_campaign
-- fetch campaign state client-side
+- claim_reward
 
 Optional future instructions:
 
-- claim_reward
 - add_funds
 - cancel_campaign
+- refund_campaign
 - multi-sponsor support
 
 ## Data Flow
 
 ### Campaign Creation
 
-1. User submits repo URL, pool, deadline.
-2. Backend validates input.
-3. Backend sends transaction to create campaign on Solana.
-4. Campaign account is created on-chain.
-5. Frontend shows created campaign.
+1. Sponsor submits repo URL, pool, deadline.
+2. Backend validates input and prepares campaign metadata.
+3. Sponsor wallet signs the campaign creation transaction.
+4. Campaign account is created on-chain with sponsor wallet as `authority`.
+5. In the target escrow design, funds are deposited into campaign escrow.
+6. Frontend shows created campaign.
 
 ### Campaign Finalization
 
@@ -143,9 +161,17 @@ Optional future instructions:
 3. Backend sends normalized data to AI engine.
 4. AI returns allocation.
 5. Backend validates allocation.
-6. Backend sends finalize transaction to Solana.
-7. Smart contract stores allocations and marks campaign as finalized.
+6. Backend finalizer key sends finalize transaction to Solana.
+7. Smart contract stores GitHub-based entitlements and marks campaign as finalized.
 8. Frontend displays final results.
+
+### Claim / Release
+
+1. Contributor logs into the app with GitHub.
+2. Contributor binds a Solana wallet.
+3. Backend verifies that the GitHub identity has an unclaimed finalized entitlement.
+4. Backend authorizes claim or release.
+5. Smart contract transfers the reward from escrow to the bound wallet.
 
 ## Trust Boundaries
 
@@ -154,15 +180,20 @@ Optional future instructions:
 - GitHub contribution data
 - AI allocation logic
 - backend orchestration
+- GitHub auth
+- wallet binding
+- claim authorization
 
 ### On-chain
 
+- sponsor ownership
 - campaign existence
-- finalized allocation
+- finalized entitlement state
+- escrowed reward pool in the target design
 - final state of campaign
 
-This split keeps the MVP realistic while still preserving the key requirement:
-AI must influence real on-chain state.
+This split keeps the MVP realistic while preserving the key requirement:
+AI must influence real on-chain reward state.
 
 ## Simple Component Diagram
 
@@ -175,7 +206,7 @@ AI must influence real on-chain state.
         |                                            | AI Allocation Engine|
         |                                            +-------------------+
         |
-        +<--------------------- +------------------+ <-------------------+
+        +---------------------> +------------------+
                                 |  Solana Program  |
                                 +------------------+
 ```
@@ -184,8 +215,8 @@ AI must influence real on-chain state.
 
 This architecture is intentionally narrow:
 
-- small enough to build in a few days
-- complete enough to demonstrate real autonomy
-- extensible enough for future features
+- small enough to build incrementally
+- strong enough to demonstrate real ownership and reward settlement
+- extensible enough for escrow, claim, and GitHub identity flows
 
-The main goal is not to build a full production platform, but to prove the end-to-end autonomous flow.
+The main goal is not to build a full production platform, but to prove the end-to-end autonomous reward flow with honest trust boundaries.

@@ -1,6 +1,6 @@
 # RepoBounty AI
 
-**AI-powered reward allocation for open-source contributors, finalized on Solana.**
+**AI-powered reward allocation for open-source contributors, with sponsor-owned campaigns and Solana settlement.**
 
 > National Solana Hackathon (Decentrathon) | Case 2: "AI + Blockchain: Autonomous Smart Contracts"
 
@@ -8,15 +8,26 @@
 
 ## The Idea
 
-Sponsors fund public GitHub repositories with a reward pool and a deadline. After the deadline, the system fetches contributor activity, runs AI-based reward allocation, and sends the final allocation on-chain to a Solana smart contract.
+Sponsors fund public GitHub repositories with a reward pool and a deadline. The agreed next architecture is sponsor-owned on-chain campaigns, backend-triggered finalization, and GitHub-based contributor claims after wallet binding.
 
 **The core chain that must work:**
 
 ```
-GitHub data --> AI allocation --> Solana transaction --> on-chain state change
+GitHub data --> AI allocation --> Solana finalization --> GitHub-based entitlements --> claim/release
 ```
 
-AI is not advisory — its decision directly creates on-chain state.
+AI is not advisory — its decision directly influences on-chain reward state.
+
+## Architecture Decision
+
+The agreed target model is:
+
+- sponsor wallet is the on-chain `authority`
+- campaign creation should be signed by the sponsor wallet
+- campaign funds are intended to move into escrow in the next contract revision
+- backend uses a dedicated trusted finalizer key after the deadline
+- finalization stores GitHub-based entitlements first, because contributor wallets may be unknown
+- contributors later authenticate with GitHub, bind wallets, and claim or receive released rewards
 
 ---
 
@@ -40,13 +51,14 @@ AI is not advisory — its decision directly creates on-chain state.
 
 **Data flow:**
 
-1. Sponsor connects wallet, creates campaign via frontend
-2. Backend validates and calls `create_campaign` on Solana
+1. Sponsor connects wallet and creates campaign via frontend
+2. Backend validates campaign input and orchestrates Solana interaction
 3. After deadline: backend fetches GitHub contributor stats
 4. Backend sends metrics to AI, receives allocation with reasoning
-5. Backend calls `finalize_campaign` on Solana with allocation data
-6. Smart contract validates and stores allocations on-chain
-7. Frontend displays final results with Solana Explorer links
+5. Trusted backend finalizer key calls `finalize_campaign` on Solana
+6. Smart contract validates and stores GitHub-based allocations or entitlements on-chain
+7. Contributors later bind wallets and claim or receive released rewards
+8. Frontend displays final results with Solana Explorer links
 
 ---
 
@@ -141,7 +153,7 @@ For the Docker build we use `anchor build --no-idl` inside the container to avoi
 | `GITHUB_TOKEN` | No | — | GitHub personal access token (higher rate limits) |
 | `OPENAI_API_KEY` | No | — | OpenAI API key (falls back to deterministic allocation) |
 | `SOLANA_RPC_URL` | No | `https://api.devnet.solana.com` | Solana RPC endpoint |
-| `SOLANA_PRIVATE_KEY` | No | — | Base58 private key for signing transactions |
+| `SOLANA_PRIVATE_KEY` | No | — | Backend service/finalizer key for Solana transactions in the current MVP |
 | `PROGRAM_ID` | No | — | Deployed Anchor program address |
 
 **Without any keys configured**, the backend still works using:
@@ -171,7 +183,7 @@ Create a new campaign.
 }
 ```
 
-Returns campaign details with `tx_signature` from the on-chain `create_campaign` call.
+Returns campaign details with `tx_signature` from the on-chain `create_campaign` call. `deadline` should be sent as RFC3339 with time, for example `2025-04-01T12:30:00Z`.
 
 ### `GET /api/campaigns/{id}`
 Get campaign details including allocations (if finalized).
@@ -198,6 +210,8 @@ Percentages are in basis points (10000 = 100%).
 ### `POST /api/campaigns/{id}/finalize`
 Execute finalization: GitHub fetch + AI allocation + Solana `finalize_campaign` transaction. Irreversible.
 
+In the agreed target architecture, this call is authorized by a dedicated backend finalizer key after the deadline, while campaign ownership remains with the sponsor wallet.
+
 ```json
 {
   "campaign_id": "abc12345",
@@ -212,10 +226,10 @@ Execute finalization: GitHub fetch + AI allocation + Solana `finalize_campaign` 
 
 ## Solana Smart Contract
 
-The Anchor program manages campaign lifecycle with two instructions:
+The current Anchor program manages basic campaign lifecycle. The agreed next revision is a sponsor-owned escrow-and-claim model.
 
 ### `create_campaign`
-Creates a PDA account seeded by `["campaign", authority, campaign_id]`.
+Creates a PDA account seeded by `["campaign", authority, campaign_id]`, where `authority` is the sponsor wallet.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -225,15 +239,27 @@ Creates a PDA account seeded by `["campaign", authority, campaign_id]`.
 | `deadline` | i64 | Unix timestamp |
 
 ### `finalize_campaign`
-Stores AI allocation results on-chain. Validates:
+In the target architecture, stores AI allocation results or GitHub-based entitlements on-chain. Validates:
 - Campaign exists and is in `Created` state
+- Deadline has passed
+- Signer matches the configured trusted finalizer authority
 - Allocations sum to exactly 10000 basis points (100%)
 - No duplicate contributors
 - Max 10 allocations per campaign
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `allocations` | Vec\<AllocationInput\> | `{contributor: String, percentage: u16}` |
+| `allocations` | Vec\<AllocationInput\> | `{contributor: String, percentage: u16}` in the current MVP, evolving toward GitHub-based entitlements |
+
+### `claim_reward` (planned)
+
+The next contract revision should add a claim or release instruction:
+
+- finalization records entitlement by GitHub identity
+- contributor authenticates with GitHub off-chain
+- contributor binds a wallet
+- backend authorizes the claim or release
+- escrowed reward is transferred to the bound wallet
 
 ### Account Structure
 
@@ -251,6 +277,13 @@ Campaign {
     finalized_at: Option<i64>,
 }
 ```
+
+The next contract revision should extend this model with:
+
+- escrow / vault linkage
+- trusted finalizer authority
+- claim status per contributor entitlement
+- wallet release metadata
 
 ---
 
@@ -356,6 +389,7 @@ repobounty-ai/
 7. Review allocation breakdown and click "Finalize on Solana"
 8. Transaction is sent — campaign moves to "Finalized"
 9. View allocations on-chain via Solana Explorer link
+10. In the target claim flow, contributors later log in with GitHub, bind wallets, and claim rewards
 
 **Backup mode (no external services):** The system works end-to-end with mock GitHub data, deterministic AI, and mock Solana transactions.
 
@@ -368,13 +402,16 @@ repobounty-ai/
 - Deadline-based campaigns
 - AI-powered allocation with reasoning
 - On-chain finalization via Solana
+- On-chain campaign listing
+- `All Campaigns` / `My Campaigns` filtering
 - Campaign dashboard with real-time status
 
 **Out of scope (future):**
+- Sponsor-signed escrow deposits
+- GitHub login + wallet binding
+- Claim flow (actual token distribution)
 - Goal-based campaigns
 - GitHub App integration
-- Wallet binding by GitHub identity
-- Claim flow (actual token distribution)
 - Anti-fraud / anti-gaming detection
 - Notifications
 - Multi-sponsor campaigns
