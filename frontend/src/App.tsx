@@ -4,6 +4,9 @@ import Layout from "./components/Layout";
 import Home from "./pages/Home";
 import CreateCampaign from "./pages/CreateCampaign";
 import CampaignDetails from "./pages/CampaignDetails";
+import Profile from "./pages/Profile";
+import { AuthProvider } from "./hooks/useAuth";
+import { AuthCallback } from "./components/AuthCallback";
 
 export default function App() {
   return (
@@ -14,13 +17,17 @@ export default function App() {
         }
       }}
     >
-      <Layout>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/create" element={<CreateCampaign />} />
-          <Route path="/campaign/:id" element={<CampaignDetails />} />
-        </Routes>
-      </Layout>
+      <AuthProvider>
+        <Layout>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/create" element={<CreateCampaign />} />
+            <Route path="/campaign/:id" element={<CampaignDetails />} />
+            <Route path="/profile" element={<Profile />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
+          </Routes>
+        </Layout>
+      </AuthProvider>
     </ErrorBoundary>
   );
 }

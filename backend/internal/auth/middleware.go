@@ -61,7 +61,7 @@ func GetUserFromContext(ctx context.Context) (*store.User, bool) {
 	return user, ok
 }
 
-func OptionalAuthMiddleware(jwtMgr *JWTManager, store *store.Store) func(http.Handler) http.Handler {
+func OptionalAuthMiddleware(jwtMgr *JWTManager, s *store.Store) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -82,7 +82,7 @@ func OptionalAuthMiddleware(jwtMgr *JWTManager, store *store.Store) func(http.Ha
 				return
 			}
 
-			user, err := store.GetUser(claims.Sub)
+			user, err := s.GetUser(claims.Sub)
 			if err != nil {
 				next.ServeHTTP(w, r)
 				return

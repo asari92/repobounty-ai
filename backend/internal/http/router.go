@@ -45,6 +45,7 @@ func NewRouter(h *Handlers, env string) http.Handler {
 			r.Post("/github/callback", h.GitHubCallback)
 			r.With(requireAuth).Get("/me", h.GetMe)
 			r.With(requireAuth).Post("/wallet/link", h.LinkWallet)
+			r.With(requireAuth).Get("/claims", h.GetClaims)
 		})
 
 		r.Route("/campaigns", func(r chi.Router) {
@@ -54,6 +55,8 @@ func NewRouter(h *Handlers, env string) http.Handler {
 			r.Get("/{id}", h.GetCampaign)
 			r.Post("/{id}/finalize-preview", h.FinalizePreview)
 			r.Post("/{id}/finalize", h.Finalize)
+			r.Post("/{id}/claim", h.Claim)
+			r.Post("/{id}/fund-tx", h.FundTx)
 		})
 	})
 

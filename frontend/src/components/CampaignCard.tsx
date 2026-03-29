@@ -15,7 +15,38 @@ function formatSOL(lamports: number): string {
 
 export default function CampaignCard({ campaign }: { campaign: Campaign }) {
   const isFinalized = campaign.state === "finalized";
+  const isCompleted = campaign.state === "completed";
   const isPastDeadline = new Date(campaign.deadline) < new Date();
+
+  const getStateColor = () => {
+    switch (campaign.state) {
+      case "completed":
+        return "bg-solana-green/20 text-solana-green";
+      case "finalized":
+        return "bg-solana-green/20 text-solana-green";
+      case "funded":
+        return "bg-blue-500/20 text-blue-400";
+      case "created":
+        return isPastDeadline ? "bg-yellow-500/20 text-yellow-400" : "bg-solana-purple/20 text-solana-purple";
+      default:
+        return "bg-solana-purple/20 text-solana-purple";
+    }
+  };
+
+  const getStateLabel = () => {
+    switch (campaign.state) {
+      case "completed":
+        return "Completed";
+      case "finalized":
+        return "Finalized";
+      case "funded":
+        return "Funded";
+      case "created":
+        return isPastDeadline ? "Ready to Fund" : "Created";
+      default:
+        return "Active";
+    }
+  };
 
   return (
     <Link to={`/campaign/${campaign.campaign_id}`} className="block">
@@ -26,25 +57,20 @@ export default function CampaignCard({ campaign }: { campaign: Campaign }) {
             <p className="text-sm text-gray-400 mt-1">
               ID: {campaign.campaign_id}
             </p>
+            {campaign.sponsor && (
+              <p className="text-xs text-gray-500 mt-0.5">
+                by {campaign.sponsor.slice(0, 8)}...
+              </p>
+            )}
           </div>
           <span
-            className={`text-xs font-semibold px-3 py-1 rounded-full ${
-              isFinalized
-                ? "bg-solana-green/20 text-solana-green"
-                : isPastDeadline
-                  ? "bg-yellow-500/20 text-yellow-400"
-                  : "bg-solana-purple/20 text-solana-purple"
-            }`}
+            className={`text-xs font-semibold px-3 py-1 rounded-full ${getStateColor()}`}
           >
-            {isFinalized
-              ? "Finalized"
-              : isPastDeadline
-                ? "Ready to Finalize"
-                : "Active"}
+            {getStateLabel()}
           </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 text-sm">
+        <div className="grid grid-cols-3 gap-4 text-sm">
           <div>
             <span className="text-gray-400">Pool</span>
             <p className="font-semibold text-solana-green">
@@ -55,6 +81,14 @@ export default function CampaignCard({ campaign }: { campaign: Campaign }) {
             <span className="text-gray-400">Deadline</span>
             <p className="font-semibold">{formatDate(campaign.deadline)}</p>
           </div>
+          {(isCompleted || isFinalized) && campaign.allocations.length > 0 && (
+            <div>
+              <span className="text-gray-400">Claimed</span>
+              <p className="font-semibold">
+                {formatSOL(campaign.total_claimed)} / {formatSOL(campaign.pool_amount)}
+              </p>
+            </div>
+          )}
         </div>
 
         {isFinalized && campaign.allocations.length > 0 && (
@@ -63,9 +97,12 @@ export default function CampaignCard({ campaign }: { campaign: Campaign }) {
               {campaign.allocations.slice(0, 3).map((a) => (
                 <span
                   key={a.contributor}
-                  className="text-xs bg-solana-dark px-2 py-1 rounded"
+                  className={`text-xs px-2 py-1 rounded ${
+                    a.claimed ? "bg-solana-green/20 text-solana-green" : "bg-solana-dark"
+                  }`}
                 >
                   @{a.contributor} ({(a.percentage / 100).toFixed(0)}%)
+                  {a.claimed && " ✓"}
                 </span>
               ))}
               {campaign.allocations.length > 3 && (

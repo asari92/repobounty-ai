@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/repobounty/repobounty-ai/internal/models"
 )
@@ -17,11 +18,12 @@ type Store struct {
 }
 
 type User struct {
-	GitHubUsername string
-	WalletAddress  string
-	GitHubID       int
-	Email          string
-	AvatarURL      string
+	GitHubUsername string    `json:"github_username"`
+	WalletAddress  string    `json:"wallet_address"`
+	GitHubID       int       `json:"github_id"`
+	Email          string    `json:"email,omitempty"`
+	AvatarURL      string    `json:"avatar_url"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 func New() *Store {
@@ -103,6 +105,9 @@ func (s *Store) CreateUser(u *User) error {
 		return errors.New("user already exists")
 	}
 	cp := *u
+	if cp.CreatedAt.IsZero() {
+		cp.CreatedAt = time.Now()
+	}
 	s.users[u.GitHubUsername] = &cp
 	return nil
 }

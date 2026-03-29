@@ -17,6 +17,7 @@ type Campaign struct {
 	VaultAddress string        `json:"vault_address"`
 	Repo         string        `json:"repo"`
 	PoolAmount   uint64        `json:"pool_amount"`
+	TotalClaimed uint64        `json:"total_claimed"`
 	Deadline     time.Time     `json:"deadline"`
 	State        CampaignState `json:"state"`
 	Authority    string        `json:"authority"`

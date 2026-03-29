@@ -4,15 +4,35 @@ import type {
   CreateCampaignResponse,
   FinalizePreviewResponse,
   FinalizeResponse,
+  User,
+  GitHubAuthRequest,
+  GitHubAuthResponse,
+  LinkWalletRequest,
+  ClaimItem,
+  FundTransactionResponse,
 } from "../types";
 
 const API_BASE = "/api";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = localStorage.getItem("token");
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  if (options?.headers) {
+    Object.entries(options.headers).forEach(([key, value]) => {
+      headers[key] = String(value);
+    });
+  }
+
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers,
   });
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(body.error || `Request failed: ${res.status}`);
@@ -42,5 +62,45 @@ export const api = {
 
   finalize(id: string): Promise<FinalizeResponse> {
     return request(`/campaigns/${id}/finalize`, { method: "POST" });
+  },
+
+  claimAllocation(campaignId: string, contributorGithub: string, walletAddress: string): Promise<{ tx_signature: string }> {
+    return request(`/campaigns/${campaignId}/claim`, {
+      method: "POST",
+      body: JSON.stringify({ contributor_github: contributorGithub, wallet_address: walletAddress }),
+    });
+  },
+
+  getGithubAuthUrl(): Promise<{ auth_url: string }> {
+    return request("/auth/github/url");
+  },
+
+  githubCallback(data: GitHubAuthRequest): Promise<GitHubAuthResponse> {
+    return request("/auth/github/callback", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  getMe(): Promise<User> {
+    return request("/auth/me");
+  },
+
+  linkWallet(data: LinkWalletRequest): Promise<User> {
+    return request("/auth/wallet/link", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  getClaims(): Promise<ClaimItem[]> {
+    return request("/auth/claims");
+  },
+
+  fundTx(campaignId: string, sponsorWallet: string): Promise<FundTransactionResponse> {
+    return request(`/campaigns/${campaignId}/fund-tx`, {
+      method: "POST",
+      body: JSON.stringify({ sponsor_wallet: sponsorWallet }),
+    });
   },
 };
