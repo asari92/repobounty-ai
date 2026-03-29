@@ -277,7 +277,7 @@ pub struct FinalizeCampaign<'info> {
     #[account(
         mut,
         has_one = authority,
-        constraint = campaign.state == CampaignState::Created @ RepoBountyError::CampaignAlreadyFinalized,
+        constraint = campaign.state == CampaignState::Funded @ RepoBountyError::AlreadyFinalized,
     )]
     pub campaign: Account<'info, Campaign>,
     pub authority: Signer<'info>,
