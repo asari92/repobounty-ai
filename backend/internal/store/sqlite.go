@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -24,7 +25,8 @@ func NewSQLite(dbPath string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 
-	db.SetMaxOpenConns(1)
+	db.SetMaxOpenConns(4)
+	db.Exec("PRAGMA journal_mode=WAL")
 
 	if err := migrate(db); err != nil {
 		db.Close()
@@ -138,6 +140,7 @@ func (s *SQLiteStore) List() []*models.Campaign {
 			deadline, state, authority, sponsor, allocations, created_at, finalized_at, tx_signature
 		FROM campaigns ORDER BY created_at DESC`)
 	if err != nil {
+		log.Printf("sqlite: list campaigns query failed: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -146,6 +149,7 @@ func (s *SQLiteStore) List() []*models.Campaign {
 	for rows.Next() {
 		c, err := s.scanCampaign(rows)
 		if err != nil {
+			log.Printf("sqlite: scan campaign failed: %v", err)
 			continue
 		}
 		result = append(result, c)
@@ -243,11 +247,21 @@ func (s *SQLiteStore) scanCampaign(scanner interface{ Scan(...interface{}) error
 		return nil, fmt.Errorf("scan campaign: %w", err)
 	}
 
-	c.Deadline, _ = time.Parse(time.RFC3339Nano, deadlineStr)
-	c.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAtStr)
+	var parseErr error
+	c.Deadline, parseErr = time.Parse(time.RFC3339Nano, deadlineStr)
+	if parseErr != nil {
+		c.Deadline, _ = time.Parse(time.RFC3339, deadlineStr)
+	}
+	c.CreatedAt, parseErr = time.Parse(time.RFC3339Nano, createdAtStr)
+	if parseErr != nil {
+		c.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+	}
 
 	if finalizedAtStr.Valid && finalizedAtStr.String != "" {
-		t, _ := time.Parse(time.RFC3339Nano, finalizedAtStr.String)
+		t, err := time.Parse(time.RFC3339Nano, finalizedAtStr.String)
+		if err != nil {
+			t, _ = time.Parse(time.RFC3339, finalizedAtStr.String)
+		}
 		c.FinalizedAt = &t
 	}
 
@@ -255,8 +269,10 @@ func (s *SQLiteStore) scanCampaign(scanner interface{ Scan(...interface{}) error
 		c.TxSignature = txSigStr.String
 	}
 
-	if allocJSON != "" {
-		_ = json.Unmarshal([]byte(allocJSON), &c.Allocations)
+	if allocJSON != "" && allocJSON != "[]" {
+		if err := json.Unmarshal([]byte(allocJSON), &c.Allocations); err != nil {
+			log.Printf("sqlite: unmarshal allocations for %s failed: %v", c.CampaignID, err)
+		}
 	}
 
 	return &c, nil

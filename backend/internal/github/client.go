@@ -22,7 +22,7 @@ type Client struct {
 }
 
 func NewClient(token string) *Client {
-	return &Client{token: token, httpClient: &http.Client{}}
+	return &Client{token: token, httpClient: &http.Client{Timeout: 30 * time.Second}}
 }
 
 func (c *Client) FetchContributors(ctx context.Context, repo string) ([]models.Contributor, error) {

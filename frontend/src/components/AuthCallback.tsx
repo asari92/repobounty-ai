@@ -17,12 +17,10 @@ export function AuthCallback() {
       }
 
       try {
-        const response = await api.githubCallback({ code });
+        const params = new URLSearchParams(window.location.search);
+        const state = params.get("state") || undefined;
+        const response = await api.githubCallback({ code, state });
         localStorage.setItem("token", response.token);
-        
-        const user = await api.getMe();
-        localStorage.setItem("user", JSON.stringify(user));
-        
         navigate("/");
       } catch (err) {
         console.error("Auth callback failed:", err);

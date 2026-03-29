@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { api } from "../api/client";
 import type { ClaimItem } from "../types";
@@ -11,6 +12,7 @@ export default function Profile() {
   const { user } = useAuth();
   const [claims, setClaims] = useState<ClaimItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) {
@@ -20,7 +22,7 @@ export default function Profile() {
     api
       .getClaims()
       .then(setClaims)
-      .catch((e) => console.error("Failed to load claims:", e))
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load claims"))
       .finally(() => setLoading(false));
   }, [user]);
 
@@ -71,7 +73,11 @@ export default function Profile() {
           )}
         </div>
 
-        {loading ? (
+        {error ? (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-sm text-red-400">
+            {error}
+          </div>
+        ) : loading ? (
           <div className="text-center py-8">
             <div className="inline-block w-8 h-8 border-2 border-solana-purple border-t-transparent rounded-full animate-spin" />
           </div>
@@ -96,12 +102,12 @@ export default function Profile() {
                     {claim.amount_sol} SOL ({(claim.percentage / 100).toFixed(1)}%)
                   </span>
                 </div>
-                <a
-                  href={`/campaign/${claim.campaign_id}`}
+                <Link
+                  to={`/campaign/${claim.campaign_id}`}
                   className="text-xs text-solana-purple hover:underline"
                 >
                   View campaign &rarr;
-                </a>
+                </Link>
               </div>
             ))}
           </div>

@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWallet } from "@solana/wallet-adapter-react";
+import { useConnection } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { VersionedTransaction, Connection } from "@solana/web3.js";
+import { VersionedTransaction } from "@solana/web3.js";
 import bs58 from "bs58";
 import { api } from "../api/client";
 
@@ -26,6 +27,7 @@ function toStableRFC3339(value: string): string | null {
 
 export default function CreateCampaign() {
   const { publicKey, sendTransaction } = useWallet();
+  const { connection } = useConnection();
   const { setVisible } = useWalletModal();
   const navigate = useNavigate();
 
@@ -114,7 +116,6 @@ export default function CreateCampaign() {
   }
 
   async function waitForSignature(signature: string) {
-    const connection = new Connection("https://api.devnet.solana.com");
     const { blockhash, lastValidBlockHeight } =
       await connection.getLatestBlockhash();
     await connection.confirmTransaction(

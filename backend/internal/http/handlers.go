@@ -39,6 +39,9 @@ type Handlers struct {
 
 	oauthStates   map[string]time.Time // state -> expiry
 	oauthStatesMu sync.Mutex
+
+	claimLocks   map[string]*sync.Mutex // campaign_id -> lock
+	claimLocksMu sync.Mutex
 }
 
 func NewHandlers(
@@ -59,6 +62,7 @@ func NewHandlers(
 		githubOAuth: githubOAuth,
 		config:      config,
 		oauthStates: make(map[string]time.Time),
+		claimLocks:  make(map[string]*sync.Mutex),
 	}
 }
 
@@ -97,7 +101,7 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	campaignID := uuid.New().String()[:8]
+	campaignID := uuid.New().String()[:12]
 
 	txSig, campaignPDA, vaultPDA, err := h.solana.CreateCampaign(
 		r.Context(),
@@ -317,10 +321,10 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 	if err := h.store.Update(campaign); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			if createErr := h.store.Create(campaign); createErr != nil {
-				log.Printf("store create failed after finalization: %v", createErr)
+				log.Printf("CRITICAL: store create failed after on-chain finalization (campaign=%s, tx=%s): %v", campaign.CampaignID, txSig, createErr)
 			}
 		} else {
-			log.Printf("store update failed after finalization: %v", err)
+			log.Printf("CRITICAL: store update failed after on-chain finalization (campaign=%s, tx=%s): %v", campaign.CampaignID, txSig, err)
 		}
 	}
 
@@ -368,8 +372,26 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if campaign.State != models.StateFinalized {
+	if campaign.State != models.StateFinalized && campaign.State != models.StateCompleted {
 		writeError(w, http.StatusConflict, "campaign is not finalized")
+		return
+	}
+
+	// Per-campaign lock to prevent race conditions on concurrent claims
+	h.claimLocksMu.Lock()
+	mu, exists := h.claimLocks[id]
+	if !exists {
+		mu = &sync.Mutex{}
+		h.claimLocks[id] = mu
+	}
+	h.claimLocksMu.Unlock()
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Re-load campaign under lock to get fresh state
+	campaign, err = h.loadCampaign(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -653,6 +675,8 @@ func (h *Handlers) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 		Token: token,
 		User:  *userModel,
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -693,6 +717,8 @@ func (h *Handlers) LinkWallet(w http.ResponseWriter, r *http.Request) {
 
 func generateState() string {
 	b := make([]byte, 32)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }

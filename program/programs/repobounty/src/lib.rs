@@ -103,6 +103,10 @@ pub mod repobounty {
             RepoBountyError::TooManyAllocations
         );
 
+        for a in allocations.iter() {
+            require!(!a.contributor.is_empty(), RepoBountyError::ContributorNameEmpty);
+        }
+
         let clock = Clock::get()?;
         require!(
             clock.unix_timestamp >= ctx.accounts.campaign.deadline,
@@ -211,6 +215,22 @@ pub mod repobounty {
         );
         Ok(())
     }
+
+    /// Withdraw remaining dust from vault after all claims are complete.
+    /// Only the campaign sponsor can call this, and only after Completed state.
+    pub fn withdraw_remaining(ctx: Context<WithdrawRemaining>) -> Result<()> {
+        let vault = &mut ctx.accounts.vault;
+        let sponsor = &mut ctx.accounts.sponsor;
+
+        let remaining = vault.lamports();
+        if remaining > 0 {
+            **vault.to_account_info().try_borrow_mut_lamports()? -= remaining;
+            **sponsor.to_account_info().try_borrow_mut_lamports()? += remaining;
+        }
+
+        msg!("Withdrawn remaining {} lamports to sponsor", remaining);
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +283,31 @@ pub struct FundCampaign<'info> {
 pub struct Claim<'info> {
     #[account(
         mut,
+        has_one = authority,
+        seeds = [b"campaign", campaign.campaign_id.as_bytes()],
+        bump = campaign.bump,
+    )]
+    pub campaign: Account<'info, Campaign>,
+    #[account(
+        mut,
+        seeds = [b"vault", campaign.key().as_ref()],
+        bump = campaign.vault_bump,
+    )]
+    pub vault: SystemAccount<'info>,
+    /// Backend authority must sign claim transactions (identity oracle)
+    pub authority: Signer<'info>,
+    /// Contributor wallet that receives SOL
+    #[account(mut)]
+    pub contributor: SystemAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct WithdrawRemaining<'info> {
+    #[account(
+        mut,
+        constraint = campaign.state == CampaignState::Completed @ RepoBountyError::CampaignNotCompleted,
+        constraint = campaign.sponsor == sponsor.key() @ RepoBountyError::InvalidSponsor,
         seeds = [b"campaign", campaign.campaign_id.as_bytes()],
         bump = campaign.bump,
     )]
@@ -274,7 +319,7 @@ pub struct Claim<'info> {
     )]
     pub vault: SystemAccount<'info>,
     #[account(mut)]
-    pub contributor: SystemAccount<'info>,
+    pub sponsor: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -417,4 +462,8 @@ pub enum RepoBountyError {
     DeadlineNotReached,
     #[msg("Arithmetic overflow in allocation calculation")]
     ArithmeticOverflow,
+    #[msg("Contributor name cannot be empty")]
+    ContributorNameEmpty,
+    #[msg("Campaign must be in Completed state to withdraw remaining")]
+    CampaignNotCompleted,
 }

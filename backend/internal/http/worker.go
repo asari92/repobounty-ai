@@ -13,6 +13,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const maxAutoFinalizeRetries = 3
+
 func StartAutoFinalizeWorker(
 	ctx context.Context,
 	campaignStore store.CampaignStore,
@@ -25,6 +27,8 @@ func StartAutoFinalizeWorker(
 	if interval == 0 {
 		interval = 5 * time.Minute
 	}
+
+	retries := make(map[string]int) // campaign_id -> failure count
 
 	go func() {
 		defer func() {
@@ -46,7 +50,7 @@ func StartAutoFinalizeWorker(
 							logger.Error("auto-finalize tick panic", zap.Any("recover", r))
 						}
 					}()
-					autoFinalize(ctx, campaignStore, ghClient, allocator, solClient, logger)
+					autoFinalize(ctx, campaignStore, ghClient, allocator, solClient, logger, retries)
 				}()
 			case <-ctx.Done():
 				logger.Info("auto-finalize worker stopping")
@@ -63,6 +67,7 @@ func autoFinalize(
 	allocator *ai.Allocator,
 	solClient *solana.Client,
 	logger *zap.Logger,
+	retries map[string]int,
 ) {
 	campaigns := campaignStore.List()
 	now := time.Now()
@@ -74,6 +79,9 @@ func autoFinalize(
 		if now.Before(c.Deadline) {
 			continue
 		}
+		if retries[c.CampaignID] >= maxAutoFinalizeRetries {
+			continue
+		}
 
 		logger.Info("auto-finalizing campaign",
 			zap.String("campaign_id", c.CampaignID),
@@ -82,8 +90,10 @@ func autoFinalize(
 
 		contributors, err := ghClient.FetchContributors(ctx, c.Repo)
 		if err != nil {
+			retries[c.CampaignID]++
 			logger.Error("auto-finalize: github fetch failed",
 				zap.String("campaign_id", c.CampaignID),
+				zap.Int("attempt", retries[c.CampaignID]),
 				zap.Error(err),
 			)
 			continue
@@ -106,8 +116,10 @@ func autoFinalize(
 		if allocations == nil {
 			allocations, err = allocator.Allocate(ctx, c.Repo, contributors, c.PoolAmount)
 			if err != nil {
+				retries[c.CampaignID]++
 				logger.Error("auto-finalize: AI allocation failed",
 					zap.String("campaign_id", c.CampaignID),
+					zap.Int("attempt", retries[c.CampaignID]),
 					zap.Error(err),
 				)
 				continue
@@ -124,8 +136,10 @@ func autoFinalize(
 
 		txSig, err := solClient.FinalizeCampaign(ctx, c.CampaignID, solanaInputs)
 		if err != nil {
+			retries[c.CampaignID]++
 			logger.Error("auto-finalize: solana finalize failed",
 				zap.String("campaign_id", c.CampaignID),
+				zap.Int("attempt", retries[c.CampaignID]),
 				zap.Error(err),
 			)
 			continue
@@ -144,6 +158,8 @@ func autoFinalize(
 			)
 			continue
 		}
+
+		delete(retries, c.CampaignID) // clear retry counter on success
 
 		explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
 		logger.Info("auto-finalize: campaign finalized",

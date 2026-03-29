@@ -95,6 +95,10 @@ func copycamp(c *models.Campaign) *models.Campaign {
 		cp.Allocations = make([]models.Allocation, len(c.Allocations))
 		copy(cp.Allocations, c.Allocations)
 	}
+	if c.FinalizedAt != nil {
+		t := *c.FinalizedAt
+		cp.FinalizedAt = &t
+	}
 	return &cp
 }
 

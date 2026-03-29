@@ -19,6 +19,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     checkAuth();
+
+    const handleExpired = () => {
+      setUser(null);
+      localStorage.removeItem("token");
+    };
+    window.addEventListener("auth-expired", handleExpired);
+    return () => window.removeEventListener("auth-expired", handleExpired);
   }, []);
 
   const checkAuth = async () => {
