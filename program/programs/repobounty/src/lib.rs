@@ -226,7 +226,7 @@ pub struct Allocation {
 }
 
 impl Allocation {
-    /// 4 + MAX_CONTRIBUTOR_LEN + 2 + 8 + 1 + (1 + 32) = 82 bytes
+    /// 4 + MAX_CONTRIBUTOR_LEN + 2 + 8 + 1 + (1 + 32) = 87 bytes
     pub const SIZE: usize = 4 + MAX_CONTRIBUTOR_LEN + 2 + 8 + 1 + (1 + 32);
 }
 
