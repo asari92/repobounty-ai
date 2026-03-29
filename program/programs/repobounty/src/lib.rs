@@ -107,6 +107,8 @@ pub mod repobounty {
                     .checked_mul(a.percentage as u64)
                     .unwrap()
                     / BPS_100 as u64,
+                claimed: false,
+                claimant: None,
             })
             .collect();
 
@@ -219,11 +221,13 @@ pub struct Allocation {
     pub contributor: String,
     pub percentage: u16,
     pub amount: u64,
+    pub claimed: bool,
+    pub claimant: Option<Pubkey>,
 }
 
 impl Allocation {
-    /// 4 + MAX_CONTRIBUTOR_LEN + 2 + 8
-    pub const SIZE: usize = 4 + MAX_CONTRIBUTOR_LEN + 2 + 8;
+    /// 4 + MAX_CONTRIBUTOR_LEN + 2 + 8 + 1 + (1 + 32) = 82 bytes
+    pub const SIZE: usize = 4 + MAX_CONTRIBUTOR_LEN + 2 + 8 + 1 + (1 + 32);
 }
 
 /// Input DTO for finalize_campaign instruction.
