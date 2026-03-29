@@ -4,6 +4,24 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { api } from "../api/client";
 
+function pad(value: number): string {
+  return value.toString().padStart(2, "0");
+}
+
+function toDateTimeLocalValue(date: Date): string {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate()
+  )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function toStableRFC3339(value: string): string | null {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
 export default function CreateCampaign() {
   const { publicKey } = useWallet();
   const { setVisible } = useWalletModal();
@@ -15,7 +33,9 @@ export default function CreateCampaign() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().split("T")[0];
+  const minDeadline = toDateTimeLocalValue(
+    new Date(Date.now() + 15 * 60 * 1000)
+  );
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -37,12 +57,18 @@ export default function CreateCampaign() {
       return;
     }
 
+    const deadlineRFC3339 = toStableRFC3339(deadline);
+    if (!deadlineRFC3339) {
+      setError("Deadline must include a valid date and time");
+      return;
+    }
+
     setSubmitting(true);
     try {
       const result = await api.createCampaign({
         repo,
         pool_amount: poolLamports,
-        deadline: new Date(deadline).toISOString(),
+        deadline: deadlineRFC3339,
         wallet_address: publicKey.toBase58(),
       });
       navigate(`/campaign/${result.campaign_id}`);
@@ -100,15 +126,16 @@ export default function CreateCampaign() {
         <div>
           <label className="block text-sm font-medium mb-2">Deadline</label>
           <input
-            type="date"
+            type="datetime-local"
             value={deadline}
             onChange={(e) => setDeadline(e.target.value)}
-            min={tomorrow}
+            min={minDeadline}
+            step="60"
             className="input"
             required
           />
           <p className="text-xs text-gray-500 mt-1">
-            After this date, the campaign can be finalized
+            Choose the exact date and time when finalization becomes available
           </p>
         </div>
 
