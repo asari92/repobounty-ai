@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -35,6 +36,9 @@ type Handlers struct {
 	jwt         *auth.JWTManager
 	githubOAuth *auth.GitHubOAuth
 	config      *config.Config
+
+	oauthStates   map[string]time.Time // state -> expiry
+	oauthStatesMu sync.Mutex
 }
 
 func NewHandlers(
@@ -54,6 +58,7 @@ func NewHandlers(
 		jwt:         jwt,
 		githubOAuth: githubOAuth,
 		config:      config,
+		oauthStates: make(map[string]time.Time),
 	}
 }
 
@@ -368,7 +373,7 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, ok := auth.GetUserFromContext(r.Context())
+	user, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
@@ -385,6 +390,11 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 
 	if req.ContributorGithub == "" || req.WalletAddress == "" {
 		writeError(w, http.StatusBadRequest, "contributor_github and wallet_address are required")
+		return
+	}
+
+	if user.GitHubUsername != req.ContributorGithub {
+		writeError(w, http.StatusForbidden, "can only claim your own allocation")
 		return
 	}
 
@@ -547,6 +557,18 @@ func (h *Handlers) loadCampaign(ctx context.Context, id string) (*models.Campaig
 
 func (h *Handlers) GetGitHubAuthURL(w http.ResponseWriter, r *http.Request) {
 	state := generateState()
+
+	h.oauthStatesMu.Lock()
+	// Clean expired states
+	now := time.Now()
+	for k, exp := range h.oauthStates {
+		if now.After(exp) {
+			delete(h.oauthStates, k)
+		}
+	}
+	h.oauthStates[state] = now.Add(10 * time.Minute)
+	h.oauthStatesMu.Unlock()
+
 	authURL := h.githubOAuth.GetAuthURL(state)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -570,6 +592,22 @@ func (h *Handlers) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 
 	if code == "" {
 		writeError(w, http.StatusBadRequest, "missing code parameter")
+		return
+	}
+
+	// Validate OAuth state to prevent CSRF
+	if req.State == "" {
+		writeError(w, http.StatusBadRequest, "missing state parameter")
+		return
+	}
+	h.oauthStatesMu.Lock()
+	expiry, exists := h.oauthStates[req.State]
+	if exists {
+		delete(h.oauthStates, req.State) // one-time use
+	}
+	h.oauthStatesMu.Unlock()
+	if !exists || time.Now().After(expiry) {
+		writeError(w, http.StatusBadRequest, "invalid or expired state parameter")
 		return
 	}
 

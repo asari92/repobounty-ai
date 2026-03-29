@@ -78,7 +78,14 @@ func (g *GitHubOAuth) ExchangeCode(ctx context.Context, code string) (*GitHubUse
 		return nil, "", fmt.Errorf("decode token response: %w", err)
 	}
 
-	userResp, err := g.httpClient.Get("https://api.github.com/user")
+	userReq, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user", nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("build user request: %w", err)
+	}
+	userReq.Header.Set("Authorization", "Bearer "+tokenResp.AccessToken)
+	userReq.Header.Set("Accept", "application/vnd.github+json")
+
+	userResp, err := g.httpClient.Do(userReq)
 	if err != nil {
 		return nil, "", fmt.Errorf("fetch user: %w", err)
 	}
