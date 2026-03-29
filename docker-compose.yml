@@ -6,13 +6,26 @@ services:
     environment:
       - PORT=8080
       - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+      - JWT_SECRET=${JWT_SECRET}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5173}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - MODEL=${MODEL}
-      - SOLANA_RPC_URL=${SOLANA_RPC_URL}
+      - MODEL=${MODEL:-nvidia/nemotron-3-super-120b-a12b:free}
+      - SOLANA_RPC_URL=${SOLANA_RPC_URL:-https://api.devnet.solana.com}
       - SOLANA_PRIVATE_KEY=${SOLANA_PRIVATE_KEY}
-      - PROGRAM_ID=${PROGRAM_ID}
-    depends_on:
-      - solana-program
+      - PROGRAM_ID=${PROGRAM_ID:-8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
+      - DATABASE_PATH=/data/repobounty.db
+    volumes:
+      - backend-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
     networks:
       - repobounty
 
@@ -21,17 +34,14 @@ services:
     ports:
       - "5173:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
     networks:
       - repobounty
 
-  solana-program:
-    build: ./program
-    environment:
-      - SOLANA_RPC_URL=${SOLANA_RPC_URL}
-      - SOLANA_PRIVATE_KEY=${SOLANA_PRIVATE_KEY}
-    networks:
-      - repobounty
+volumes:
+  backend-data:
 
 networks:
   repobounty:
