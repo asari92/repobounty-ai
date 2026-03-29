@@ -2,6 +2,8 @@ package http
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +16,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/repobounty/repobounty-ai/internal/ai"
+	"github.com/repobounty/repobounty-ai/internal/auth"
+	"github.com/repobounty/repobounty-ai/internal/config"
 	"github.com/repobounty/repobounty-ai/internal/github"
 	"github.com/repobounty/repobounty-ai/internal/models"
 	"github.com/repobounty/repobounty-ai/internal/solana"
@@ -23,14 +27,33 @@ import (
 var repoPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$`)
 
 type Handlers struct {
-	store  *store.Store
-	github *github.Client
-	ai     *ai.Allocator
-	solana *solana.Client
+	store       *store.Store
+	github      *github.Client
+	solana      *solana.Client
+	ai          *ai.Allocator
+	jwt         *auth.JWTManager
+	githubOAuth *auth.GitHubOAuth
+	config      *config.Config
 }
 
-func NewHandlers(s *store.Store, gh *github.Client, alloc *ai.Allocator, sol *solana.Client) *Handlers {
-	return &Handlers{store: s, github: gh, ai: alloc, solana: sol}
+func NewHandlers(
+	s *store.Store,
+	gh *github.Client,
+	sol *solana.Client,
+	alloc *ai.Allocator,
+	jwt *auth.JWTManager,
+	githubOAuth *auth.GitHubOAuth,
+	config *config.Config,
+) *Handlers {
+	return &Handlers{
+		store:       s,
+		github:      gh,
+		solana:      sol,
+		ai:          alloc,
+		jwt:         jwt,
+		githubOAuth: githubOAuth,
+		config:      config,
+	}
 }
 
 func (h *Handlers) ListCampaigns(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +113,8 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 		PoolAmount:  req.PoolAmount,
 		Deadline:    deadline,
 		State:       models.StateCreated,
-		Authority:   req.WalletAddress,
+		Authority:   "",
+		Sponsor:     req.SponsorWallet,
 		Allocations: []models.Allocation{},
 		CreatedAt:   now,
 		TxSignature: txSig,
@@ -102,12 +126,14 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, models.CreateCampaignResponse{
-		CampaignID:  campaign.CampaignID,
-		Repo:        campaign.Repo,
-		PoolAmount:  campaign.PoolAmount,
-		Deadline:    campaign.Deadline.Format(time.RFC3339),
-		State:       campaign.State,
-		TxSignature: txSig,
+		CampaignID:   campaign.CampaignID,
+		CampaignPDA:  "",
+		VaultAddress: "",
+		Repo:         campaign.Repo,
+		PoolAmount:   campaign.PoolAmount,
+		Deadline:     campaign.Deadline.Format(time.RFC3339),
+		State:        campaign.State,
+		TxSignature:  txSig,
 	})
 }
 
@@ -284,4 +310,101 @@ func (h *Handlers) loadCampaign(ctx context.Context, id string) (*models.Campaig
 	}
 
 	return nil, store.ErrNotFound
+}
+
+func (h *Handlers) GetGitHubAuthURL(w http.ResponseWriter, r *http.Request) {
+	state := generateState()
+	authURL := h.githubOAuth.GetAuthURL(state)
+	json.NewEncoder(w).Encode(map[string]string{"url": authURL, "state": state})
+}
+
+func (h *Handlers) GitHubCallback(w http.ResponseWriter, r *http.Request) {
+	code := r.URL.Query().Get("code")
+	_ = r.URL.Query().Get("state")
+
+	if code == "" {
+		writeError(w, http.StatusBadRequest, "missing code parameter")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	user, _, err := h.githubOAuth.ExchangeCode(ctx, code)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to exchange code: "+err.Error())
+		return
+	}
+
+	existingUser, _ := h.store.GetUser(user.Login)
+	if existingUser == nil {
+		newUser := &store.User{
+			GitHubUsername: user.Login,
+			WalletAddress:  "",
+			GitHubID:       user.ID,
+			Email:          user.Email,
+			AvatarURL:      user.AvatarURL,
+		}
+		if err := h.store.CreateUser(newUser); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create user: "+err.Error())
+			return
+		}
+		existingUser = newUser
+	}
+
+	token, err := h.jwt.GenerateToken(existingUser.GitHubUsername)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate token: "+err.Error())
+		return
+	}
+
+	userModel := &models.User{
+		GitHubUsername: existingUser.GitHubUsername,
+		GitHubID:       existingUser.GitHubID,
+		AvatarURL:      existingUser.AvatarURL,
+		WalletAddress:  existingUser.WalletAddress,
+		CreatedAt:      time.Now(),
+	}
+	response := models.GitHubAuthResponse{
+		Token: token,
+		User:  *userModel,
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+func (h *Handlers) GetMe(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	json.NewEncoder(w).Encode(user)
+}
+
+func (h *Handlers) LinkWallet(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var req models.LinkWalletRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	user.WalletAddress = req.WalletAddress
+	if err := h.store.UpdateUser(user); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update user: "+err.Error())
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+}
+
+func generateState() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }

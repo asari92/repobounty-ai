@@ -7,28 +7,38 @@ import (
 )
 
 type Config struct {
-	Port             string
-	GitHubToken      string
-	OpenRouterAPIKey string
-	Model            string
-	SolanaRPCURL     string
-	SolanaPrivateKey string
-	ProgramID        string
-	Env              string
-	AllowedOrigins   string
+	Port               string
+	GitHubToken        string
+	GitHubClientID     string
+	GitHubClientSecret string
+	FrontendURL        string
+	JWTSecret          string
+	OpenRouterAPIKey   string
+	Model              string
+	SolanaRPCURL       string
+	SolanaPrivateKey   string
+	ProgramID          string
+	Env                string
+	AllowedOrigins     string
 }
 
 func Load() (*Config, error) {
 	_ = godotenv.Load()
 
 	cfg := &Config{
-		Port:             envOrDefault("PORT", "8080"),
-		GitHubToken:      os.Getenv("GITHUB_TOKEN"),
-		OpenRouterAPIKey: os.Getenv("OPENROUTER_API_KEY"), Model: envOrDefault("MODEL", "nvidia/nemotron-3-super-120b-a12b:free"), SolanaRPCURL: envOrDefault("SOLANA_RPC_URL", "https://api.devnet.solana.com"),
-		SolanaPrivateKey: os.Getenv("SOLANA_PRIVATE_KEY"),
-		ProgramID:        os.Getenv("PROGRAM_ID"),
-		Env:              envOrDefault("ENV", "development"),
-		AllowedOrigins:   os.Getenv("ALLOWED_ORIGINS"),
+		Port:               envOrDefault("PORT", "8080"),
+		GitHubToken:        os.Getenv("GITHUB_TOKEN"),
+		GitHubClientID:     os.Getenv("GITHUB_CLIENT_ID"),
+		GitHubClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
+		FrontendURL:        envOrDefault("FRONTEND_URL", "http://localhost:3000"),
+		JWTSecret:          os.Getenv("JWT_SECRET"),
+		OpenRouterAPIKey:   os.Getenv("OPENROUTER_API_KEY"),
+		Model:              envOrDefault("MODEL", "nvidia/nemotron-3-super-120b-a12b:free"),
+		SolanaRPCURL:       envOrDefault("SOLANA_RPC_URL", "https://api.devnet.solana.com"),
+		SolanaPrivateKey:   os.Getenv("SOLANA_PRIVATE_KEY"),
+		ProgramID:          os.Getenv("PROGRAM_ID"),
+		Env:                envOrDefault("ENV", "development"),
+		AllowedOrigins:     os.Getenv("ALLOWED_ORIGINS"),
 	}
 	return cfg, nil
 }

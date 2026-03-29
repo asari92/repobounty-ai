@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/repobounty/repobounty-ai/internal/ai"
+	"github.com/repobounty/repobounty-ai/internal/auth"
 	"github.com/repobounty/repobounty-ai/internal/config"
 	"github.com/repobounty/repobounty-ai/internal/github"
 	handler "github.com/repobounty/repobounty-ai/internal/http"
@@ -48,6 +49,19 @@ func main() {
 		logger.Fatal("failed to init solana client", zap.Error(err))
 	}
 
+	jwtManager := auth.NewJWTManager(cfg.JWTSecret)
+	githubOAuth := auth.NewGitHubOAuth(cfg)
+
+	handlers := handler.NewHandlers(
+		campaignStore,
+		ghClient,
+		solClient,
+		aiAllocator,
+		jwtManager,
+		githubOAuth,
+		cfg,
+	)
+
 	logger.Info("configuration loaded",
 		zap.String("solana_rpc", cfg.SolanaRPCURL),
 		zap.Bool("solana_configured", solClient.IsConfigured()),
@@ -55,7 +69,6 @@ func main() {
 		zap.String("ai_model", aiAllocator.Model()),
 	)
 
-	handlers := handler.NewHandlers(campaignStore, ghClient, aiAllocator, solClient)
 	router := handler.NewRouter(handlers, env)
 
 	srv := &http.Server{

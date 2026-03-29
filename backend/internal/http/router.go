@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/repobounty/repobounty-ai/internal/auth"
 )
 
 func NewRouter(h *Handlers, env string) http.Handler {
@@ -32,10 +33,22 @@ func NewRouter(h *Handlers, env string) http.Handler {
 	}
 	r.Use(CorsMiddleware(allowedOrigins))
 
+	authMiddleware := auth.NewAuthMiddleware(h.jwt, h.store)
+	requireAuth := authMiddleware.RequireAuth
+	optionalAuth := auth.OptionalAuthMiddleware(h.jwt, h.store)
+
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/health", h.HealthCheck)
 
+		r.Route("/auth", func(r chi.Router) {
+			r.Get("/github/url", h.GetGitHubAuthURL)
+			r.Post("/github/callback", h.GitHubCallback)
+			r.With(requireAuth).Get("/me", h.GetMe)
+			r.With(requireAuth).Post("/wallet/link", h.LinkWallet)
+		})
+
 		r.Route("/campaigns", func(r chi.Router) {
+			r.Use(optionalAuth)
 			r.Get("/", h.ListCampaigns)
 			r.Post("/", h.CreateCampaign)
 			r.Get("/{id}", h.GetCampaign)
