@@ -26,6 +26,7 @@ pub mod repobounty {
         repo: String,
         pool_amount: u64,
         deadline: i64,
+        sponsor: Pubkey,
     ) -> Result<()> {
         require!(campaign_id.len() <= 32, RepoBountyError::CampaignIdTooLong);
         require!(repo.len() <= MAX_REPO_LEN, RepoBountyError::RepoNameTooLong);
@@ -39,7 +40,7 @@ pub mod repobounty {
 
         let campaign = &mut ctx.accounts.campaign;
         campaign.authority = ctx.accounts.authority.key();
-        campaign.sponsor = ctx.accounts.authority.key();
+        campaign.sponsor = sponsor;
         campaign.campaign_id = campaign_id;
         campaign.repo = repo;
         campaign.pool_amount = pool_amount;
@@ -48,14 +49,15 @@ pub mod repobounty {
         campaign.state = CampaignState::Created;
         campaign.allocations = vec![];
         campaign.bump = ctx.bumps.campaign;
-        campaign.vault_bump = 0;
+        campaign.vault_bump = ctx.bumps.vault;
         campaign.created_at = clock.unix_timestamp;
+        campaign.finalized_at = None;
 
         msg!(
-            "Campaign created: {} | pool={} | deadline={}",
+            "Campaign created: {} | pool={} | sponsor={}",
             campaign.repo,
             pool_amount,
-            deadline
+            campaign.sponsor,
         );
         Ok(())
     }
@@ -135,12 +137,17 @@ pub struct CreateCampaign<'info> {
         init,
         payer = authority,
         space = Campaign::space(),
-        seeds = [b"campaign", authority.key().as_ref(), campaign_id.as_bytes()],
+        seeds = [b"campaign", campaign_id.as_bytes()],
         bump,
     )]
     pub campaign: Account<'info, Campaign>,
     #[account(mut)]
     pub authority: Signer<'info>,
+    #[account(
+        seeds = [b"vault", campaign.key().as_ref()],
+        bump,
+    )]
+    pub vault: SystemAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
