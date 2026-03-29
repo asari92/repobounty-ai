@@ -120,7 +120,7 @@ export default function CampaignDetails() {
               : a
           ),
           total_claimed: prev.total_claimed + (prev.allocations.find((a) => a.contributor === contributor)?.amount || 0),
-          state: prev.allocations.every((a) => a.claimed || a.contributor !== contributor) ? "completed" : prev.state,
+          state: prev.allocations.every((a) => a.contributor === contributor ? true : a.claimed) ? "completed" : prev.state,
         };
       });
     } catch (e: unknown) {

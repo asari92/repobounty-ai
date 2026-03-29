@@ -426,7 +426,9 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 		campaign.State = models.StateCompleted
 	}
 
-	_ = h.store.Update(campaign)
+	if err := h.store.Update(campaign); err != nil {
+		log.Printf("claim: store update failed for campaign %s: %v", campaign.CampaignID, err)
+	}
 
 	explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
 	writeJSON(w, http.StatusOK, models.FinalizeResponse{

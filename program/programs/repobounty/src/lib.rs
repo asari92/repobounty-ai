@@ -140,7 +140,7 @@ pub mod repobounty {
                 amount: campaign
                     .pool_amount
                     .checked_mul(a.percentage as u64)
-                    .unwrap()
+                    .ok_or(RepoBountyError::ArithmeticOverflow)?
                     / BPS_100 as u64,
                 claimed: false,
                 claimant: None,
@@ -415,4 +415,6 @@ pub enum RepoBountyError {
     InsufficientVaultFunds,
     #[msg("Campaign deadline has not been reached yet")]
     DeadlineNotReached,
+    #[msg("Arithmetic overflow in allocation calculation")]
+    ArithmeticOverflow,
 }

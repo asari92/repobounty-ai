@@ -74,7 +74,7 @@ export interface User {
   github_username: string;
   github_id: number;
   avatar_url: string;
-  wallet_address: string;
+  wallet_address?: string;
   created_at: string;
 }
 

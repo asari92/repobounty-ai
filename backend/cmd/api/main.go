@@ -47,6 +47,7 @@ func main() {
 			logger.Fatal("failed to open sqlite database", zap.Error(err))
 		}
 		campaignStore = sqliteStore
+		defer sqliteStore.Close()
 		logger.Info("using SQLite storage", zap.String("path", cfg.DatabasePath))
 	} else {
 		campaignStore = store.New()

@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/repobounty/repobounty-ai/internal/ai"
@@ -28,6 +27,12 @@ func StartAutoFinalizeWorker(
 	}
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("auto-finalize worker panic", zap.Any("recover", r))
+			}
+		}()
+
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		logger.Info("auto-finalize worker started", zap.Duration("interval", interval))
@@ -35,7 +40,14 @@ func StartAutoFinalizeWorker(
 		for {
 			select {
 			case <-ticker.C:
-				autoFinalize(ctx, campaignStore, ghClient, allocator, solClient, logger)
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							logger.Error("auto-finalize tick panic", zap.Any("recover", r))
+						}
+					}()
+					autoFinalize(ctx, campaignStore, ghClient, allocator, solClient, logger)
+				}()
 			case <-ctx.Done():
 				logger.Info("auto-finalize worker stopping")
 				return
@@ -79,14 +91,14 @@ func autoFinalize(
 
 		contributorPRDiffs, err := ghClient.FetchContributorsPRDiffs(ctx, c.Repo, c.CreatedAt.Unix())
 		if err != nil {
-			log.Printf("auto-finalize: PR diff fetch failed (%v), falling back to metric-based allocation", err)
+			logger.Warn("auto-finalize: PR diff fetch failed, falling back to metric-based allocation", zap.Error(err))
 		}
 
 		var allocations []models.Allocation
 		if len(contributorPRDiffs) > 0 {
 			allocations, err = allocator.EvaluateCodeImpact(ctx, c.Repo, contributorPRDiffs, c.PoolAmount)
 			if err != nil {
-				log.Printf("auto-finalize: code impact evaluation failed (%v), falling back", err)
+				logger.Warn("auto-finalize: code impact evaluation failed, falling back", zap.Error(err))
 				allocations = nil
 			}
 		}
