@@ -1,6 +1,6 @@
 # RepoBounty AI
 
-**AI-powered reward allocation for open-source contributors, with sponsor-owned campaigns and Solana settlement.**
+**AI-powered reward allocation for open-source contributors, with on-chain escrow and claims on Solana.**
 
 > National Solana Hackathon (Decentrathon) | Case 2: "AI + Blockchain: Autonomous Smart Contracts"
 
@@ -8,26 +8,13 @@
 
 ## The Idea
 
-Sponsors fund public GitHub repositories with a reward pool and a deadline. The agreed next architecture is sponsor-owned on-chain campaigns, backend-triggered finalization, and GitHub-based contributor claims after wallet binding.
+Sponsors fund public GitHub repositories with a reward pool and a deadline. After the deadline, the system fetches contributor data, runs AI-based impact scoring on code diffs, and finalizes the allocation on-chain. Contributors log in with GitHub, bind their wallets, and claim rewards from the escrow vault.
 
-**The core chain that must work:**
+**AI is not advisory — its decision directly determines on-chain reward distribution.**
 
 ```
-GitHub data --> AI allocation --> Solana finalization --> GitHub-based entitlements --> claim/release
+GitHub data → AI allocation → Solana finalization → GitHub-based claims → SOL transfer
 ```
-
-AI is not advisory — its decision directly influences on-chain reward state.
-
-## Architecture Decision
-
-The agreed target model is:
-
-- sponsor wallet is the on-chain `authority`
-- campaign creation should be signed by the sponsor wallet
-- campaign funds are intended to move into escrow in the next contract revision
-- backend uses a dedicated trusted finalizer key after the deadline
-- finalization stores GitHub-based entitlements first, because contributor wallets may be unknown
-- contributors later authenticate with GitHub, bind wallets, and claim or receive released rewards
 
 ---
 
@@ -44,104 +31,328 @@ The agreed target model is:
                           +--------+---------+
                           |                  |
                     +-----+-----+     +------+------+
-                    |  GitHub   |     |   OpenAI    |
-                    |  API      |     |   (GPT-4o)  |
+                    |  GitHub   |     | OpenRouter  |
+                    |  API      |     |  (LLM AI)   |
                     +-----------+     +-------------+
 ```
 
 **Data flow:**
 
-1. Sponsor connects wallet and creates campaign via frontend
-2. Backend validates campaign input and orchestrates Solana interaction
-3. After deadline: backend fetches GitHub contributor stats
-4. Backend sends metrics to AI, receives allocation with reasoning
-5. Trusted backend finalizer key calls `finalize_campaign` on Solana
-6. Smart contract validates and stores GitHub-based allocations or entitlements on-chain
-7. Contributors later bind wallets and claim or receive released rewards
-8. Frontend displays final results with Solana Explorer links
+1. Sponsor connects Phantom wallet, creates a campaign (repo, pool, deadline)
+2. Campaign PDA + vault PDA created on-chain; sponsor funds the vault
+3. After deadline: backend fetches GitHub contributors, PR diffs, reviews
+4. AI evaluates code impact (5-dimensional scoring) and produces allocation
+5. Backend finalizer key calls `finalize_campaign` — allocations stored on-chain
+6. Contributors log in via GitHub OAuth, bind wallets on Profile page
+7. Contributor calls `claim` — SOL transfers from vault to their wallet
+8. When all claims complete, campaign transitions to Completed
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology | Purpose |
+| Layer | Technology | Version |
 |-------|-----------|---------|
-| **Frontend** | React 18 + TypeScript + Vite | Campaign UI, wallet connection |
-| **Styling** | Tailwind CSS | Solana-themed dark UI |
-| **Wallet** | @solana/wallet-adapter | Phantom, Solflare support |
-| **Backend** | Go 1.22 + Chi router | REST API, orchestration |
-| **AI Engine** | OpenAI GPT-4o-mini | Contributor reward allocation |
-| **AI Fallback** | Deterministic weighted scoring | Works without API key |
-| **Blockchain** | Solana (devnet) + Anchor 0.30 | On-chain campaign state |
-| **Smart Contract** | Rust + Anchor framework | PDA-based campaign accounts |
+| **Frontend** | React + TypeScript + Vite | React 18.3, Vite 5.4, TS 5.5 |
+| **Styling** | Tailwind CSS | 3.4 |
+| **Wallet** | @solana/wallet-adapter (Phantom) | wallet-adapter-react 0.15, web3.js 1.95 |
+| **Routing** | React Router | v6.26 |
+| **Backend** | Go + Chi router | Go 1.25, Chi 5.1 |
+| **Auth** | GitHub OAuth + JWT (HS256) | golang-jwt 5.3 |
+| **AI Engine** | OpenRouter LLM (code diff analysis) | Nemotron free tier by default |
+| **AI Fallback** | Deterministic weighted scoring | Built-in, no API key needed |
+| **Storage** | SQLite (persistent) / in-memory | modernc.org/sqlite 1.48 |
+| **Blockchain** | Solana (devnet) + Anchor | Anchor 0.30.1 |
+| **Solana Client** | gagliardetto/solana-go | 1.11 |
+| **Logging** | Zap (structured) | 1.27 |
 
 ---
 
-## Quick Start
-
-### Docker Quick Start
-
-The simplest way to run the full MVP locally is with Docker Compose:
+## Quick Start (one command)
 
 ```bash
-docker compose up --build
+./start.sh
 ```
 
-Services:
+The script will:
+- Create `.env` from template if missing and show what to fill in
+- Check required and optional variables, print instructions for each
+- Start backend + frontend via Docker Compose
 
-- Frontend: `http://localhost:5173`
-- Backend API: `http://localhost:8080`
-- Backend health check: `http://localhost:8080/api/health`
+After start:
+- **Frontend:** http://localhost:5173
+- **Backend API:** http://localhost:8080
+- **Health check:** http://localhost:8080/api/health
 
-Notes:
+> Without any API keys the app runs in **mock/demo mode**: mock GitHub data, deterministic AI allocation, mock Solana transactions.
 
-- Docker Compose reads configuration from the repository root `.env`
-- `solana-program` is built as part of the stack, but it is not a long-running API service
-- the Solana program image contains the compiled program artifacts only
+---
 
-### Manual Local Start
+## Local Development (without Docker)
 
 ### Prerequisites
 
-- **Go** >= 1.22
-- **Node.js** >= 18
-- **Rust** + **Anchor CLI** >= 0.30 (for smart contract)
-- **Solana CLI** (for devnet interaction)
+| Tool | Version | Check |
+|------|---------|-------|
+| Go | 1.25+ | `go version` |
+| Node.js | 20+ | `node --version` |
+| npm | 10+ | `npm --version` |
+| Rust | 1.79+ | `rustc --version` |
+| Solana CLI | 1.18+ | `solana --version` |
+| Anchor CLI | 0.30.1 | `anchor --version` |
 
-### 1. Backend
+> Solana CLI and Anchor are needed only if you want to build/deploy the smart contract. Backend and frontend run without them.
+
+### Step 1. Clone and configure
+
+```bash
+git clone <repo-url> repobounty-ai
+cd repobounty-ai
+```
+
+### Step 2. Backend
 
 ```bash
 cd backend
-cp .env.example .env        # Edit with your keys
-go mod tidy
-go run ./cmd/api
+cp .env.example .env
 ```
 
-The server starts on `http://localhost:8080`. Works without any API keys (uses mock GitHub data and deterministic AI fallback).
+Edit `backend/.env`:
 
-### 2. Frontend
+```env
+# Required
+JWT_SECRET=<random string, min 32 chars>
+# Generate: openssl rand -base64 32
+
+# GitHub OAuth (for user login)
+GITHUB_CLIENT_ID=<from https://github.com/settings/developers → New OAuth App>
+GITHUB_CLIENT_SECRET=<same app>
+# Set callback URL to: http://localhost:3000/auth/callback
+
+# GitHub API (for contributor data)
+GITHUB_TOKEN=<from https://github.com/settings/tokens, scopes: repo, read:user>
+
+# Solana
+SOLANA_RPC_URL=https://api.devnet.solana.com
+SOLANA_PRIVATE_KEY=<base58 or JSON array, see "Solana keypair" section below>
+PROGRAM_ID=8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ
+
+# AI (optional — without it, deterministic fallback is used)
+OPENROUTER_API_KEY=<from https://openrouter.ai/keys>
+MODEL=nvidia/nemotron-3-super-120b-a12b:free
+
+# URLs
+FRONTEND_URL=http://localhost:3000
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+```
+
+Start the backend:
+
+```bash
+go mod tidy
+go run ./cmd/api
+# → Listening on :8080
+```
+
+### Step 3. Frontend
 
 ```bash
 cd frontend
 npm install
 npm run dev
+# → http://localhost:3000
+# Vite proxies /api → http://localhost:8080
 ```
 
-Opens on `http://localhost:3000`. Proxies `/api` requests to backend.
+### Step 4. Verify
 
-### 3. Solana Program
+```bash
+curl http://localhost:8080/api/health
+# → {"status":"ok"}
+```
+
+Open http://localhost:3000 in a browser with Phantom wallet extension.
+
+---
+
+## Solana Smart Contract
+
+### Program ID
+
+```
+8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ
+```
+
+### Generating a keypair for backend authority
+
+```bash
+# Generate a new keypair
+solana-keygen new -o authority.json
+
+# View public key
+solana-keygen pubkey authority.json
+
+# Get devnet SOL
+solana config set --url https://api.devnet.solana.com
+solana airdrop 5 --keypair authority.json
+```
+
+Put the private key into `SOLANA_PRIVATE_KEY` in `.env`. Two formats accepted:
+
+```env
+# JSON array (contents of the .json file)
+SOLANA_PRIVATE_KEY=[174,23,45,...]
+
+# Base58 string
+SOLANA_PRIVATE_KEY=4wBqpZM9k...
+```
+
+### Building the program
 
 ```bash
 cd program
 yarn install
-anchor build
-anchor test                  # Runs on localnet
-anchor deploy --provider.cluster devnet
+anchor build          # Full build with IDL
+anchor build --no-idl # Faster, used in Docker
 ```
 
-After deploying, update `PROGRAM_ID` in `backend/.env`.
+Output: `target/deploy/repobounty.so` + `repobounty-keypair.json`
 
-For the Docker build we use `anchor build --no-idl` inside the container to avoid an Anchor IDL-generation issue in this environment. This does not change how the backend or frontend are started, and it does not mean the project can only run via Docker.
+### Running tests
+
+```bash
+anchor test
+# Starts localnet validator, deploys program, runs ts-mocha tests
+```
+
+### Deploying to devnet
+
+```bash
+solana config set --url https://api.devnet.solana.com
+anchor deploy --provider.cluster devnet
+# → Program Id: 8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ
+```
+
+### Deploying to mainnet-beta
+
+```bash
+solana config set --url https://api.mainnet-beta.solana.com
+# Ensure deployer wallet has ~3-5 SOL
+anchor deploy --provider.cluster mainnet
+```
+
+### Updating Program ID after fresh deploy
+
+If you deploy with a new keypair and get a new Program ID, update in 3 places:
+
+1. `program/programs/repobounty/src/lib.rs` → `declare_id!("NEW_ID")`
+2. `program/Anchor.toml` → `[programs.devnet]` and `[programs.localnet]`
+3. `backend/.env` → `PROGRAM_ID=NEW_ID`
+
+Then rebuild and redeploy: `anchor build && anchor deploy --provider.cluster devnet`
+
+### On-chain state machine
+
+```
+Created → Funded → Finalized → Completed
+```
+
+### Instructions
+
+| Instruction | Signer | Precondition | Effect |
+|-------------|--------|--------------|--------|
+| `create_campaign` | authority (backend) | — | Creates Campaign PDA + Vault PDA |
+| `fund_campaign` | sponsor (wallet) | State == Created | Transfers SOL to vault, state → Funded |
+| `finalize_campaign` | authority (backend) | State == Funded, deadline passed | Stores allocations on-chain, state → Finalized |
+| `claim` | contributor (wallet) | State == Finalized, not yet claimed | Transfers SOL from vault to contributor |
+
+### PDA Seeds
+
+```
+Campaign PDA: ["campaign", campaign_id]
+Vault PDA:    ["vault", campaign_pda]
+```
+
+### Constraints
+
+- Allocations sum to exactly 10,000 basis points (100%)
+- Max 10 allocations per campaign
+- No duplicate contributors
+- Deadline enforced on-chain for finalize
+- Campaign ID max 32 chars, repo max 64 chars
+
+---
+
+## AI Allocation Engine
+
+### Mode 1: LLM with code diff analysis (production)
+
+When `OPENROUTER_API_KEY` is set, the backend:
+
+1. Fetches merged PRs with full diffs from GitHub
+2. Sends code diffs to LLM via OpenRouter
+3. LLM scores each contributor on 5 dimensions: Impact, Complexity, Scope, Quality, Community
+4. Returns allocation with percentages and reasoning
+
+### Mode 2: Deterministic fallback (demo / offline)
+
+When no API key is configured:
+
+```
+score = commits × 3 + pull_requests × 5 + reviews × 2
+percentage = score / total_score × 10000
+```
+
+Always produces valid allocations. Works fully offline.
+
+---
+
+## API Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/health` | — | Health check |
+| GET | `/api/auth/github/url` | — | GitHub OAuth URL |
+| POST | `/api/auth/github/callback` | — | OAuth code exchange → JWT |
+| GET | `/api/auth/me` | JWT | Current user |
+| POST | `/api/auth/wallet/link` | JWT | Link Solana wallet to GitHub account |
+| GET | `/api/auth/claims` | JWT | List claimable allocations |
+| GET | `/api/campaigns/` | — | List all campaigns |
+| POST | `/api/campaigns/` | — | Create campaign |
+| GET | `/api/campaigns/{id}` | — | Get campaign details |
+| POST | `/api/campaigns/{id}/fund-tx` | — | Get funding transaction for sponsor to sign |
+| POST | `/api/campaigns/{id}/finalize-preview` | — | AI preview (no on-chain write) |
+| POST | `/api/campaigns/{id}/finalize` | — | AI allocate + Solana finalize |
+| POST | `/api/campaigns/{id}/claim` | JWT | Claim allocation |
+
+### Create campaign
+
+```bash
+curl -X POST http://localhost:8080/api/campaigns/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "repo": "owner/repo",
+    "pool_amount": 1000000000,
+    "deadline": "2026-04-01T12:00:00Z",
+    "wallet_address": "YourPhantomPublicKey"
+  }'
+```
+
+### Finalize preview
+
+```bash
+curl -X POST http://localhost:8080/api/campaigns/{id}/finalize-preview
+```
+
+Returns allocations with reasoning, without writing to Solana.
+
+### Finalize
+
+```bash
+curl -X POST http://localhost:8080/api/campaigns/{id}/finalize
+```
+
+Irreversible. Fetches GitHub data → AI allocation → on-chain finalize.
 
 ---
 
@@ -149,177 +360,19 @@ For the Docker build we use `anchor build --no-idl` inside the container to avoi
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `PORT` | No | `8080` | Backend API port |
-| `GITHUB_TOKEN` | No | — | GitHub personal access token (higher rate limits) |
-| `OPENAI_API_KEY` | No | — | OpenAI API key (falls back to deterministic allocation) |
+| `PORT` | No | `8080` | Backend port |
+| `JWT_SECRET` | **Yes** | — | Token signing key (min 32 chars) |
+| `GITHUB_TOKEN` | No | — | GitHub PAT for API (mock data without it) |
+| `GITHUB_CLIENT_ID` | No | — | GitHub OAuth app client ID |
+| `GITHUB_CLIENT_SECRET` | No | — | GitHub OAuth app secret |
+| `FRONTEND_URL` | No | `http://localhost:3000` | For OAuth redirects |
+| `ALLOWED_ORIGINS` | No | `localhost:3000,5173` | CORS whitelist |
+| `OPENROUTER_API_KEY` | No | — | LLM AI allocation (deterministic fallback without) |
+| `MODEL` | No | `nvidia/nemotron-3-super-120b-a12b:free` | OpenRouter model |
 | `SOLANA_RPC_URL` | No | `https://api.devnet.solana.com` | Solana RPC endpoint |
-| `SOLANA_PRIVATE_KEY` | No | — | Backend service/finalizer key for Solana transactions in the current MVP |
+| `SOLANA_PRIVATE_KEY` | No | — | Backend authority keypair (mock mode without) |
 | `PROGRAM_ID` | No | — | Deployed Anchor program address |
-
-**Without any keys configured**, the backend still works using:
-- Mock GitHub contributor data (3 demo contributors)
-- Deterministic allocation (weighted by commits/PRs/reviews)
-- Mock Solana transactions (returns simulated signatures)
-
----
-
-## API Endpoints
-
-### `GET /api/health`
-Health check. Returns `{"status": "ok"}`.
-
-### `GET /api/campaigns`
-List all campaigns, sorted by creation date (newest first).
-
-### `POST /api/campaigns`
-Create a new campaign.
-
-```json
-{
-  "repo": "owner/repo",
-  "pool_amount": 1000000000,
-  "deadline": "2025-04-01T00:00:00Z",
-  "wallet_address": "YourSolanaPublicKey..."
-}
-```
-
-Returns campaign details with `tx_signature` from the on-chain `create_campaign` call. `deadline` should be sent as RFC3339 with time, for example `2025-04-01T12:30:00Z`.
-
-### `GET /api/campaigns/{id}`
-Get campaign details including allocations (if finalized).
-
-### `POST /api/campaigns/{id}/finalize-preview`
-Fetch GitHub data + run AI allocation **without** writing to Solana. Returns:
-
-```json
-{
-  "campaign_id": "abc12345",
-  "repo": "owner/repo",
-  "contributors": [
-    {"username": "alice", "commits": 47, "pull_requests": 12, "reviews": 8}
-  ],
-  "allocations": [
-    {"contributor": "alice", "percentage": 5000, "amount": 500000000, "reasoning": "..."}
-  ],
-  "ai_model": "gpt-4o-mini"
-}
-```
-
-Percentages are in basis points (10000 = 100%).
-
-### `POST /api/campaigns/{id}/finalize`
-Execute finalization: GitHub fetch + AI allocation + Solana `finalize_campaign` transaction. Irreversible.
-
-In the agreed target architecture, this call is authorized by a dedicated backend finalizer key after the deadline, while campaign ownership remains with the sponsor wallet.
-
-```json
-{
-  "campaign_id": "abc12345",
-  "state": "finalized",
-  "allocations": [...],
-  "tx_signature": "5K7n...",
-  "solana_explorer_url": "https://explorer.solana.com/tx/5K7n...?cluster=devnet"
-}
-```
-
----
-
-## Solana Smart Contract
-
-The current Anchor program manages basic campaign lifecycle. The agreed next revision is a sponsor-owned escrow-and-claim model.
-
-### `create_campaign`
-Creates a PDA account seeded by `["campaign", authority, campaign_id]`, where `authority` is the sponsor wallet.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `campaign_id` | String (max 32) | Unique identifier from backend |
-| `repo` | String (max 64) | GitHub repo in `owner/repo` format |
-| `pool_amount` | u64 | Reward pool in lamports |
-| `deadline` | i64 | Unix timestamp |
-
-### `finalize_campaign`
-In the target architecture, stores AI allocation results or GitHub-based entitlements on-chain. Validates:
-- Campaign exists and is in `Created` state
-- Deadline has passed
-- Signer matches the configured trusted finalizer authority
-- Allocations sum to exactly 10000 basis points (100%)
-- No duplicate contributors
-- Max 10 allocations per campaign
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `allocations` | Vec\<AllocationInput\> | `{contributor: String, percentage: u16}` in the current MVP, evolving toward GitHub-based entitlements |
-
-### `claim_reward` (planned)
-
-The next contract revision should add a claim or release instruction:
-
-- finalization records entitlement by GitHub identity
-- contributor authenticates with GitHub off-chain
-- contributor binds a wallet
-- backend authorizes the claim or release
-- escrowed reward is transferred to the bound wallet
-
-### Account Structure
-
-```rust
-Campaign {
-    authority:    Pubkey,       // sponsor wallet
-    campaign_id:  String,       // PDA seed
-    repo:         String,       // "owner/repo"
-    pool_amount:  u64,          // lamports
-    deadline:     i64,          // unix timestamp
-    state:        CampaignState,// Created | Finalized
-    allocations:  Vec<Allocation>,
-    bump:         u8,
-    created_at:   i64,
-    finalized_at: Option<i64>,
-}
-```
-
-The next contract revision should extend this model with:
-
-- escrow / vault linkage
-- trusted finalizer authority
-- claim status per contributor entitlement
-- wallet release metadata
-
----
-
-## AI Allocation Engine
-
-### With OpenAI (production)
-
-The backend sends contributor metrics to GPT-4o-mini with a structured prompt:
-
-```
-Repository: owner/repo
-Contributors: [{username, commits, pull_requests, reviews, lines_added, lines_deleted}]
-```
-
-The model returns a JSON allocation with reasoning:
-
-```json
-[
-  {"contributor": "alice", "percentage": 5000, "reasoning": "Highest commit count and PR activity"},
-  {"contributor": "bob", "percentage": 3500, "reasoning": "Strong review participation"},
-  {"contributor": "charlie", "percentage": 1500, "reasoning": "Focused bug fixes"}
-]
-```
-
-Validation ensures percentages sum to exactly 10000 bps.
-
-### Deterministic Fallback (demo / no API key)
-
-When no OpenAI key is configured, the engine uses weighted scoring:
-
-```
-weight = commits * 3 + pull_requests * 5 + reviews * 2
-percentage = weight / total_weight * 10000
-```
-
-This always produces valid allocations and works offline.
+| `DATABASE_PATH` | No | `repobounty.db` | SQLite file path (empty = in-memory) |
 
 ---
 
@@ -327,91 +380,95 @@ This always produces valid allocations and works offline.
 
 ```
 repobounty-ai/
-|-- backend/                        # Go API server
-|   |-- cmd/api/main.go             # Entry point
-|   |-- internal/
-|   |   |-- config/config.go        # Environment configuration
-|   |   |-- models/models.go        # Data structures
-|   |   |-- store/memory.go         # In-memory campaign store
-|   |   |-- github/client.go        # GitHub API client
-|   |   |-- ai/allocator.go         # AI allocation engine
-|   |   |-- solana/client.go        # Solana transaction builder
-|   |   |-- http/router.go          # Chi router + middleware
-|   |   |-- http/handlers.go        # Request handlers
-|   |-- go.mod
-|   |-- .env.example
-|
-|-- frontend/                       # React web interface
-|   |-- src/
-|   |   |-- main.tsx                # App bootstrap + wallet providers
-|   |   |-- App.tsx                 # Routes
-|   |   |-- components/
-|   |   |   |-- Layout.tsx          # Header, nav, footer
-|   |   |   |-- WalletButton.tsx    # Solana wallet connect
-|   |   |   |-- CampaignCard.tsx    # Campaign list item
-|   |   |-- pages/
-|   |   |   |-- Home.tsx            # Campaign dashboard
-|   |   |   |-- CreateCampaign.tsx  # Campaign creation form
-|   |   |   |-- CampaignDetails.tsx # Details + finalization UI
-|   |   |-- api/client.ts           # API client
-|   |   |-- types/index.ts          # TypeScript interfaces
-|   |-- package.json
-|   |-- vite.config.ts
-|   |-- tailwind.config.js
-|
-|-- program/                        # Solana/Anchor smart contract
-|   |-- programs/repobounty/
-|   |   |-- src/lib.rs              # Program logic
-|   |   |-- Cargo.toml
-|   |-- tests/repobounty.ts         # Anchor integration tests
-|   |-- Anchor.toml
-|   |-- Cargo.toml
-|
-|-- docs/                           # Documentation
-|   |-- architecture.md             # System design
-|   |-- hackathon-context.md        # Hackathon requirements
-|   |-- demo-script.md              # Demo flow
-|   |-- roadmap.md                  # MVP + future
-|   |-- api.md                      # API reference
-|   |-- smart-contract.md           # On-chain program docs
+├── start.sh                          # One-command startup script
+├── docker-compose.yml                # Backend + frontend containers
+├── .env.example                      # Environment template
+│
+├── backend/                          # Go API server
+│   ├── cmd/api/main.go               # Entry point + auto-finalize worker
+│   ├── internal/
+│   │   ├── config/config.go          # Env loading with defaults
+│   │   ├── models/models.go          # Campaign, Allocation, User types
+│   │   ├── store/sqlite.go           # SQLite persistent storage
+│   │   ├── auth/                     # GitHub OAuth + JWT + middleware
+│   │   ├── github/client.go          # Contributors, PR diffs, reviews
+│   │   ├── ai/allocator.go           # LLM + deterministic allocation
+│   │   ├── solana/client.go          # Transaction builder, PDA derivation
+│   │   └── http/                     # Chi router, handlers, worker
+│   ├── go.mod
+│   ├── Dockerfile
+│   └── .env.example
+│
+├── frontend/                         # React SPA
+│   ├── src/
+│   │   ├── main.tsx                  # Wallet providers + router
+│   │   ├── App.tsx                   # Routes
+│   │   ├── api/client.ts             # API client with JWT injection
+│   │   ├── hooks/useAuth.tsx         # Auth context (OAuth + wallet)
+│   │   ├── pages/
+│   │   │   ├── Home.tsx              # Campaign list (all / my)
+│   │   │   ├── CreateCampaign.tsx    # 2-step: create → fund
+│   │   │   ├── CampaignDetails.tsx   # Preview, finalize, claim
+│   │   │   └── Profile.tsx           # Wallet binding, claimable rewards
+│   │   └── components/               # Layout, WalletButton, CampaignCard
+│   ├── package.json
+│   ├── vite.config.ts                # Dev proxy /api → :8080
+│   ├── nginx.conf                    # Production proxy config
+│   └── Dockerfile
+│
+├── program/                          # Solana/Anchor smart contract
+│   ├── programs/repobounty/
+│   │   ├── src/lib.rs                # Program: create, fund, finalize, claim
+│   │   └── Cargo.toml                # anchor-lang 0.30.1
+│   ├── tests/repobounty.ts           # Anchor integration tests
+│   ├── Anchor.toml                   # Program ID, cluster config
+│   └── Dockerfile
+│
+└── docs/                             # Documentation
+    ├── setup-guide.md                # Full setup & deployment guide
+    ├── implementation-status.md      # What's done vs planned
+    ├── architecture.md               # System design
+    ├── api.md                        # API reference
+    ├── smart-contract.md             # On-chain program docs
+    ├── demo-script.md                # Demo walkthrough
+    └── hackathon-context.md          # Hackathon requirements
 ```
 
 ---
 
 ## Demo Flow
 
-1. Open frontend at `localhost:3000`
+1. Open http://localhost:3000 (dev) or http://localhost:5173 (Docker)
 2. Connect Phantom wallet (devnet)
-3. Create a campaign: enter `owner/repo`, pool amount (SOL), deadline
-4. Campaign appears in dashboard with "Active" status
-5. After deadline passes, click "Preview Allocations"
-6. System fetches GitHub data, AI generates allocation with reasoning
-7. Review allocation breakdown and click "Finalize on Solana"
-8. Transaction is sent — campaign moves to "Finalized"
-9. View allocations on-chain via Solana Explorer link
-10. In the target claim flow, contributors later log in with GitHub, bind wallets, and claim rewards
-
-**Backup mode (no external services):** The system works end-to-end with mock GitHub data, deterministic AI, and mock Solana transactions.
+3. Create a campaign: repo, pool (SOL), deadline
+4. Sign the funding transaction in Phantom
+5. Wait for deadline (or set a near-future deadline for testing)
+6. Click "Preview Allocations" → see AI-generated distribution
+7. Click "Finalize on Solana" → on-chain transaction
+8. Log in with GitHub on the Profile page
+9. Link your Solana wallet
+10. Claim your reward — SOL moves from vault to your wallet
 
 ---
 
 ## MVP Scope
 
-**In scope:**
-- Public GitHub repositories
-- Deadline-based campaigns
-- AI-powered allocation with reasoning
-- On-chain finalization via Solana
-- On-chain campaign listing
-- `All Campaigns` / `My Campaigns` filtering
-- Campaign dashboard with real-time status
+**Implemented:**
+- Public GitHub repositories, deadline-based campaigns
+- Escrow vault (PDA) funded by sponsor
+- AI allocation with code diff analysis (LLM) or deterministic fallback
+- On-chain finalization with deadline enforcement
+- GitHub OAuth + JWT authentication
+- Wallet binding + contributor claim flow
+- Auto-finalize background worker
+- SQLite persistent storage
+- Campaign dashboard with All / My Campaigns filter
+- Docker Compose one-command deploy
 
-**Out of scope (future):**
-- Sponsor-signed escrow deposits
-- GitHub login + wallet binding
-- Claim flow (actual token distribution)
+**Out of scope:**
 - Goal-based campaigns
-- GitHub App integration
-- Anti-fraud / anti-gaming detection
-- Notifications
+- GitHub App integration (PR comments)
+- Anti-fraud / sybil detection
+- Notifications (email, Discord)
 - Multi-sponsor campaigns
+- "Claim all" aggregation
