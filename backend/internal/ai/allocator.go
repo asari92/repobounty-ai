@@ -186,7 +186,7 @@ func parseDiffSummaries(diffs []string) []PRSummary {
 				if strings.HasPrefix(line, "diff --git a/") {
 					parts := strings.Fields(line)
 					if len(parts) >= 4 {
-						summary.Title = parts[4]
+						summary.Title = parts[3]
 					}
 				}
 			}
