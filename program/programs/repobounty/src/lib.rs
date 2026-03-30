@@ -538,6 +538,9 @@ impl Campaign {
         + 8                                     // total_claimed (new)
         + 8                                     // created_at
         + (1 + 8) // finalized_at (Option<i64>)
+        + 1                                     // campaign_type enum
+        + (4 + MAX_GOALS * 128)                 // goals vec (approx)
+        + (4 + MAX_SPONSORS * (32 + 8 + 1))     // sponsors vec
     }
 }
 
@@ -547,6 +550,12 @@ pub enum CampaignState {
     Funded,
     Finalized,
     Completed,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+pub enum CampaignType {
+    Deadline,
+    Goal,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
@@ -568,6 +577,20 @@ impl Allocation {
 pub struct AllocationInput {
     pub contributor: String,
     pub percentage: u16,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct CampaignGoal {
+    pub description: String,
+    pub completed: bool,
+    pub completed_by: String,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct SponsorEntry {
+    pub wallet: Pubkey,
+    pub amount: u64,
+    pub funded: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -622,4 +645,10 @@ pub enum RepoBountyError {
     ContributorNameEmpty,
     #[msg("Campaign must be in Completed state to withdraw remaining")]
     CampaignNotCompleted,
+    #[msg("Too many sponsors")]
+    TooManySponsors,
+    #[msg("Goal not found")]
+    GoalNotFound,
+    #[msg("Goal already completed")]
+    GoalAlreadyCompleted,
 }
