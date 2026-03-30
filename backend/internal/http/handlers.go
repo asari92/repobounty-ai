@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -568,11 +569,18 @@ func (h *Handlers) GetClaims(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(data); err != nil {
+		log.Printf("json encode error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"failed to encode response"}` + "\n"))
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Printf("json encode error: %v", err)
-	}
+	_, _ = w.Write(buf.Bytes())
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {

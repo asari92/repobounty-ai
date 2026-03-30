@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useConnection } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { VersionedTransaction } from "@solana/web3.js";
+import { Transaction } from "@solana/web3.js";
 import bs58 from "bs58";
 import { api } from "../api/client";
 
@@ -98,7 +98,7 @@ export default function CreateCampaign() {
     try {
       const fundTx = await api.fundTx(createdId, publicKey.toBase58());
       const txBytes = bs58.decode(fundTx.transaction);
-      const transaction = VersionedTransaction.deserialize(new Uint8Array(txBytes));
+      const transaction = Transaction.from(txBytes);
 
       const signature = await sendTransaction(transaction, connection);
       await waitForSignature(signature);
