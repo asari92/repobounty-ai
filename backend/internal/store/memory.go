@@ -4,19 +4,44 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/repobounty/repobounty-ai/internal/models"
 )
 
 var ErrNotFound = errors.New("campaign not found")
 
+type CampaignStore interface {
+	Create(c *models.Campaign) error
+	Get(id string) (*models.Campaign, error)
+	Update(c *models.Campaign) error
+	List() []*models.Campaign
+	GetUser(username string) (*User, error)
+	CreateUser(u *User) error
+	UpdateUser(u *User) error
+	GetWalletForGitHub(githubUsername string) (string, error)
+}
+
 type Store struct {
 	mu        sync.RWMutex
 	campaigns map[string]*models.Campaign
+	users     map[string]*User
+}
+
+type User struct {
+	GitHubUsername string    `json:"github_username"`
+	WalletAddress  string    `json:"wallet_address"`
+	GitHubID       int       `json:"github_id"`
+	Email          string    `json:"email,omitempty"`
+	AvatarURL      string    `json:"avatar_url"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 func New() *Store {
-	return &Store{campaigns: make(map[string]*models.Campaign)}
+	return &Store{
+		campaigns: make(map[string]*models.Campaign),
+		users:     make(map[string]*User),
+	}
 }
 
 func (s *Store) Create(c *models.Campaign) error {
@@ -70,5 +95,55 @@ func copycamp(c *models.Campaign) *models.Campaign {
 		cp.Allocations = make([]models.Allocation, len(c.Allocations))
 		copy(cp.Allocations, c.Allocations)
 	}
+	if c.FinalizedAt != nil {
+		t := *c.FinalizedAt
+		cp.FinalizedAt = &t
+	}
 	return &cp
+}
+
+func (s *Store) GetUser(username string) (*User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	u, ok := s.users[username]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	cp := *u
+	return &cp, nil
+}
+
+func (s *Store) CreateUser(u *User) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.users[u.GitHubUsername]; exists {
+		return errors.New("user already exists")
+	}
+	cp := *u
+	if cp.CreatedAt.IsZero() {
+		cp.CreatedAt = time.Now()
+	}
+	s.users[u.GitHubUsername] = &cp
+	return nil
+}
+
+func (s *Store) UpdateUser(u *User) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[u.GitHubUsername]; !ok {
+		return ErrNotFound
+	}
+	cp := *u
+	s.users[u.GitHubUsername] = &cp
+	return nil
+}
+
+func (s *Store) GetWalletForGitHub(githubUsername string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	u, ok := s.users[githubUsername]
+	if !ok {
+		return "", ErrNotFound
+	}
+	return u.WalletAddress, nil
 }

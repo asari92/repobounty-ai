@@ -11,7 +11,8 @@ import { clusterApiUrl } from "@solana/web3.js";
 import App from "./App";
 import "./index.css";
 
-const endpoint = clusterApiUrl("devnet");
+const network = (import.meta.env.VITE_SOLANA_NETWORK || "devnet") as "devnet" | "testnet" | "mainnet-beta";
+const endpoint = import.meta.env.VITE_SOLANA_RPC_URL || clusterApiUrl(network);
 const wallets = [new PhantomWalletAdapter()];
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

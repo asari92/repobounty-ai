@@ -1,10 +1,14 @@
 export interface Campaign {
   campaign_id: string;
+  campaign_pda?: string;
+  vault_address?: string;
   repo: string;
   pool_amount: number;
+  total_claimed: number;
   deadline: string;
-  state: "created" | "finalized";
+  state: "created" | "funded" | "finalized" | "completed";
   authority: string;
+  sponsor: string;
   allocations: Allocation[];
   created_at: string;
   finalized_at?: string;
@@ -16,6 +20,8 @@ export interface Allocation {
   percentage: number;
   amount: number;
   reasoning?: string;
+  claimed: boolean;
+  claimant_wallet?: string;
 }
 
 export interface Contributor {
@@ -31,7 +37,7 @@ export interface CreateCampaignRequest {
   repo: string;
   pool_amount: number;
   deadline: string;
-  wallet_address: string;
+  sponsor_wallet: string;
 }
 
 export interface CreateCampaignResponse {
@@ -62,4 +68,44 @@ export interface FinalizeResponse {
 export interface ApiError {
   error: string;
   details?: string;
+}
+
+export interface User {
+  github_username: string;
+  github_id: number;
+  avatar_url: string;
+  wallet_address?: string;
+  created_at: string;
+}
+
+export interface GitHubAuthRequest {
+  code: string;
+  state?: string;
+}
+
+export interface GitHubAuthResponse {
+  token: string;
+  user: User;
+}
+
+export interface LinkWalletRequest {
+  wallet_address: string;
+}
+
+export interface ClaimItem {
+  campaign_id: string;
+  repo: string;
+  contributor: string;
+  percentage: number;
+  amount: number;
+  amount_sol: string;
+  claimed: boolean;
+  claimant_wallet?: string;
+  state: string;
+}
+
+export interface FundTransactionResponse {
+  transaction: string;
+  campaign_pda: string;
+  vault_address: string;
 }

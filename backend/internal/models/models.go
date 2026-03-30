@@ -6,27 +6,43 @@ type CampaignState string
 
 const (
 	StateCreated   CampaignState = "created"
+	StateFunded    CampaignState = "funded"
 	StateFinalized CampaignState = "finalized"
+	StateCompleted CampaignState = "completed"
 )
 
 type Campaign struct {
-	CampaignID  string        `json:"campaign_id"`
-	Repo        string        `json:"repo"`
-	PoolAmount  uint64        `json:"pool_amount"`
-	Deadline    time.Time     `json:"deadline"`
-	State       CampaignState `json:"state"`
-	Authority   string        `json:"authority"`
-	Allocations []Allocation  `json:"allocations"`
-	CreatedAt   time.Time     `json:"created_at"`
-	FinalizedAt *time.Time    `json:"finalized_at,omitempty"`
-	TxSignature string        `json:"tx_signature,omitempty"`
+	CampaignID   string        `json:"campaign_id"`
+	CampaignPDA  string        `json:"campaign_pda"`
+	VaultAddress string        `json:"vault_address"`
+	Repo         string        `json:"repo"`
+	PoolAmount   uint64        `json:"pool_amount"`
+	TotalClaimed uint64        `json:"total_claimed"`
+	Deadline     time.Time     `json:"deadline"`
+	State        CampaignState `json:"state"`
+	Authority    string        `json:"authority"`
+	Sponsor      string        `json:"sponsor"`
+	Allocations  []Allocation  `json:"allocations"`
+	CreatedAt    time.Time     `json:"created_at"`
+	FinalizedAt  *time.Time    `json:"finalized_at,omitempty"`
+	TxSignature  string        `json:"tx_signature,omitempty"`
 }
 
 type Allocation struct {
-	Contributor string `json:"contributor"`
-	Percentage  uint16 `json:"percentage"`
-	Amount      uint64 `json:"amount"`
-	Reasoning   string `json:"reasoning,omitempty"`
+	Contributor    string `json:"contributor"`
+	Percentage     uint16 `json:"percentage"`
+	Amount         uint64 `json:"amount"`
+	Reasoning      string `json:"reasoning,omitempty"`
+	Claimed        bool   `json:"claimed"`
+	ClaimantWallet string `json:"claimant_wallet,omitempty"`
+}
+
+type User struct {
+	GitHubUsername string    `json:"github_username"`
+	GitHubID       int       `json:"github_id"`
+	AvatarURL      string    `json:"avatar_url"`
+	WalletAddress  string    `json:"wallet_address"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type Contributor struct {
@@ -42,16 +58,18 @@ type CreateCampaignRequest struct {
 	Repo          string `json:"repo"`
 	PoolAmount    uint64 `json:"pool_amount"`
 	Deadline      string `json:"deadline"`
-	WalletAddress string `json:"wallet_address"`
+	SponsorWallet string `json:"sponsor_wallet"`
 }
 
 type CreateCampaignResponse struct {
-	CampaignID  string        `json:"campaign_id"`
-	Repo        string        `json:"repo"`
-	PoolAmount  uint64        `json:"pool_amount"`
-	Deadline    string        `json:"deadline"`
-	State       CampaignState `json:"state"`
-	TxSignature string        `json:"tx_signature"`
+	CampaignID   string        `json:"campaign_id"`
+	CampaignPDA  string        `json:"campaign_pda"`
+	VaultAddress string        `json:"vault_address"`
+	Repo         string        `json:"repo"`
+	PoolAmount   uint64        `json:"pool_amount"`
+	Deadline     string        `json:"deadline"`
+	State        CampaignState `json:"state"`
+	TxSignature  string        `json:"tx_signature"`
 }
 
 type FinalizePreviewResponse struct {
@@ -73,4 +91,18 @@ type FinalizeResponse struct {
 type ErrorResponse struct {
 	Error   string `json:"error"`
 	Details string `json:"details,omitempty"`
+}
+
+type GitHubAuthRequest struct {
+	Code  string `json:"code"`
+	State string `json:"state"`
+}
+
+type GitHubAuthResponse struct {
+	Token string `json:"token"`
+	User  User   `json:"user"`
+}
+
+type LinkWalletRequest struct {
+	WalletAddress string `json:"wallet_address"`
 }

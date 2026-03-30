@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { api } from "../api/client";
@@ -13,20 +13,31 @@ export default function Home() {
   const [view, setView] = useState<"all" | "mine">("all");
 
   useEffect(() => {
+    let cancelled = false;
     api
       .listCampaigns()
-      .then(setCampaigns)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (!cancelled) setCampaigns(data);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
   }, []);
 
   const walletAddress = publicKey?.toBase58();
-  const visibleCampaigns =
-    view === "mine" && walletAddress
-      ? campaigns.filter((campaign) => campaign.authority === walletAddress)
-      : view === "mine"
-        ? []
-        : campaigns;
+  const visibleCampaigns = useMemo(
+    () =>
+      view === "mine" && walletAddress
+        ? campaigns.filter((campaign) => campaign.sponsor === walletAddress)
+        : view === "mine"
+          ? []
+          : campaigns,
+    [campaigns, view, walletAddress]
+  );
 
   return (
     <div>

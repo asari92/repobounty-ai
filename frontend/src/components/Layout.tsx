@@ -1,8 +1,11 @@
 import { Link, useLocation } from "react-router-dom";
 import WalletButton from "./WalletButton";
+import { GitHubLoginButton } from "./GitHubLoginButton";
+import { useAuth } from "../hooks/useAuth";
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
+  const { user, logout } = useAuth();
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -38,7 +41,39 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             >
               Create
             </Link>
-            <WalletButton />
+            <Link
+              to="/profile"
+              className={`text-sm transition-colors ${
+                location.pathname === "/profile"
+                  ? "text-white"
+                  : "text-gray-400 hover:text-white"
+              }`}
+            >
+              Profile
+            </Link>
+            <div className="flex items-center gap-3 border-l border-solana-border pl-6">
+              {user ? (
+                <div className="flex items-center gap-3">
+                  <img
+                    src={user.avatar_url}
+                    alt={user.github_username}
+                    className="w-8 h-8 rounded-full"
+                  />
+                  <span className="text-sm text-solana-green">
+                    @{user.github_username}
+                  </span>
+                  <button
+                    onClick={logout}
+                    className="text-sm text-gray-400 hover:text-white transition-colors"
+                  >
+                    Logout
+                  </button>
+                </div>
+              ) : (
+                <GitHubLoginButton />
+              )}
+              <WalletButton />
+            </div>
           </nav>
         </div>
       </header>

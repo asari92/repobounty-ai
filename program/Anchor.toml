@@ -1,12 +1,14 @@
+[toolchain]
+
 [features]
-seeds = false
+resolution = true
 skip-lint = false
 
-[programs.localnet]
-repobounty = "8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ"
-
 [programs.devnet]
-repobounty = "8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ"
+repobounty = "GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy"
+
+[programs.localnet]
+repobounty = "GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy"
 
 [registry]
 url = "https://api.apr.dev"

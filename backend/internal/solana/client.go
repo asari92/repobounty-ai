@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/gagliardetto/solana-go"
+	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/mr-tron/base58"
 	"github.com/repobounty/repobounty-ai/internal/models"
 )
 
@@ -101,7 +103,7 @@ func (c *Client) ListCampaigns(ctx context.Context) ([]*models.Campaign, error) 
 		}
 
 		data := acct.Account.Data.GetBinary()
-		campaign, err := decodeCampaignAccount(data)
+		campaign, err := decodeCampaignAccount(data, acct.Pubkey.String(), c.programID)
 		if err != nil {
 			log.Printf("solana: skip undecodable campaign account %s: %v", acct.Pubkey.String(), err)
 			continue
@@ -131,23 +133,198 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*models.Ca
 	return nil, errors.New("campaign not found")
 }
 
-func (c *Client) CreateCampaign(ctx context.Context, campaignID, repo string, poolAmount uint64, deadline int64) (string, error) {
-	if !c.IsConfigured() {
-		log.Printf("solana: mock create_campaign for %s", repo)
-		return "mock_tx_" + campaignID, nil
+func (c *Client) GetVaultPDA(campaignPDA string) (string, error) {
+	campaignKey, err := solana.PublicKeyFromBase58(campaignPDA)
+	if err != nil {
+		return "", fmt.Errorf("parse campaign PDA: %w", err)
 	}
 
-	authority := c.privateKey.PublicKey()
+	vaultPDA, _, err := solana.FindProgramAddress(
+		[][]byte{
+			[]byte("vault"),
+			campaignKey.Bytes(),
+		},
+		c.programID,
+	)
+	if err != nil {
+		return "", fmt.Errorf("derive vault PDA: %w", err)
+	}
+
+	return vaultPDA.String(), nil
+}
+
+func (c *Client) ClaimAllocation(ctx context.Context, campaignID, contributorGitHub string, contributorWallet string) (string, error) {
 	campaignPDA, _, err := solana.FindProgramAddress(
 		[][]byte{
 			[]byte("campaign"),
-			authority.Bytes(),
 			[]byte(campaignID),
 		},
 		c.programID,
 	)
 	if err != nil {
 		return "", fmt.Errorf("derive campaign PDA: %w", err)
+	}
+
+	vaultPDA, _, err := solana.FindProgramAddress(
+		[][]byte{
+			[]byte("vault"),
+			campaignPDA.Bytes(),
+		},
+		c.programID,
+	)
+	if err != nil {
+		return "", fmt.Errorf("derive vault PDA: %w", err)
+	}
+
+	contributorKey, err := solana.PublicKeyFromBase58(contributorWallet)
+	if err != nil {
+		return "", fmt.Errorf("parse contributor wallet: %w", err)
+	}
+
+	discriminator := anchorDiscriminator("global:claim")
+
+	data := discriminator
+	data = appendBorshString(data, contributorGitHub)
+
+	instruction := solana.NewInstruction(
+		c.programID,
+		solana.AccountMetaSlice{
+			solana.NewAccountMeta(campaignPDA, true, false),
+			solana.NewAccountMeta(vaultPDA, true, false),
+			solana.NewAccountMeta(c.privateKey.PublicKey(), false, true), // authority signer
+			solana.NewAccountMeta(contributorKey, true, false),
+			solana.NewAccountMeta(solana.SystemProgramID, false, false),
+		},
+		data,
+	)
+
+	return c.sendTransaction(ctx, instruction)
+}
+
+type FundTransaction struct {
+	Transaction  string `json:"transaction"`
+	CampaignPDA  string `json:"campaign_pda"`
+	VaultAddress string `json:"vault_address"`
+}
+
+func (c *Client) BuildFundTransaction(ctx context.Context, campaignID string, poolAmount uint64, sponsorPubkey string) (*FundTransaction, error) {
+	if !c.IsConfigured() {
+		return &FundTransaction{
+			Transaction:  "mock_fund_tx_" + campaignID,
+			CampaignPDA:  "mock_campaign_pda",
+			VaultAddress: "mock_vault_pda",
+		}, nil
+	}
+
+	sponsorKey, err := solana.PublicKeyFromBase58(sponsorPubkey)
+	if err != nil {
+		return nil, fmt.Errorf("parse sponsor pubkey: %w", err)
+	}
+
+	campaignPDA, _, err := solana.FindProgramAddress(
+		[][]byte{
+			[]byte("campaign"),
+			[]byte(campaignID),
+		},
+		c.programID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("derive campaign PDA: %w", err)
+	}
+
+	vaultPDA, _, err := solana.FindProgramAddress(
+		[][]byte{
+			[]byte("vault"),
+			campaignPDA.Bytes(),
+		},
+		c.programID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("derive vault PDA: %w", err)
+	}
+
+	recent, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		return nil, fmt.Errorf("get blockhash: %w", err)
+	}
+
+	transferIx, err := system.NewTransferInstruction(
+		poolAmount,
+		sponsorKey,
+		vaultPDA,
+	).ValidateAndBuild()
+	if err != nil {
+		return nil, fmt.Errorf("build transfer instruction: %w", err)
+	}
+
+	fundCampaignData := anchorDiscriminator("global:fund_campaign")
+
+	tx, err := solana.NewTransaction(
+		[]solana.Instruction{
+			transferIx,
+			solana.NewInstruction(
+				c.programID,
+				solana.AccountMetaSlice{
+					solana.NewAccountMeta(campaignPDA, true, false),
+					solana.NewAccountMeta(vaultPDA, true, false),
+					solana.NewAccountMeta(sponsorKey, false, true),
+				},
+				fundCampaignData,
+			),
+		},
+		recent.Value.Blockhash,
+		solana.TransactionPayer(sponsorKey),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("build transaction: %w", err)
+	}
+
+	txData, err := tx.MarshalBinary()
+	if err != nil {
+		return nil, fmt.Errorf("marshal transaction: %w", err)
+	}
+
+	txBase58 := base58.Encode(txData)
+
+	return &FundTransaction{
+		Transaction:  txBase58,
+		CampaignPDA:  campaignPDA.String(),
+		VaultAddress: vaultPDA.String(),
+	}, nil
+}
+
+func (c *Client) CreateCampaign(ctx context.Context, campaignID, repo string, poolAmount uint64, deadline int64, sponsorPubkey string) (string, string, string, error) {
+	if !c.IsConfigured() {
+		log.Printf("solana: mock create_campaign for %s", repo)
+		return "mock_tx_" + campaignID, "mock_campaign_pda", "mock_vault_pda", nil
+	}
+
+	authority := c.privateKey.PublicKey()
+	campaignPDA, _, err := solana.FindProgramAddress(
+		[][]byte{
+			[]byte("campaign"),
+			[]byte(campaignID),
+		},
+		c.programID,
+	)
+	if err != nil {
+		return "", "", "", fmt.Errorf("derive campaign PDA: %w", err)
+	}
+
+	vaultPDA, _, err := solana.FindProgramAddress(
+		[][]byte{
+			[]byte("vault"),
+			campaignPDA.Bytes(),
+		},
+		c.programID,
+	)
+	if err != nil {
+		return "", "", "", fmt.Errorf("derive vault PDA: %w", err)
+	}
+
+	sponsorKey, err := solana.PublicKeyFromBase58(sponsorPubkey)
+	if err != nil {
+		return "", "", "", fmt.Errorf("parse sponsor pubkey: %w", err)
 	}
 
 	discriminator := anchorDiscriminator("global:create_campaign")
@@ -157,18 +334,25 @@ func (c *Client) CreateCampaign(ctx context.Context, campaignID, repo string, po
 	data = appendBorshString(data, repo)
 	data = appendBorshU64(data, poolAmount)
 	data = appendBorshI64(data, deadline)
+	data = append(data, sponsorKey.Bytes()...)
 
 	instruction := solana.NewInstruction(
 		c.programID,
 		solana.AccountMetaSlice{
 			solana.NewAccountMeta(campaignPDA, true, false),
 			solana.NewAccountMeta(authority, true, true),
+			solana.NewAccountMeta(vaultPDA, false, false),
 			solana.NewAccountMeta(solana.SystemProgramID, false, false),
 		},
 		data,
 	)
 
-	return c.sendTransaction(ctx, instruction)
+	txSig, err := c.sendTransaction(ctx, instruction)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	return txSig, campaignPDA.String(), vaultPDA.String(), nil
 }
 
 type AllocationInput struct {
@@ -186,7 +370,6 @@ func (c *Client) FinalizeCampaign(ctx context.Context, campaignID string, alloca
 	campaignPDA, _, err := solana.FindProgramAddress(
 		[][]byte{
 			[]byte("campaign"),
-			authority.Bytes(),
 			[]byte(campaignID),
 		},
 		c.programID,
@@ -255,7 +438,7 @@ func anchorDiscriminator(namespace string) []byte {
 	return h[:8]
 }
 
-func decodeCampaignAccount(data []byte) (*models.Campaign, error) {
+func decodeCampaignAccount(data []byte, campaignPDA string, programID solana.PublicKey) (*models.Campaign, error) {
 	if len(data) < len(campaignAccountDiscriminator) {
 		return nil, fmt.Errorf("account too short")
 	}
@@ -270,6 +453,12 @@ func decodeCampaignAccount(data []byte) (*models.Campaign, error) {
 		return nil, err
 	}
 	authority := solana.PublicKeyFromBytes(authorityBytes)
+
+	sponsorBytes, err := dec.readBytes(32)
+	if err != nil {
+		return nil, err
+	}
+	sponsor := solana.PublicKeyFromBytes(sponsorBytes)
 
 	campaignID, err := dec.readString()
 	if err != nil {
@@ -286,6 +475,11 @@ func decodeCampaignAccount(data []byte) (*models.Campaign, error) {
 		return nil, fmt.Errorf("read pool_amount: %w", err)
 	}
 
+	totalClaimed, err := dec.readU64()
+	if err != nil {
+		return nil, fmt.Errorf("read total_claimed: %w", err)
+	}
+
 	deadlineUnix, err := dec.readI64()
 	if err != nil {
 		return nil, fmt.Errorf("read deadline: %w", err)
@@ -296,9 +490,18 @@ func decodeCampaignAccount(data []byte) (*models.Campaign, error) {
 		return nil, fmt.Errorf("read state: %w", err)
 	}
 
-	state := models.StateCreated
-	if stateByte == 1 {
+	var state models.CampaignState
+	switch stateByte {
+	case 0:
+		state = models.StateCreated
+	case 1:
+		state = models.StateFunded
+	case 2:
 		state = models.StateFinalized
+	case 3:
+		state = models.StateCompleted
+	default:
+		return nil, fmt.Errorf("unknown state: %d", stateByte)
 	}
 
 	allocCount, err := dec.readU32()
@@ -320,10 +523,32 @@ func decodeCampaignAccount(data []byte) (*models.Campaign, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read allocation amount: %w", err)
 		}
+		claimedByte, err := dec.readU8()
+		if err != nil {
+			return nil, fmt.Errorf("read allocation claimed: %w", err)
+		}
+		claimed := claimedByte == 1
+		claimantWallet := ""
+		if claimed {
+			claimantTag, err := dec.readU8()
+			if err != nil {
+				return nil, fmt.Errorf("read claimant tag: %w", err)
+			}
+			if claimantTag == 1 {
+				claimantBytes, err := dec.readBytes(32)
+				if err != nil {
+					return nil, fmt.Errorf("read claimant pubkey: %w", err)
+				}
+				claimantKey := solana.PublicKeyFromBytes(claimantBytes)
+				claimantWallet = claimantKey.String()
+			}
+		}
 		allocations = append(allocations, models.Allocation{
-			Contributor: contributor,
-			Percentage:  percentage,
-			Amount:      amount,
+			Contributor:    contributor,
+			Percentage:     percentage,
+			Amount:         amount,
+			Claimed:        claimed,
+			ClaimantWallet: claimantWallet,
 		})
 	}
 
@@ -351,16 +576,36 @@ func decodeCampaignAccount(data []byte) (*models.Campaign, error) {
 		finalizedAt = &t
 	}
 
+	campaignKey, err := solana.PublicKeyFromBase58(campaignPDA)
+	if err != nil {
+		return nil, fmt.Errorf("parse campaign PDA: %w", err)
+	}
+
+	vaultPDA, _, err := solana.FindProgramAddress(
+		[][]byte{
+			[]byte("vault"),
+			campaignKey.Bytes(),
+		},
+		programID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("derive vault PDA: %w", err)
+	}
+
 	return &models.Campaign{
-		CampaignID:  campaignID,
-		Repo:        repo,
-		PoolAmount:  poolAmount,
-		Deadline:    time.Unix(deadlineUnix, 0).UTC(),
-		State:       state,
-		Authority:   authority.String(),
-		Allocations: allocations,
-		CreatedAt:   time.Unix(createdAtUnix, 0).UTC(),
-		FinalizedAt: finalizedAt,
+		CampaignID:   campaignID,
+		CampaignPDA:  campaignPDA,
+		VaultAddress: vaultPDA.String(),
+		Repo:         repo,
+		PoolAmount:   poolAmount,
+		TotalClaimed: totalClaimed,
+		Deadline:     time.Unix(deadlineUnix, 0).UTC(),
+		State:        state,
+		Authority:    authority.String(),
+		Sponsor:      sponsor.String(),
+		Allocations:  allocations,
+		CreatedAt:    time.Unix(createdAtUnix, 0).UTC(),
+		FinalizedAt:  finalizedAt,
 	}, nil
 }
 
