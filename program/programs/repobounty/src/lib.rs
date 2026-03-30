@@ -60,6 +60,9 @@ pub mod repobounty {
         campaign.vault_bump = ctx.bumps.vault;
         campaign.created_at = clock.unix_timestamp;
         campaign.finalized_at = None;
+        campaign.campaign_type = CampaignType::Deadline;
+        campaign.goals = vec![];
+        campaign.sponsors = vec![];
 
         msg!(
             "Campaign created: {} | pool={} | sponsor={}",
@@ -285,6 +288,12 @@ pub mod repobounty {
             .checked_add(amount)
             .ok_or(RepoBountyError::ArithmeticOverflow)?;
 
+        let vault_balance = ctx.accounts.vault.lamports();
+        require!(
+            vault_balance >= campaign.pool_amount,
+            RepoBountyError::InsufficientFunds
+        );
+
         msg!(
             "Sponsor added: {} | amount={} | new_pool={}",
             sponsor_key,
@@ -301,6 +310,10 @@ pub mod repobounty {
         completed_by: String,
     ) -> Result<()> {
         let campaign = &mut ctx.accounts.campaign;
+        require!(
+            completed_by.len() <= MAX_CONTRIBUTOR_LEN,
+            RepoBountyError::ContributorNameTooLong
+        );
         require!(
             campaign.campaign_type == CampaignType::Goal,
             RepoBountyError::InvalidCampaignState,
@@ -459,6 +472,12 @@ pub struct AddSponsor<'info> {
     pub authority: Signer<'info>,
     /// The new sponsor adding funds
     pub sponsor: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [b"vault", campaign.key().as_ref()],
+        bump = campaign.vault_bump,
+    )]
+    pub vault: SystemAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -533,8 +552,8 @@ impl Campaign {
         + 8                                     // created_at
         + (1 + 8) // finalized_at (Option<i64>)
         + 1                                     // campaign_type enum
-        + (4 + MAX_GOALS * 128)                 // goals vec (approx)
-        + (4 + MAX_SPONSORS * (32 + 8 + 1)) // sponsors vec
+        + (4 + MAX_GOALS * CampaignGoal::SIZE)  // goals vec
+        + (4 + MAX_SPONSORS * SponsorEntry::SIZE) // sponsors vec
     }
 }
 
