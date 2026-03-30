@@ -62,7 +62,7 @@ GitHub data → AI allocation → Solana finalization → GitHub-based claims �
 | **AI Engine** | OpenRouter LLM (code diff analysis) | Nemotron free tier by default |
 | **AI Fallback** | Deterministic weighted scoring | Built-in, no API key needed |
 | **Storage** | SQLite (persistent) / in-memory | modernc.org/sqlite 1.48 |
-| **Blockchain** | Solana (devnet) + Anchor | Anchor 0.30.1 |
+| **Blockchain** | Solana (devnet) + Anchor | Anchor 0.32.1, Rust 1.92 |
 | **Solana Client** | gagliardetto/solana-go | 1.11 |
 | **Logging** | Zap (structured) | 1.27 |
 
@@ -97,9 +97,9 @@ After start:
 | Go | 1.25+ | `go version` |
 | Node.js | 20+ | `node --version` |
 | npm | 10+ | `npm --version` |
-| Rust | 1.79+ | `rustc --version` |
+| Rust | 1.92+ | `rustc --version` |
 | Solana CLI | 1.18+ | `solana --version` |
-| Anchor CLI | 0.30.1 | `anchor --version` |
+| Anchor CLI | 0.32.1 | `anchor --version` |
 
 > Solana CLI and Anchor are needed only if you want to build/deploy the smart contract. Backend and frontend run without them.
 
@@ -419,7 +419,7 @@ repobounty-ai/
 ├── program/                          # Solana/Anchor smart contract
 │   ├── programs/repobounty/
 │   │   ├── src/lib.rs                # Program: create, fund, finalize, claim
-│   │   └── Cargo.toml                # anchor-lang 0.30.1
+│   │   └── Cargo.toml                # anchor-lang 0.32.1
 │   ├── tests/repobounty.ts           # Anchor integration tests
 │   ├── Anchor.toml                   # Program ID, cluster config
 │   └── Dockerfile
