@@ -135,7 +135,7 @@ GITHUB_TOKEN=<from https://github.com/settings/tokens, scopes: repo, read:user>
 # Solana
 SOLANA_RPC_URL=https://api.devnet.solana.com
 SOLANA_PRIVATE_KEY=<base58 or JSON array, see "Solana keypair" section below>
-PROGRAM_ID=8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ
+PROGRAM_ID=GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy
 
 # AI (optional — without it, deterministic fallback is used)
 OPENROUTER_API_KEY=<from https://openrouter.ai/keys>
@@ -180,7 +180,7 @@ Open http://localhost:3000 in a browser with Phantom wallet extension.
 ### Program ID
 
 ```
-8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ
+GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy
 ```
 
 ### Generating a keypair for backend authority
@@ -230,7 +230,7 @@ anchor test
 ```bash
 solana config set --url https://api.devnet.solana.com
 anchor deploy --provider.cluster devnet
-# → Program Id: 8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ
+# → Program Id: GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy
 ```
 
 ### Deploying to mainnet-beta

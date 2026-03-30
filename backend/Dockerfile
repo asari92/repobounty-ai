@@ -10,7 +10,9 @@ RUN go build -o main ./cmd/api
 
 FROM alpine:3.21
 RUN apk --no-cache add ca-certificates wget && \
-    adduser -D -u 1001 appuser
+    adduser -D -u 1001 appuser && \
+    mkdir -p /data && \
+    chown -R appuser:appuser /data
 WORKDIR /home/appuser
 COPY --from=builder /app/main .
 USER appuser

@@ -14,7 +14,7 @@ services:
       - MODEL=${MODEL:-nvidia/nemotron-3-super-120b-a12b:free}
       - SOLANA_RPC_URL=${SOLANA_RPC_URL:-https://api.devnet.solana.com}
       - SOLANA_PRIVATE_KEY=${SOLANA_PRIVATE_KEY}
-      - PROGRAM_ID=${PROGRAM_ID:-8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ}
+      - PROGRAM_ID=${PROGRAM_ID:-GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
       - DATABASE_PATH=/data/repobounty.db
     volumes:
@@ -46,7 +46,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "5173:80"
+      - "5173:8080"
     depends_on:
       backend:
         condition: service_healthy
@@ -63,7 +63,7 @@ services:
           memory: 256M
           cpus: "0.5"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/"]
       interval: 10s
       timeout: 3s
       retries: 3

@@ -80,7 +80,7 @@ Frontend (React + Solana wallet-adapter)
 - Pages: Home (campaign list, all/my filter by sponsor), CreateCampaign (2-step: create → fund), CampaignDetails (preview + finalize + claim), Profile (wallet linking + claims)
 
 ### Solana Program (`program/`)
-- Program ID: `8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ`
+- Program ID: `GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy`
 - Campaign PDA seeds: `["campaign", campaign_id]`
 - Vault PDA seeds: `["vault", campaign_pda]` — holds escrowed SOL
 - State machine: Created → Funded → Finalized → Completed

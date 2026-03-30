@@ -797,7 +797,7 @@ func TestDeterministicFallback(t *testing.T)
 ### Solana
 - `SOLANA_RPC_URL` — Devnet RPC endpoint
 - `SOLANA_PRIVATE_KEY` — Backend keypair (authority)
-- `PROGRAM_ID` — `8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ`
+- `PROGRAM_ID` — `GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy`
 
 ### GitHub OAuth
 - `GITHUB_CLIENT_ID` — OAuth App client ID
