@@ -38,14 +38,15 @@ GitHub data → AI allocation → Solana finalization → GitHub-based claims �
 
 **Data flow:**
 
-1. Sponsor connects Phantom wallet, creates a campaign (repo, pool, deadline)
-2. Campaign PDA + vault PDA created on-chain; sponsor funds the vault
-3. After deadline: backend fetches GitHub contributors, PR diffs, reviews
-4. AI evaluates code impact (5-dimensional scoring) and produces allocation
-5. Backend finalizer key calls `finalize_campaign` — allocations stored on-chain
-6. Contributors log in via GitHub OAuth, bind wallets on Profile page
-7. Contributor calls `claim` — SOL transfers from vault to their wallet
-8. When all claims complete, campaign transitions to Completed
+1. Sponsor signs in to the app, connects Phantom, and submits a campaign (repo, pool, deadline).
+2. The backend authority calls `create_campaign` on-chain, records the sponsor wallet, and returns the campaign PDA plus the derived vault PDA.
+3. The frontend requests a funding transaction, and the sponsor signs it in Phantom to transfer SOL into the vault and move the campaign to `Funded`.
+4. After the deadline, the backend fetches GitHub contributors and PR diffs when available.
+5. The backend runs AI code-impact scoring, or a deterministic fallback, to produce basis-point allocations.
+6. The backend finalize endpoint or auto-finalize worker calls `finalize_campaign`, storing the allocations on-chain.
+7. Contributors log in with GitHub, can link a wallet on the Profile page, and open the finalized campaign.
+8. A contributor requests a claim, and the backend verifies GitHub identity before submitting `claim` to transfer SOL to the contributor wallet.
+9. When all allocations are claimed, the campaign transitions to `Completed`.
 
 ---
 
@@ -183,6 +184,11 @@ Open http://localhost:3000 in a browser with Phantom wallet extension.
 GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy
 ```
 
+The current frontend/backend primarily use the deadline-campaign flow:
+`create_campaign`, `fund_campaign`, `finalize_campaign`, and `claim`.
+The on-chain program also includes additional maintenance and roadmap
+instructions that are listed below.
+
 ### Generating a keypair for backend authority
 
 ```bash
@@ -261,10 +267,14 @@ Created → Funded → Finalized → Completed
 
 | Instruction | Signer | Precondition | Effect |
 |-------------|--------|--------------|--------|
-| `create_campaign` | authority (backend) | — | Creates Campaign PDA + Vault PDA |
-| `fund_campaign` | sponsor (wallet) | State == Created | Transfers SOL to vault, state → Funded |
-| `finalize_campaign` | authority (backend) | State == Funded, deadline passed | Stores allocations on-chain, state → Finalized |
-| `claim` | contributor (wallet) | State == Finalized, not yet claimed | Transfers SOL from vault to contributor |
+| `create_campaign` | authority (backend) | deadline in future, sponsor pubkey provided | Creates the campaign account; the vault PDA is derived from that campaign |
+| `fund_campaign` | sponsor (wallet) | State == Created, vault funded in the same transaction | Verifies vault funding and moves state → Funded |
+| `finalize_campaign` | authority (backend) | State == Funded, deadline passed, allocations valid | Stores allocations on-chain and moves state → Finalized |
+| `claim` | authority (backend) | State == Finalized, allocation exists, not yet claimed | Transfers SOL from the vault to the contributor recipient account and marks the allocation claimed |
+| `withdraw_remaining` | sponsor (wallet) | State == Completed | Withdraws any remaining dust from the vault back to the sponsor |
+| `close_campaign` | authority (backend) | State == Completed | Closes the campaign account and returns rent to the authority |
+| `add_sponsor` | authority (backend) + sponsor | State == Created or Funded, max 5 sponsors | Adds an additional sponsor entry and increases the pool amount |
+| `complete_goal` | authority (backend) | Goal-based campaign, valid incomplete goal index | Marks a goal as completed by a contributor |
 
 ### PDA Seeds
 
@@ -279,7 +289,8 @@ Vault PDA:    ["vault", campaign_pda]
 - Max 10 allocations per campaign
 - No duplicate contributors
 - Deadline enforced on-chain for finalize
-- Campaign ID max 32 chars, repo max 64 chars
+- Campaign ID max 32 chars, repo max 64 chars, contributor username max 39 chars
+- Contract sizing currently reserves space for up to 5 sponsors and 10 goals per campaign
 
 ---
 
