@@ -15,7 +15,7 @@ describe("repobounty", () => {
   const repo = "anthropics/claude-code";
   const poolAmount = new anchor.BN(1_000_000_000); // 1 SOL in lamports
   const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 86400); // +24h
-  const pastDeadline = new anchor.BN(Math.floor(Date.now() / 1000) - 86400); // -24h
+  const futureDeadline = new anchor.BN(Math.floor(Date.now() / 1000) + 86400); // +24h
 
   let campaignPda: anchor.web3.PublicKey;
   let campaignBump: number;
@@ -35,7 +35,7 @@ describe("repobounty", () => {
 
   it("creates campaign with sponsor and vault", async () => {
     const tx = await program.methods
-      .createCampaign(campaignId, repo, poolAmount, pastDeadline, sponsor)
+      .createCampaign(campaignId, repo, poolAmount, futureDeadline, sponsor)
       .accounts({
         campaign: campaignPda,
         authority: authority,
@@ -95,7 +95,7 @@ describe("repobounty", () => {
         .rpc();
       expect.fail("should have thrown");
     } catch (err: any) {
-      expect(err.error.errorCode.code).to.equal("AlreadyFunded");
+      expect(err.error.errorCode.code).to.equal("InvalidCampaignState");
     }
   });
 
@@ -163,7 +163,7 @@ describe("repobounty", () => {
     );
 
     await program.methods
-      .createCampaign(id2, repo, poolAmount, pastDeadline, sponsor)
+      .createCampaign(id2, repo, poolAmount, futureDeadline, sponsor)
       .accounts({
         campaign: pda2,
         authority: authority,
@@ -182,7 +182,7 @@ describe("repobounty", () => {
         .rpc();
       expect.fail("should have thrown");
     } catch (err: any) {
-      expect(err.error.errorCode.code).to.equal("AlreadyFinalized");
+      expect(err.error.errorCode.code).to.equal("InvalidCampaignState");
     }
   });
 
@@ -292,7 +292,7 @@ describe("repobounty", () => {
     );
 
     await program.methods
-      .createCampaign(id3, repo, poolAmount, pastDeadline, sponsor)
+      .createCampaign(id3, repo, poolAmount, futureDeadline, sponsor)
       .accounts({
         campaign: pda3,
         authority: authority,
@@ -332,6 +332,28 @@ describe("repobounty", () => {
       expect.fail("should have thrown");
     } catch (err: any) {
       expect(err.error.errorCode.code).to.equal("InvalidAllocationTotal");
+    }
+  });
+
+  it("closes a completed campaign and reclaims rent", async () => {
+    const beforeBalance = await provider.connection.getBalance(authority);
+
+    await program.methods
+      .closeCampaign()
+      .accounts({
+        campaign: campaignPda,
+        authority: authority,
+      })
+      .rpc();
+
+    const afterBalance = await provider.connection.getBalance(authority);
+    expect(afterBalance).to.be.greaterThan(beforeBalance);
+
+    try {
+      await program.account.campaign.fetch(campaignPda);
+      expect.fail("account should have been closed");
+    } catch (err: any) {
+      expect(err.message).to.include("Account does not exist");
     }
   });
 });

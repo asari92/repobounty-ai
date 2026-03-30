@@ -96,7 +96,7 @@ export default function CreateCampaign() {
       const txBytes = bs58.decode(fundTx.transaction);
       const transaction = VersionedTransaction.deserialize(new Uint8Array(txBytes));
 
-      const signature = await sendTransaction(transaction, undefined as never);
+      const signature = await sendTransaction(transaction, connection);
       await waitForSignature(signature);
 
       navigate(`/campaign/${createdId}`);
@@ -116,12 +116,7 @@ export default function CreateCampaign() {
   }
 
   async function waitForSignature(signature: string) {
-    const { blockhash, lastValidBlockHeight } =
-      await connection.getLatestBlockhash();
-    await connection.confirmTransaction(
-      { signature, blockhash, lastValidBlockHeight },
-      "confirmed",
-    );
+    await connection.confirmTransaction(signature, "confirmed");
   }
 
   function handleBack() {

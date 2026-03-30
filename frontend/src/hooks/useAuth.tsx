@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import type { User } from "../types";
 import { api } from "../api/client";
 
@@ -47,7 +47,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const login = async () => {
+  const login = useCallback(async () => {
     try {
       const { auth_url } = await api.getGithubAuthUrl();
       window.location.href = auth_url;
@@ -55,23 +55,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error("Login failed:", error);
       throw error;
     }
-  };
+  }, []);
 
-  const logout = () => {
+  const logout = useCallback(() => {
     localStorage.removeItem("token");
     setUser(null);
-  };
+  }, []);
 
-  const linkWallet = async (walletAddress: string): Promise<User> => {
+  const linkWallet = useCallback(async (walletAddress: string): Promise<User> => {
     const updatedUser = await api.linkWallet({ wallet_address: walletAddress });
     setUser(updatedUser);
     return updatedUser;
-  };
+  }, []);
 
-  const refreshUser = async () => {
+  const refreshUser = useCallback(async () => {
     const userData = await api.getMe();
     setUser(userData);
-  };
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, isLoading, login, logout, linkWallet, refreshUser }}>

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -27,6 +28,8 @@ func NewRouter(h *Handlers, env string) http.Handler {
 			for i := range allowedOrigins {
 				allowedOrigins[i] = strings.TrimSpace(allowedOrigins[i])
 			}
+		} else {
+			log.Printf("WARNING: ALLOWED_ORIGINS not set in production — all cross-origin requests will be blocked")
 		}
 	} else {
 		allowedOrigins = []string{"http://localhost:3000", "http://localhost:5173"}

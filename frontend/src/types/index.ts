@@ -1,7 +1,7 @@
 export interface Campaign {
   campaign_id: string;
-  campaign_pda: string;
-  vault_address: string;
+  campaign_pda?: string;
+  vault_address?: string;
   repo: string;
   pool_amount: number;
   total_claimed: number;

@@ -8,6 +8,10 @@ const MAX_REPO_LEN: usize = 64;
 const MAX_CONTRIBUTOR_LEN: usize = 39;
 /// Maximum contributors per campaign.
 const MAX_ALLOCATIONS: usize = 10;
+/// Maximum sponsors per campaign (multi-sponsor support).
+const MAX_SPONSORS: usize = 5;
+/// Maximum goals per campaign (goal-based campaigns).
+const MAX_GOALS: usize = 10;
 /// 100 % expressed in basis points.
 const BPS_100: u16 = 10_000;
 
@@ -31,6 +35,10 @@ pub mod repobounty {
         require!(campaign_id.len() <= 32, RepoBountyError::CampaignIdTooLong);
         require!(repo.len() <= MAX_REPO_LEN, RepoBountyError::RepoNameTooLong);
         require!(pool_amount > 0, RepoBountyError::InvalidPoolAmount);
+        require!(
+            !sponsor.eq(&Pubkey::default()),
+            RepoBountyError::InvalidSponsor
+        );
 
         let clock = Clock::get()?;
         require!(
@@ -70,7 +78,7 @@ pub mod repobounty {
 
         require!(
             campaign.state == CampaignState::Created,
-            RepoBountyError::AlreadyFunded,
+            RepoBountyError::InvalidCampaignState,
         );
 
         let vault_balance = vault.lamports();
@@ -104,7 +112,10 @@ pub mod repobounty {
         );
 
         for a in allocations.iter() {
-            require!(!a.contributor.is_empty(), RepoBountyError::ContributorNameEmpty);
+            require!(
+                !a.contributor.is_empty(),
+                RepoBountyError::ContributorNameEmpty
+            );
         }
 
         let clock = Clock::get()?;
@@ -138,21 +149,25 @@ pub mod repobounty {
         let campaign = &mut ctx.accounts.campaign;
         campaign.allocations = allocations
             .iter()
-            .map(|a| Allocation {
-                contributor: a.contributor.clone(),
-                percentage: a.percentage,
-                amount: campaign
+            .map(|a| {
+                let amount = campaign
                     .pool_amount
                     .checked_mul(a.percentage as u64)
                     .ok_or(RepoBountyError::ArithmeticOverflow)?
-                    / BPS_100 as u64,
-                claimed: false,
-                claimant: None,
+                    / BPS_100 as u64;
+                require!(amount > 0, RepoBountyError::AllocationAmountZero);
+                Ok(Allocation {
+                    contributor: a.contributor.clone(),
+                    percentage: a.percentage,
+                    amount,
+                    claimed: false,
+                    claimant: None,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         campaign.state = CampaignState::Finalized;
-        campaign.finalized_at = Some(Clock::get()?.unix_timestamp);
+        campaign.finalized_at = Some(clock.unix_timestamp);
 
         msg!(
             "Campaign finalized: {} | {} allocations",
@@ -200,7 +215,10 @@ pub mod repobounty {
         allocation.claimed = true;
         allocation.claimant = Some(contributor.key());
 
-        campaign.total_claimed += transfer_amount;
+        campaign.total_claimed = campaign
+            .total_claimed
+            .checked_add(transfer_amount)
+            .ok_or(RepoBountyError::ArithmeticOverflow)?;
 
         let all_claimed = campaign.allocations.iter().all(|a| a.claimed);
         if all_claimed {
@@ -229,6 +247,87 @@ pub mod repobounty {
         }
 
         msg!("Withdrawn remaining {} lamports to sponsor", remaining);
+        Ok(())
+    }
+
+    /// Close a completed campaign to reclaim rent-exempt SOL.
+    /// Only the campaign authority can close, and only when Completed.
+    pub fn close_campaign(_ctx: Context<CloseCampaign>) -> Result<()> {
+        msg!("Campaign closed; rent reclaimed by authority");
+        Ok(())
+    }
+
+    /// Add an additional sponsor to an existing campaign.
+    /// Only allowed before finalization. Increases the pool amount.
+    pub fn add_sponsor(
+        ctx: Context<AddSponsor>,
+        amount: u64,
+    ) -> Result<()> {
+        require!(amount > 0, RepoBountyError::InvalidPoolAmount);
+
+        let campaign = &mut ctx.accounts.campaign;
+        require!(
+            campaign.state == CampaignState::Created || campaign.state == CampaignState::Funded,
+            RepoBountyError::InvalidCampaignState,
+        );
+
+        require!(
+            campaign.sponsors.len() < MAX_SPONSORS,
+            RepoBountyError::TooManySponsors,
+        );
+
+        let sponsor_key = ctx.accounts.sponsor.key();
+        campaign.sponsors.push(SponsorEntry {
+            wallet: sponsor_key,
+            amount,
+            funded: false,
+        });
+
+        campaign.pool_amount = campaign
+            .pool_amount
+            .checked_add(amount)
+            .ok_or(RepoBountyError::ArithmeticOverflow)?;
+
+        msg!(
+            "Sponsor added: {} | amount={} | new_pool={}",
+            sponsor_key,
+            amount,
+            campaign.pool_amount,
+        );
+        Ok(())
+    }
+
+    /// Complete a campaign goal (authority-only, for goal-based campaigns).
+    pub fn complete_goal(
+        ctx: Context<CompleteGoal>,
+        goal_index: u8,
+        completed_by: String,
+    ) -> Result<()> {
+        let campaign = &mut ctx.accounts.campaign;
+        require!(
+            campaign.campaign_type == CampaignType::Goal,
+            RepoBountyError::InvalidCampaignState,
+        );
+
+        let idx = goal_index as usize;
+        require!(
+            idx < campaign.goals.len(),
+            RepoBountyError::GoalNotFound,
+        );
+        require!(
+            !campaign.goals[idx].completed,
+            RepoBountyError::GoalAlreadyCompleted,
+        );
+
+        campaign.goals[idx].completed = true;
+        campaign.goals[idx].completed_by = completed_by.clone();
+
+        msg!(
+            "Goal {} completed by {} for campaign {}",
+            goal_index,
+            completed_by,
+            campaign.campaign_id,
+        );
         Ok(())
     }
 }
@@ -328,7 +427,56 @@ pub struct FinalizeCampaign<'info> {
     #[account(
         mut,
         has_one = authority,
-        constraint = campaign.state == CampaignState::Funded @ RepoBountyError::AlreadyFinalized,
+        constraint = campaign.state == CampaignState::Funded @ RepoBountyError::InvalidCampaignState,
+        seeds = [b"campaign", campaign.campaign_id.as_bytes()],
+        bump = campaign.bump,
+    )]
+    pub campaign: Account<'info, Campaign>,
+    pub authority: Signer<'info>,
+}
+
+// --- CloseCampaign ----------------------------------------------------------
+
+#[derive(Accounts)]
+pub struct CloseCampaign<'info> {
+    #[account(
+        mut,
+        has_one = authority,
+        constraint = campaign.state == CampaignState::Completed @ RepoBountyError::CampaignNotCompleted,
+        close = authority,
+        seeds = [b"campaign", campaign.campaign_id.as_bytes()],
+        bump = campaign.bump,
+    )]
+    pub campaign: Account<'info, Campaign>,
+    pub authority: Signer<'info>,
+}
+
+// --- AddSponsor -------------------------------------------------------------
+
+#[derive(Accounts)]
+pub struct AddSponsor<'info> {
+    #[account(
+        mut,
+        has_one = authority,
+        seeds = [b"campaign", campaign.campaign_id.as_bytes()],
+        bump = campaign.bump,
+    )]
+    pub campaign: Account<'info, Campaign>,
+    pub authority: Signer<'info>,
+    /// The new sponsor adding funds
+    pub sponsor: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+// --- CompleteGoal -----------------------------------------------------------
+
+#[derive(Accounts)]
+pub struct CompleteGoal<'info> {
+    #[account(
+        mut,
+        has_one = authority,
+        seeds = [b"campaign", campaign.campaign_id.as_bytes()],
+        bump = campaign.bump,
     )]
     pub campaign: Account<'info, Campaign>,
     pub authority: Signer<'info>,
@@ -366,6 +514,12 @@ pub struct Campaign {
     pub created_at: i64,
     /// Unix timestamp of finalization (None until finalized).
     pub finalized_at: Option<i64>,
+    /// Campaign type: Deadline-based or Goal-based.
+    pub campaign_type: CampaignType,
+    /// Goals for goal-based campaigns.
+    pub goals: Vec<CampaignGoal>,
+    /// Additional sponsors (multi-sponsor support).
+    pub sponsors: Vec<SponsorEntry>,
 }
 
 impl Campaign {
@@ -387,7 +541,7 @@ impl Campaign {
     }
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
 pub enum CampaignState {
     Created,
     Funded,
@@ -458,6 +612,10 @@ pub enum RepoBountyError {
     InsufficientVaultFunds,
     #[msg("Campaign deadline has not been reached yet")]
     DeadlineNotReached,
+    #[msg("Campaign is in an invalid state for this operation")]
+    InvalidCampaignState,
+    #[msg("Allocation amount is zero")]
+    AllocationAmountZero,
     #[msg("Arithmetic overflow in allocation calculation")]
     ArithmeticOverflow,
     #[msg("Contributor name cannot be empty")]

@@ -2,11 +2,8 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { api } from "../api/client";
+import { formatSOL } from "../utils/campaign";
 import type { ClaimItem } from "../types";
-
-function formatSOL(lamports: number): string {
-  return (lamports / 1e9).toFixed(4);
-}
 
 export default function Profile() {
   const { user } = useAuth();
@@ -24,7 +21,7 @@ export default function Profile() {
       .then(setClaims)
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load claims"))
       .finally(() => setLoading(false));
-  }, [user]);
+  }, [user?.github_username]);
 
   if (!user) {
     return (

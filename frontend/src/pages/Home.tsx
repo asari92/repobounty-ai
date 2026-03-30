@@ -13,11 +13,19 @@ export default function Home() {
   const [view, setView] = useState<"all" | "mine">("all");
 
   useEffect(() => {
+    let cancelled = false;
     api
       .listCampaigns()
-      .then(setCampaigns)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (!cancelled) setCampaigns(data);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
   }, []);
 
   const walletAddress = publicKey?.toBase58();

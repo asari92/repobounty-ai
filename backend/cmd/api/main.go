@@ -96,16 +96,21 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	srvErr := make(chan error, 1)
 	go func() {
 		logger.Info("server starting", zap.String("addr", srv.Addr))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatal("server failed", zap.Error(err))
+			srvErr <- err
 		}
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	select {
+	case <-quit:
+	case err := <-srvErr:
+		logger.Error("server failed", zap.Error(err))
+	}
 
 	logger.Info("shutting down server...")
 	cancel()

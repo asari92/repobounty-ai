@@ -8,13 +8,14 @@ export function AuthCallback() {
 
   useEffect(() => {
     let redirectTimer: ReturnType<typeof setTimeout>;
+    let cancelled = false;
 
     const handleCallback = async () => {
       const urlParams = new URLSearchParams(window.location.search);
       const code = urlParams.get("code");
 
       if (!code) {
-        setError("No authorization code found");
+        if (!cancelled) setError("No authorization code found");
         return;
       }
 
@@ -22,18 +23,21 @@ export function AuthCallback() {
         const state = urlParams.get("state") || undefined;
         const response = await api.githubCallback({ code, state });
         localStorage.setItem("token", response.token);
-        navigate("/");
+        if (!cancelled) navigate("/");
       } catch (err) {
         console.error("Auth callback failed:", err);
-        setError("Authentication failed. Please try again.");
+        if (!cancelled) setError("Authentication failed. Please try again.");
         redirectTimer = setTimeout(() => {
-          navigate("/");
+          if (!cancelled) navigate("/");
         }, 3000);
       }
     };
 
     handleCallback();
-    return () => clearTimeout(redirectTimer);
+    return () => {
+      cancelled = true;
+      clearTimeout(redirectTimer);
+    };
   }, [navigate]);
 
   if (error) {

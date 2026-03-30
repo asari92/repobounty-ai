@@ -26,7 +26,9 @@ func NewSQLite(dbPath string) (*SQLiteStore, error) {
 	}
 
 	db.SetMaxOpenConns(4)
-	db.Exec("PRAGMA journal_mode=WAL")
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		log.Printf("sqlite: PRAGMA journal_mode=WAL failed: %v", err)
+	}
 
 	if err := migrate(db); err != nil {
 		db.Close()
@@ -182,7 +184,14 @@ func (s *SQLiteStore) GetUser(username string) (*User, error) {
 
 func (s *SQLiteStore) CreateUser(u *User) error {
 	if u.CreatedAt.IsZero() {
-		u.CreatedAt = time.Now()
+		u = &User{
+			GitHubUsername: u.GitHubUsername,
+			WalletAddress:  u.WalletAddress,
+			GitHubID:       u.GitHubID,
+			Email:          u.Email,
+			AvatarURL:      u.AvatarURL,
+			CreatedAt:      time.Now(),
+		}
 	}
 	_, err := s.db.Exec(`
 		INSERT INTO users (github_username, github_id, email, avatar_url, wallet_address, created_at)

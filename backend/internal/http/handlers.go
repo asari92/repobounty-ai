@@ -45,7 +45,7 @@ type Handlers struct {
 	oauthStates   map[string]time.Time // state -> expiry
 	oauthStatesMu sync.Mutex
 
-	claimLocks   map[string]*sync.Mutex // campaign_id -> lock
+	claimLocks   sync.Map // campaign_id -> *sync.Mutex
 	claimLocksMu sync.Mutex
 }
 
@@ -67,7 +67,7 @@ func NewHandlers(
 		githubOAuth: githubOAuth,
 		config:      config,
 		oauthStates: make(map[string]time.Time),
-		claimLocks:  make(map[string]*sync.Mutex),
+		claimLocks:  sync.Map{},
 	}
 }
 
@@ -268,8 +268,12 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if campaign.State == models.StateFinalized {
+	if campaign.State == models.StateFinalized || campaign.State == models.StateCompleted {
 		writeError(w, http.StatusConflict, "campaign already finalized")
+		return
+	}
+	if campaign.State != models.StateFunded {
+		writeError(w, http.StatusBadRequest, "campaign must be funded before finalization")
 		return
 	}
 
@@ -331,9 +335,13 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, store.ErrNotFound) {
 			if createErr := h.store.Create(campaign); createErr != nil {
 				log.Printf("CRITICAL: store create failed after on-chain finalization (campaign=%s, tx=%s): %v", campaign.CampaignID, txSig, createErr)
+				writeError(w, http.StatusInternalServerError, "failed to persist campaign after on-chain finalization")
+				return
 			}
 		} else {
 			log.Printf("CRITICAL: store update failed after on-chain finalization (campaign=%s, tx=%s): %v", campaign.CampaignID, txSig, err)
+			writeError(w, http.StatusInternalServerError, "failed to persist campaign after on-chain finalization")
+			return
 		}
 	}
 
@@ -348,6 +356,7 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 	})
 
 	go func() {
+		ctx := context.Background()
 		appClient := githubapp.NewClient(h.config.GitHubAppID, h.config.GitHubAppPrivateKey)
 		appAllocations := make([]githubapp.Allocation, len(allocations))
 		for i, a := range allocations {
@@ -359,7 +368,7 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		githubapp.PostAllocationComments(
-			r.Context(),
+			ctx,
 			appClient,
 			campaign.Repo,
 			campaign.CampaignID,
@@ -388,11 +397,8 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 
 	// Per-campaign lock to prevent race conditions on concurrent claims
 	h.claimLocksMu.Lock()
-	mu, exists := h.claimLocks[id]
-	if !exists {
-		mu = &sync.Mutex{}
-		h.claimLocks[id] = mu
-	}
+	val, _ := h.claimLocks.LoadOrStore(id, &sync.Mutex{})
+	mu := val.(*sync.Mutex)
 	h.claimLocksMu.Unlock()
 	mu.Lock()
 	defer mu.Unlock()
@@ -473,6 +479,8 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.store.Update(campaign); err != nil {
 		log.Printf("claim: store update failed for campaign %s: %v", campaign.CampaignID, err)
+		writeError(w, http.StatusInternalServerError, "failed to persist claim")
+		return
 	}
 
 	explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
@@ -514,7 +522,7 @@ func (h *Handlers) GetClaims(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		for _, alloc := range campaign.Allocations {
-			if alloc.Contributor == user.GitHubUsername && !alloc.Claimed {
+			if alloc.Contributor == user.GitHubUsername {
 				items = append(items, claimItem{
 					CampaignID:  campaign.CampaignID,
 					Repo:        campaign.Repo,
@@ -535,13 +543,17 @@ func (h *Handlers) GetClaims(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(items)
+	if err := json.NewEncoder(w).Encode(items); err != nil {
+		log.Printf("json encode error: %v", err)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Printf("json encode error: %v", err)
+	}
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
@@ -605,9 +617,7 @@ func (h *Handlers) GetGitHubAuthURL(w http.ResponseWriter, r *http.Request) {
 	h.oauthStatesMu.Unlock()
 
 	authURL := h.githubOAuth.GetAuthURL(state)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"auth_url": authURL, "state": state})
+	writeJSON(w, http.StatusOK, map[string]string{"auth_url": authURL, "state": state})
 }
 
 func (h *Handlers) GitHubCallback(w http.ResponseWriter, r *http.Request) {
@@ -651,7 +661,8 @@ func (h *Handlers) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 
 	user, _, err := h.githubOAuth.ExchangeCode(ctx, code)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to exchange code: "+err.Error())
+		log.Printf("github oauth: exchange code failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to exchange authorization code")
 		return
 	}
 
@@ -665,7 +676,8 @@ func (h *Handlers) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 			AvatarURL:      user.AvatarURL,
 		}
 		if err := h.store.CreateUser(newUser); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create user: "+err.Error())
+			log.Printf("github oauth: create user failed: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to create user account")
 			return
 		}
 		existingUser = newUser
@@ -673,7 +685,8 @@ func (h *Handlers) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 
 	token, err := h.jwt.GenerateToken(existingUser.GitHubUsername)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate token: "+err.Error())
+		log.Printf("github oauth: generate token failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to generate session token")
 		return
 	}
 
@@ -682,15 +695,13 @@ func (h *Handlers) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 		GitHubID:       existingUser.GitHubID,
 		AvatarURL:      existingUser.AvatarURL,
 		WalletAddress:  existingUser.WalletAddress,
-		CreatedAt:      time.Now(),
+		CreatedAt:      existingUser.CreatedAt,
 	}
 	response := models.GitHubAuthResponse{
 		Token: token,
 		User:  *userModel,
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *Handlers) GetMe(w http.ResponseWriter, r *http.Request) {
@@ -699,9 +710,7 @@ func (h *Handlers) GetMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(user)
+	writeJSON(w, http.StatusOK, user)
 }
 
 func (h *Handlers) LinkWallet(w http.ResponseWriter, r *http.Request) {
@@ -717,15 +726,19 @@ func (h *Handlers) LinkWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user.WalletAddress = req.WalletAddress
-	if err := h.store.UpdateUser(user); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update user: "+err.Error())
+	if req.WalletAddress != "" && !isValidSolanaAddress(req.WalletAddress) {
+		writeError(w, http.StatusBadRequest, "invalid wallet address format")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(user)
+	user.WalletAddress = req.WalletAddress
+	if err := h.store.UpdateUser(user); err != nil {
+		log.Printf("wallet link: update user failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to update user")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, user)
 }
 
 func generateState() string {

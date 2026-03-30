@@ -34,11 +34,19 @@ export default function CampaignDetails() {
 
   useEffect(() => {
     if (!id) return;
+    let cancelled = false;
     api
       .getCampaign(id)
-      .then(setCampaign)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (!cancelled) setCampaign(data);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
   }, [id]);
 
   async function handlePreview() {
@@ -60,17 +68,9 @@ export default function CampaignDetails() {
     setFinalizing(true);
     setError(null);
     try {
-      const result = await api.finalize(id);
-      setCampaign((prev) =>
-        prev
-          ? {
-              ...prev,
-              state: "finalized",
-              allocations: result.allocations,
-              tx_signature: result.tx_signature,
-            }
-          : null
-      );
+      await api.finalize(id);
+      const updated = await api.getCampaign(id!);
+      setCampaign(updated);
       setPreview(null);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Finalization failed");
@@ -128,7 +128,7 @@ export default function CampaignDetails() {
   const isCompleted = campaign.state === "completed";
   const isPastDeadline = new Date(campaign.deadline) < new Date();
   const canFinalize = (campaign.state === "created" || campaign.state === "funded") && isPastDeadline;
-  const stateConfig = getStateConfig(campaign.state);
+  const stateConfig = getStateConfig(campaign.state, isPastDeadline);
 
   return (
     <div className="max-w-3xl mx-auto">

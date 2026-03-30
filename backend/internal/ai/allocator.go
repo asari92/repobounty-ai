@@ -142,11 +142,23 @@ Return ONLY this JSON format:
 	}
 
 	var totalBps int
+	seen := make(map[string]bool)
 	for _, a := range aiAllocs {
+		if a.Percentage <= 0 || a.Percentage > 10000 {
+			return nil, fmt.Errorf("invalid allocation percentage %d for %s, must be > 0 and <= 10000", a.Percentage, a.Contributor)
+		}
+		if seen[a.Contributor] {
+			return nil, fmt.Errorf("duplicate contributor %s in allocations", a.Contributor)
+		}
+		seen[a.Contributor] = true
 		totalBps += a.Percentage
 	}
 	if totalBps != 10000 {
 		return nil, fmt.Errorf("AI allocation sums to %d bps, expected 10000", totalBps)
+	}
+
+	if len(aiAllocs) > 10 {
+		return nil, fmt.Errorf("max 10 allocations allowed")
 	}
 
 	allocs := make([]models.Allocation, len(aiAllocs))
@@ -240,7 +252,7 @@ func deterministicEvaluate(contributorPRs map[string][]string, poolAmount uint64
 	var assignedBps uint16
 
 	for i, e := range entries {
-		bps := uint16(e.weight * 10000 / totalWeight)
+		bps := uint16(uint32(e.weight) * 10000 / uint32(totalWeight))
 		if i == len(entries)-1 {
 			bps = 10000 - assignedBps
 		}
@@ -325,11 +337,23 @@ Return ONLY this JSON format:
 	}
 
 	var totalBps int
+	seen := make(map[string]bool)
 	for _, a := range aiAllocs {
+		if a.Percentage <= 0 || a.Percentage > 10000 {
+			return nil, fmt.Errorf("invalid allocation percentage %d for %s, must be > 0 and <= 10000", a.Percentage, a.Contributor)
+		}
+		if seen[a.Contributor] {
+			return nil, fmt.Errorf("duplicate contributor %s in allocations", a.Contributor)
+		}
+		seen[a.Contributor] = true
 		totalBps += a.Percentage
 	}
 	if totalBps != 10000 {
 		return nil, fmt.Errorf("AI allocation sums to %d bps, expected 10000", totalBps)
+	}
+
+	if len(aiAllocs) > 10 {
+		return nil, fmt.Errorf("max 10 allocations allowed")
 	}
 
 	allocs := make([]models.Allocation, len(aiAllocs))
@@ -361,11 +385,15 @@ func deterministicAllocate(contributors []models.Contributor, poolAmount uint64)
 		totalWeight += w
 	}
 
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].weight > entries[j].weight
+	})
+
 	allocs := make([]models.Allocation, len(contributors))
 	var assignedBps uint16
 
 	for i, e := range entries {
-		bps := uint16(e.weight * 10000 / totalWeight)
+		bps := uint16(uint32(e.weight) * 10000 / uint32(totalWeight))
 		if i == len(entries)-1 {
 			bps = 10000 - assignedBps
 		}

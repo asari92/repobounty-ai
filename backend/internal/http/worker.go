@@ -80,6 +80,7 @@ func autoFinalize(
 			continue
 		}
 		if retries[c.CampaignID] >= maxAutoFinalizeRetries {
+			delete(retries, c.CampaignID)
 			continue
 		}
 

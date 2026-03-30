@@ -60,19 +60,36 @@ func (c *Client) fetchContributorStats(ctx context.Context, owner, repo string) 
 	var result []models.Contributor
 
 	err := utils.Retry(ctx, 3, 1*time.Second, func(ctx context.Context) error {
-		url := fmt.Sprintf("https://api.github.com/repos/%s/%s/contributors?per_page=10", owner, repo)
-		body, err := c.doGet(ctx, url)
-		if err != nil {
-			return err
+		page := 1
+		perPage := 100
+		var allGhContribs []ghContributor
+
+		for {
+			url := fmt.Sprintf("https://api.github.com/repos/%s/%s/contributors?per_page=%d&page=%d", owner, repo, perPage, page)
+			body, err := c.doGet(ctx, url)
+			if err != nil {
+				return err
+			}
+
+			var ghContribs []ghContributor
+			if err := json.Unmarshal(body, &ghContribs); err != nil {
+				return fmt.Errorf("parse contributors: %w", err)
+			}
+
+			if len(ghContribs) == 0 {
+				break
+			}
+
+			allGhContribs = append(allGhContribs, ghContribs...)
+
+			if len(ghContribs) < perPage {
+				break
+			}
+			page++
 		}
 
-		var ghContribs []ghContributor
-		if err := json.Unmarshal(body, &ghContribs); err != nil {
-			return fmt.Errorf("parse contributors: %w", err)
-		}
-
-		result = make([]models.Contributor, 0, len(ghContribs))
-		for _, gc := range ghContribs {
+		result = make([]models.Contributor, 0, len(allGhContribs))
+		for _, gc := range allGhContribs {
 			if gc.Login == "" {
 				continue
 			}
@@ -143,7 +160,7 @@ func (c *Client) doGet(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("github API %s returned %d", url, resp.StatusCode)
 	}
 
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 }
 
 func mockContributors() []models.Contributor {

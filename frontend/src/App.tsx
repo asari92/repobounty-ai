@@ -23,8 +23,6 @@ export default function App() {
     <ErrorBoundary
       onError={(error, errorInfo) => {
         console.error('Global error caught:', error, errorInfo);
-        if (process.env.NODE_ENV === 'production') {
-        }
       }}
     >
       <AuthProvider>
