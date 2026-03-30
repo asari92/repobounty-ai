@@ -155,3 +155,12 @@ Use alias for package name conflicts: `handler "github.com/repobounty/repobounty
 ## Environment
 
 See `backend/.env.example`. Key variables: `PORT`, `GITHUB_TOKEN`, `OPENROUTER_API_KEY`, `MODEL`, `SOLANA_RPC_URL`, `SOLANA_PRIVATE_KEY`, `PROGRAM_ID`.
+
+## Superpowers Workflow
+
+- Treat `docs/superpowers/` as repository-local execution guidance for agentic work.
+- If a task matches a plan or spec in `docs/superpowers/`, open the relevant file first and follow it step-by-step.
+- Plans in `docs/superpowers/plans/` are executable checklists. Preserve checkbox tracking when updating progress.
+- Specs in `docs/superpowers/specs/` define intended architecture and should be used to resolve implementation details before guessing.
+- When a plan mentions `superpowers:subagent-driven-development` or `superpowers:executing-plans`, interpret that as: break work into explicit steps, verify each phase, and keep progress reflected in the plan file or task summary.
+- If no external `superpowers` skill is installed in the current Codex environment, continue with the local workflow above instead of blocking.
