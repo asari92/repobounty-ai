@@ -45,8 +45,7 @@ type Handlers struct {
 	oauthStates   map[string]time.Time // state -> expiry
 	oauthStatesMu sync.Mutex
 
-	claimLocks   sync.Map // campaign_id -> *sync.Mutex
-	claimLocksMu sync.Mutex
+	claimLocks sync.Map // campaign_id -> *sync.Mutex
 }
 
 func NewHandlers(
@@ -74,13 +73,14 @@ func NewHandlers(
 func (h *Handlers) ListCampaigns(w http.ResponseWriter, r *http.Request) {
 	campaigns, err := h.listCampaigns(r.Context())
 	if err != nil {
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("failed to load campaigns: %v", err))
+		writeError(w, http.StatusBadGateway, "failed to load campaigns")
 		return
 	}
 	writeJSON(w, http.StatusOK, campaigns)
 }
 
 func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req models.CreateCampaignRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -166,6 +166,7 @@ type fundTxRequest struct {
 func (h *Handlers) FundTx(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req fundTxRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -237,13 +238,13 @@ func (h *Handlers) FinalizePreview(w http.ResponseWriter, r *http.Request) {
 
 	contributors, err := h.github.FetchContributors(r.Context(), campaign.Repo)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("github fetch failed: %v", err))
+		writeError(w, http.StatusBadGateway, "failed to fetch contributor data from GitHub")
 		return
 	}
 
 	allocations, err := h.ai.Allocate(r.Context(), campaign.Repo, contributors, campaign.PoolAmount)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("AI allocation failed: %v", err))
+		writeError(w, http.StatusInternalServerError, "AI allocation failed")
 		return
 	}
 
@@ -284,7 +285,7 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 
 	contributors, err := h.github.FetchContributors(r.Context(), campaign.Repo)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("github fetch failed: %v", err))
+		writeError(w, http.StatusBadGateway, "failed to fetch contributor data from GitHub")
 		return
 	}
 
@@ -305,7 +306,7 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 	if allocations == nil {
 		allocations, err = h.ai.Allocate(r.Context(), campaign.Repo, contributors, campaign.PoolAmount)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("AI allocation failed: %v", err))
+			writeError(w, http.StatusInternalServerError, "AI allocation failed")
 			return
 		}
 	}
@@ -334,13 +335,27 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 	if err := h.store.Update(campaign); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			if createErr := h.store.Create(campaign); createErr != nil {
-				log.Printf("CRITICAL: store create failed after on-chain finalization (campaign=%s, tx=%s): %v", campaign.CampaignID, txSig, createErr)
-				writeError(w, http.StatusInternalServerError, "failed to persist campaign after on-chain finalization")
+				log.Printf("WARNING: store update failed after on-chain finalization (campaign=%s, tx=%s): %v", campaign.CampaignID, txSig, createErr)
+				explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
+				writeJSON(w, http.StatusAccepted, models.FinalizeResponse{
+					CampaignID:        campaign.CampaignID,
+					State:             models.StateFinalized,
+					Allocations:       allocations,
+					TxSignature:       txSig,
+					SolanaExplorerURL: explorerURL,
+				})
 				return
 			}
 		} else {
-			log.Printf("CRITICAL: store update failed after on-chain finalization (campaign=%s, tx=%s): %v", campaign.CampaignID, txSig, err)
-			writeError(w, http.StatusInternalServerError, "failed to persist campaign after on-chain finalization")
+			log.Printf("WARNING: store update failed after on-chain finalization (campaign=%s, tx=%s): %v", campaign.CampaignID, txSig, err)
+			explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
+			writeJSON(w, http.StatusAccepted, models.FinalizeResponse{
+				CampaignID:        campaign.CampaignID,
+				State:             models.StateFinalized,
+				Allocations:       allocations,
+				TxSignature:       txSig,
+				SolanaExplorerURL: explorerURL,
+			})
 			return
 		}
 	}
@@ -356,6 +371,11 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 	})
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("panic in PostAllocationComments goroutine: %v", r)
+			}
+		}()
 		ctx := context.Background()
 		appClient := githubapp.NewClient(h.config.GitHubAppID, h.config.GitHubAppPrivateKey)
 		appAllocations := make([]githubapp.Allocation, len(allocations))
@@ -395,11 +415,10 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-campaign lock to prevent race conditions on concurrent claims
-	h.claimLocksMu.Lock()
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
 	val, _ := h.claimLocks.LoadOrStore(id, &sync.Mutex{})
 	mu := val.(*sync.Mutex)
-	h.claimLocksMu.Unlock()
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -560,13 +579,21 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, models.ErrorResponse{Error: msg})
 }
 
+type healthResponse struct {
+	Status  string `json:"status"`
+	Solana  bool   `json:"solana"`
+	GitHub  bool   `json:"github"`
+	AIModel string `json:"ai_model"`
+	Store   bool   `json:"store"`
+}
+
 func (h *Handlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":   "ok",
-		"solana":   h.solana.IsConfigured(),
-		"github":   h.github != nil,
-		"ai_model": h.ai.Model(),
-		"store":    h.store != nil,
+	writeJSON(w, http.StatusOK, healthResponse{
+		Status:  "ok",
+		Solana:  h.solana.IsConfigured(),
+		GitHub:  h.github != nil,
+		AIModel: h.ai.Model(),
+		Store:   h.store != nil,
 	})
 }
 
@@ -621,6 +648,7 @@ func (h *Handlers) GetGitHubAuthURL(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) GitHubCallback(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req models.GitHubAuthRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		code := r.URL.Query().Get("code")
@@ -720,6 +748,7 @@ func (h *Handlers) LinkWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req models.LinkWalletRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")

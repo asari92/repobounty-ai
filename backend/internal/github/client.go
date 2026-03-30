@@ -17,12 +17,17 @@ import (
 )
 
 type Client struct {
-	token      string
-	httpClient *http.Client
+	token        string
+	httpClient   *http.Client
+	isProduction bool
 }
 
 func NewClient(token string) *Client {
-	return &Client{token: token, httpClient: &http.Client{Timeout: 30 * time.Second}}
+	return NewClientWithEnv(token, false)
+}
+
+func NewClientWithEnv(token string, isProduction bool) *Client {
+	return &Client{token: token, httpClient: &http.Client{Timeout: 30 * time.Second}, isProduction: isProduction}
 }
 
 func (c *Client) FetchContributors(ctx context.Context, repo string) ([]models.Contributor, error) {
@@ -34,10 +39,16 @@ func (c *Client) FetchContributors(ctx context.Context, repo string) ([]models.C
 
 	contributors, err := c.fetchContributorStats(ctx, owner, name)
 	if err != nil {
+		if c.isProduction {
+			return nil, fmt.Errorf("github API failed and mock data is disabled in production: %w", err)
+		}
 		log.Printf("github: API failed (%v), using mock data", err)
 		return mockContributors(), nil
 	}
 	if len(contributors) == 0 {
+		if c.isProduction {
+			return nil, fmt.Errorf("no contributors found for %s/%s", owner, name)
+		}
 		log.Printf("github: no contributors found, using mock data")
 		return mockContributors(), nil
 	}
@@ -368,7 +379,7 @@ func (c *Client) fetchPRDiff(ctx context.Context, owner, repo string, prNumber i
 		return "", fmt.Errorf("github API %s returned %d", url, resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
 	return string(body), err
 }
 

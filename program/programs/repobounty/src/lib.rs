@@ -259,10 +259,7 @@ pub mod repobounty {
 
     /// Add an additional sponsor to an existing campaign.
     /// Only allowed before finalization. Increases the pool amount.
-    pub fn add_sponsor(
-        ctx: Context<AddSponsor>,
-        amount: u64,
-    ) -> Result<()> {
+    pub fn add_sponsor(ctx: Context<AddSponsor>, amount: u64) -> Result<()> {
         require!(amount > 0, RepoBountyError::InvalidPoolAmount);
 
         let campaign = &mut ctx.accounts.campaign;
@@ -310,10 +307,7 @@ pub mod repobounty {
         );
 
         let idx = goal_index as usize;
-        require!(
-            idx < campaign.goals.len(),
-            RepoBountyError::GoalNotFound,
-        );
+        require!(idx < campaign.goals.len(), RepoBountyError::GoalNotFound,);
         require!(
             !campaign.goals[idx].completed,
             RepoBountyError::GoalAlreadyCompleted,
@@ -540,7 +534,7 @@ impl Campaign {
         + (1 + 8) // finalized_at (Option<i64>)
         + 1                                     // campaign_type enum
         + (4 + MAX_GOALS * 128)                 // goals vec (approx)
-        + (4 + MAX_SPONSORS * (32 + 8 + 1))     // sponsors vec
+        + (4 + MAX_SPONSORS * (32 + 8 + 1)) // sponsors vec
     }
 }
 
@@ -582,8 +576,14 @@ pub struct AllocationInput {
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct CampaignGoal {
     pub description: String,
+    pub target_value: u64,
     pub completed: bool,
     pub completed_by: String,
+}
+
+impl CampaignGoal {
+    pub const MAX_DESCRIPTION_LEN: usize = 128;
+    pub const SIZE: usize = 4 + Self::MAX_DESCRIPTION_LEN + 8 + 1 + (4 + MAX_CONTRIBUTOR_LEN);
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
@@ -591,6 +591,10 @@ pub struct SponsorEntry {
     pub wallet: Pubkey,
     pub amount: u64,
     pub funded: bool,
+}
+
+impl SponsorEntry {
+    pub const SIZE: usize = 32 + 8 + 1;
 }
 
 // ---------------------------------------------------------------------------

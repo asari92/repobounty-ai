@@ -54,13 +54,12 @@ func NewRouter(h *Handlers, env string) http.Handler {
 		r.Route("/campaigns", func(r chi.Router) {
 			r.Use(optionalAuth)
 			r.Get("/", h.ListCampaigns)
-			r.Post("/", h.CreateCampaign)
 			r.Get("/{id}", h.GetCampaign)
-			r.Post("/{id}/finalize-preview", h.FinalizePreview)
-			r.Post("/{id}/finalize", h.Finalize)
-			r.Post("/{id}/claim", h.Claim)
-			r.With(requireAuth).Post("/{id}/claim-permit", h.ClaimPermit)
-			r.Post("/{id}/fund-tx", h.FundTx)
+			r.With(requireAuth).Post("/", h.CreateCampaign)
+			r.With(requireAuth).Post("/{id}/finalize-preview", h.FinalizePreview)
+			r.With(requireAuth).Post("/{id}/finalize", h.Finalize)
+			r.With(requireAuth).Post("/{id}/claim", h.ClaimPermit)
+			r.With(requireAuth).Post("/{id}/fund-tx", h.FundTx)
 		})
 	})
 

@@ -62,6 +62,10 @@ export default function CreateCampaign() {
       setError("Pool amount must be a positive number");
       return;
     }
+    if (parseFloat(poolSol) > 10000) {
+      setError("Pool amount cannot exceed 10,000 SOL");
+      return;
+    }
 
     const deadlineRFC3339 = toStableRFC3339(deadline);
     if (!deadlineRFC3339) {

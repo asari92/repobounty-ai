@@ -6,7 +6,7 @@ import { formatSOL } from "../utils/campaign";
 import type { ClaimItem } from "../types";
 
 export default function Profile() {
-  const { user } = useAuth();
+  const { user, isLoading } = useAuth();
   const [claims, setClaims] = useState<ClaimItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -16,12 +16,30 @@ export default function Profile() {
       setLoading(false);
       return;
     }
+    let cancelled = false;
     api
       .getClaims()
-      .then(setClaims)
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load claims"))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (!cancelled) setClaims(data);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load claims");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [user?.github_username]);
+
+  if (isLoading) {
+    return (
+      <div className="text-center py-20">
+        <div className="inline-block w-8 h-8 border-2 border-solana-purple border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   if (!user) {
     return (

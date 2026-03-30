@@ -1,4 +1,3 @@
-# Dockerfile for backend
 FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
@@ -9,10 +8,12 @@ RUN go mod download
 COPY . .
 RUN go build -o main ./cmd/api
 
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates wget
-WORKDIR /root/
+FROM alpine:3.21
+RUN apk --no-cache add ca-certificates wget && \
+    adduser -D -u 1001 appuser
+WORKDIR /home/appuser
 COPY --from=builder /app/main .
+USER appuser
 
 EXPOSE 8080
 CMD ["./main"]

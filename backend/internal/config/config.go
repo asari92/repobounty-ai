@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 
@@ -46,6 +47,12 @@ func Load() (*Config, error) {
 		GitHubAppID:         envOrDefaultInt64("GITHUB_APP_ID", 0),
 		GitHubAppPrivateKey: os.Getenv("GITHUB_APP_PRIVATE_KEY"),
 		DatabasePath:        envOrDefault("DATABASE_PATH", "repobounty.db"),
+	}
+	if cfg.Env == "production" && cfg.JWTSecret == "" {
+		return nil, fmt.Errorf("JWT_SECRET is required in production")
+	}
+	if cfg.Env == "production" && cfg.JWTSecret != "" && len(cfg.JWTSecret) < 32 {
+		return nil, fmt.Errorf("JWT_SECRET must be at least 32 characters in production")
 	}
 	return cfg, nil
 }

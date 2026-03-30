@@ -69,7 +69,7 @@ export default function CampaignDetails() {
     setError(null);
     try {
       await api.finalize(id);
-      const updated = await api.getCampaign(id!);
+      const updated = await api.getCampaign(id);
       setCampaign(updated);
       setPreview(null);
     } catch (e: unknown) {
@@ -80,11 +80,14 @@ export default function CampaignDetails() {
   }
 
   async function handleClaim(contributor: string) {
-    if (!id) return;
+    if (!id || !publicKey) {
+      if (!publicKey) setError("Connect wallet first");
+      return;
+    }
     setClaiming(contributor);
     setError(null);
     try {
-      await api.claimAllocation(id, contributor, publicKey?.toBase58() || "");
+      await api.claimAllocation(id, contributor, publicKey.toBase58());
       setCampaign((prev) => {
         if (!prev) return null;
         return {

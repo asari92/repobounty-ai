@@ -3,7 +3,7 @@ import type { Campaign } from "../types";
 import { getStateConfig, formatSOL, formatDate } from "../utils/campaign";
 
 export default function CampaignCard({ campaign }: { campaign: Campaign }) {
-  const isFinalized = campaign.state === "finalized";
+  const isFinalized = campaign.state === "finalized" || campaign.state === "completed";
   const isCompleted = campaign.state === "completed";
   const isPastDeadline = new Date(campaign.deadline) < new Date();
   const stateConfig = getStateConfig(campaign.state, isPastDeadline);

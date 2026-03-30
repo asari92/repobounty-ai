@@ -53,7 +53,7 @@ func main() {
 		campaignStore = store.New()
 		logger.Info("using in-memory storage")
 	}
-	ghClient := github.NewClient(cfg.GitHubToken)
+	ghClient := github.NewClientWithEnv(cfg.GitHubToken, env == "production")
 	aiAllocator := ai.NewAllocator(cfg.OpenRouterAPIKey, cfg.Model)
 
 	solClient, err := solana.NewClient(cfg.SolanaRPCURL, cfg.SolanaPrivateKey, cfg.ProgramID)
@@ -92,7 +92,7 @@ func main() {
 		Addr:         fmt.Sprintf(":%s", cfg.Port),
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
