@@ -1,10 +1,10 @@
-import { Link } from "react-router-dom";
-import type { Campaign } from "../types";
-import { getStateConfig, formatSOL, formatDate } from "../utils/campaign";
+import { Link } from 'react-router-dom';
+import type { Campaign } from '../types';
+import { getStateConfig, formatSOL, formatDate } from '../utils/campaign';
 
 export default function CampaignCard({ campaign }: { campaign: Campaign }) {
-  const isFinalized = campaign.state === "finalized" || campaign.state === "completed";
-  const isCompleted = campaign.state === "completed";
+  const isFinalized = campaign.state === 'finalized' || campaign.state === 'completed';
+  const isCompleted = campaign.state === 'completed';
   const isPastDeadline = new Date(campaign.deadline) < new Date();
   const stateConfig = getStateConfig(campaign.state, isPastDeadline);
 
@@ -14,18 +14,12 @@ export default function CampaignCard({ campaign }: { campaign: Campaign }) {
         <div className="flex items-start justify-between mb-4">
           <div>
             <h3 className="font-semibold text-lg">{campaign.repo}</h3>
-            <p className="text-sm text-gray-400 mt-1">
-              ID: {campaign.campaign_id}
-            </p>
+            <p className="text-sm text-gray-400 mt-1">ID: {campaign.campaign_id}</p>
             {campaign.sponsor && (
-              <p className="text-xs text-gray-500 mt-0.5">
-                by {campaign.sponsor.slice(0, 8)}...
-              </p>
+              <p className="text-xs text-gray-500 mt-0.5">by {campaign.sponsor.slice(0, 8)}...</p>
             )}
           </div>
-          <span
-            className={`text-xs font-semibold px-3 py-1 rounded-full ${stateConfig.classes}`}
-          >
+          <span className={`text-xs font-semibold px-3 py-1 rounded-full ${stateConfig.classes}`}>
             {stateConfig.label}
           </span>
         </div>
@@ -33,9 +27,7 @@ export default function CampaignCard({ campaign }: { campaign: Campaign }) {
         <div className="grid grid-cols-3 gap-4 text-sm">
           <div>
             <span className="text-gray-400">Pool</span>
-            <p className="font-semibold text-solana-green">
-              {formatSOL(campaign.pool_amount)} SOL
-            </p>
+            <p className="font-semibold text-solana-green">{formatSOL(campaign.pool_amount)} SOL</p>
           </div>
           <div>
             <span className="text-gray-400">Deadline</span>
@@ -58,11 +50,11 @@ export default function CampaignCard({ campaign }: { campaign: Campaign }) {
                 <span
                   key={a.contributor}
                   className={`text-xs px-2 py-1 rounded ${
-                    a.claimed ? "bg-solana-green/20 text-solana-green" : "bg-solana-dark"
+                    a.claimed ? 'bg-solana-green/20 text-solana-green' : 'bg-solana-dark'
                   }`}
                 >
                   @{a.contributor} ({(a.percentage / 100).toFixed(0)}%)
-                  {a.claimed && " ✓"}
+                  {a.claimed && ' ✓'}
                 </span>
               ))}
               {campaign.allocations.length > 3 && (

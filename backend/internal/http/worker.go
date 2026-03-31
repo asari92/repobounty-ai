@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -70,6 +71,19 @@ func autoFinalize(
 	retries map[string]int,
 ) {
 	campaigns := campaignStore.List()
+	helper := &Handlers{
+		store:  campaignStore,
+		github: ghClient,
+		ai:     allocator,
+	}
+	if solClient != nil && solClient.IsConfigured() {
+		onChainCampaigns, err := solClient.ListCampaigns(ctx)
+		if err != nil {
+			logger.Warn("auto-finalize: failed to list on-chain campaigns, using store snapshot", zap.Error(err))
+		} else if onChainCampaigns != nil {
+			campaigns = mergeAutoFinalizeCampaigns(campaigns, onChainCampaigns)
+		}
+	}
 	now := time.Now()
 
 	for _, c := range campaigns {
@@ -89,46 +103,59 @@ func autoFinalize(
 			zap.String("repo", c.Repo),
 		)
 
-		contributors, err := ghClient.FetchContributors(ctx, c.Repo)
+		snapshot, err := helper.loadFinalizeSnapshot(c, true)
 		if err != nil {
-			retries[c.CampaignID]++
-			logger.Error("auto-finalize: github fetch failed",
-				zap.String("campaign_id", c.CampaignID),
-				zap.Int("attempt", retries[c.CampaignID]),
-				zap.Error(err),
-			)
-			continue
-		}
-
-		contributorPRDiffs, err := ghClient.FetchContributorsPRDiffs(ctx, c.Repo, c.CreatedAt.Unix())
-		if err != nil {
-			logger.Warn("auto-finalize: PR diff fetch failed, falling back to metric-based allocation", zap.Error(err))
-		}
-
-		var allocations []models.Allocation
-		if len(contributorPRDiffs) > 0 {
-			allocations, err = allocator.EvaluateCodeImpact(ctx, c.Repo, contributorPRDiffs, c.PoolAmount)
-			if err != nil {
-				logger.Warn("auto-finalize: code impact evaluation failed, falling back", zap.Error(err))
-				allocations = nil
-			}
-		}
-
-		if allocations == nil {
-			allocations, err = allocator.Allocate(ctx, c.Repo, contributors, c.PoolAmount)
-			if err != nil {
+			if !errors.Is(err, errSnapshotNotFound) &&
+				!errors.Is(err, errSnapshotNotApproved) &&
+				!errors.Is(err, errSnapshotStale) {
 				retries[c.CampaignID]++
-				logger.Error("auto-finalize: AI allocation failed",
+				logger.Error("auto-finalize: snapshot load failed",
 					zap.String("campaign_id", c.CampaignID),
 					zap.Int("attempt", retries[c.CampaignID]),
 					zap.Error(err),
 				)
 				continue
 			}
-		}
 
-		solanaInputs := make([]solana.AllocationInput, len(allocations))
-		for i, a := range allocations {
+			snapshot, err = helper.loadFinalizeSnapshot(c, false)
+			if err != nil {
+				if !errors.Is(err, errSnapshotNotFound) && !errors.Is(err, errSnapshotStale) {
+					retries[c.CampaignID]++
+					logger.Error("auto-finalize: current snapshot load failed",
+						zap.String("campaign_id", c.CampaignID),
+						zap.Int("attempt", retries[c.CampaignID]),
+						zap.Error(err),
+					)
+					continue
+				}
+
+				result, calcErr := helper.calculateAllocations(ctx, c, allocationOptions{forceDeterministic: true})
+				if calcErr != nil {
+					retries[c.CampaignID]++
+					logger.Error("auto-finalize: deterministic allocation failed",
+						zap.String("campaign_id", c.CampaignID),
+						zap.Int("attempt", retries[c.CampaignID]),
+						zap.Error(calcErr),
+					)
+					continue
+				}
+
+				snapshot, err = helper.createFinalizeSnapshot(c, result, "")
+				if err != nil {
+					retries[c.CampaignID]++
+					logger.Error("auto-finalize: snapshot persistence failed",
+						zap.String("campaign_id", c.CampaignID),
+						zap.Int("attempt", retries[c.CampaignID]),
+						zap.Error(err),
+					)
+					continue
+				}
+			}
+		}
+		result := snapshotToAllocationResult(snapshot)
+
+		solanaInputs := make([]solana.AllocationInput, len(result.allocations))
+		for i, a := range result.allocations {
 			solanaInputs[i] = solana.AllocationInput{
 				Contributor: a.Contributor,
 				Percentage:  a.Percentage,
@@ -148,16 +175,26 @@ func autoFinalize(
 
 		finalizedAt := time.Now()
 		c.State = models.StateFinalized
-		c.Allocations = allocations
+		c.Allocations = result.allocations
 		c.FinalizedAt = &finalizedAt
 		c.TxSignature = txSig
 
 		if err := campaignStore.Update(c); err != nil {
-			logger.Error("auto-finalize: store update failed",
-				zap.String("campaign_id", c.CampaignID),
-				zap.Error(err),
-			)
-			continue
+			if errors.Is(err, store.ErrNotFound) {
+				if createErr := campaignStore.Create(c); createErr != nil {
+					logger.Error("auto-finalize: store create failed after on-chain finalization",
+						zap.String("campaign_id", c.CampaignID),
+						zap.Error(createErr),
+					)
+					continue
+				}
+			} else {
+				logger.Error("auto-finalize: store update failed",
+					zap.String("campaign_id", c.CampaignID),
+					zap.Error(err),
+				)
+				continue
+			}
 		}
 
 		delete(retries, c.CampaignID) // clear retry counter on success
@@ -166,7 +203,30 @@ func autoFinalize(
 		logger.Info("auto-finalize: campaign finalized",
 			zap.String("campaign_id", c.CampaignID),
 			zap.String("tx", explorerURL),
-			zap.Int("allocations", len(allocations)),
+			zap.Int("allocations", len(result.allocations)),
 		)
 	}
+}
+
+func mergeAutoFinalizeCampaigns(storedCampaigns, onChainCampaigns []*models.Campaign) []*models.Campaign {
+	storedByID := make(map[string]*models.Campaign, len(storedCampaigns))
+	for _, campaign := range storedCampaigns {
+		storedByID[campaign.CampaignID] = campaign
+	}
+
+	merged := make([]*models.Campaign, 0, len(onChainCampaigns)+len(storedCampaigns))
+	for _, onChainCampaign := range onChainCampaigns {
+		if storedCampaign, ok := storedByID[onChainCampaign.CampaignID]; ok {
+			merged = append(merged, mergeCampaignWithChainData(storedCampaign, onChainCampaign))
+			delete(storedByID, onChainCampaign.CampaignID)
+			continue
+		}
+		merged = append(merged, onChainCampaign)
+	}
+
+	for _, storedCampaign := range storedByID {
+		merged = append(merged, storedCampaign)
+	}
+
+	return merged
 }

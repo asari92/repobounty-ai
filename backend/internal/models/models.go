@@ -11,21 +11,29 @@ const (
 	StateCompleted CampaignState = "completed"
 )
 
+type AllocationMode string
+
+const (
+	AllocationModeCodeImpact AllocationMode = "code_impact"
+	AllocationModeMetrics    AllocationMode = "metrics"
+)
+
 type Campaign struct {
-	CampaignID   string        `json:"campaign_id"`
-	CampaignPDA  string        `json:"campaign_pda"`
-	VaultAddress string        `json:"vault_address"`
-	Repo         string        `json:"repo"`
-	PoolAmount   uint64        `json:"pool_amount"`
-	TotalClaimed uint64        `json:"total_claimed"`
-	Deadline     time.Time     `json:"deadline"`
-	State        CampaignState `json:"state"`
-	Authority    string        `json:"authority"`
-	Sponsor      string        `json:"sponsor"`
-	Allocations  []Allocation  `json:"allocations"`
-	CreatedAt    time.Time     `json:"created_at"`
-	FinalizedAt  *time.Time    `json:"finalized_at,omitempty"`
-	TxSignature  string        `json:"tx_signature,omitempty"`
+	CampaignID          string        `json:"campaign_id"`
+	CampaignPDA         string        `json:"campaign_pda"`
+	VaultAddress        string        `json:"vault_address"`
+	Repo                string        `json:"repo"`
+	PoolAmount          uint64        `json:"pool_amount"`
+	TotalClaimed        uint64        `json:"total_claimed"`
+	Deadline            time.Time     `json:"deadline"`
+	State               CampaignState `json:"state"`
+	Authority           string        `json:"authority"`
+	Sponsor             string        `json:"sponsor"`
+	OwnerGitHubUsername string        `json:"owner_github_username,omitempty"`
+	Allocations         []Allocation  `json:"allocations"`
+	CreatedAt           time.Time     `json:"created_at"`
+	FinalizedAt         *time.Time    `json:"finalized_at,omitempty"`
+	TxSignature         string        `json:"tx_signature,omitempty"`
 }
 
 type Allocation struct {
@@ -59,6 +67,8 @@ type CreateCampaignRequest struct {
 	PoolAmount    uint64 `json:"pool_amount"`
 	Deadline      string `json:"deadline"`
 	SponsorWallet string `json:"sponsor_wallet"`
+	ChallengeID   string `json:"challenge_id"`
+	Signature     string `json:"signature"`
 }
 
 type CreateCampaignResponse struct {
@@ -73,19 +83,23 @@ type CreateCampaignResponse struct {
 }
 
 type FinalizePreviewResponse struct {
-	CampaignID   string        `json:"campaign_id"`
-	Repo         string        `json:"repo"`
-	Contributors []Contributor `json:"contributors"`
-	Allocations  []Allocation  `json:"allocations"`
-	AIModel      string        `json:"ai_model"`
+	CampaignID     string          `json:"campaign_id"`
+	Repo           string          `json:"repo"`
+	Contributors   []Contributor   `json:"contributors"`
+	Allocations    []Allocation    `json:"allocations"`
+	AIModel        string          `json:"ai_model"`
+	AllocationMode AllocationMode  `json:"allocation_mode"`
+	Snapshot       SnapshotSummary `json:"snapshot"`
 }
 
 type FinalizeResponse struct {
-	CampaignID        string        `json:"campaign_id"`
-	State             CampaignState `json:"state"`
-	Allocations       []Allocation  `json:"allocations"`
-	TxSignature       string        `json:"tx_signature"`
-	SolanaExplorerURL string        `json:"solana_explorer_url"`
+	CampaignID        string           `json:"campaign_id"`
+	State             CampaignState    `json:"state"`
+	Allocations       []Allocation     `json:"allocations"`
+	TxSignature       string           `json:"tx_signature"`
+	SolanaExplorerURL string           `json:"solana_explorer_url"`
+	AllocationMode    AllocationMode   `json:"allocation_mode,omitempty"`
+	Snapshot          *SnapshotSummary `json:"snapshot,omitempty"`
 }
 
 type ErrorResponse struct {
@@ -105,4 +119,11 @@ type GitHubAuthResponse struct {
 
 type LinkWalletRequest struct {
 	WalletAddress string `json:"wallet_address"`
+}
+
+type ClaimAllocationRequest struct {
+	ContributorGithub string `json:"contributor_github"`
+	WalletAddress     string `json:"wallet_address"`
+	ChallengeID       string `json:"challenge_id"`
+	Signature         string `json:"signature"`
 }

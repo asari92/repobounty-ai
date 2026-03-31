@@ -1,37 +1,46 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { useAuth } from "../hooks/useAuth";
-import { api } from "../api/client";
-import { formatSOL } from "../utils/campaign";
-import type { ClaimItem } from "../types";
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { useAuth } from '../hooks/useAuth';
+import { api } from '../api/client';
+import { formatSOL } from '../utils/campaign';
+import type { ClaimItem } from '../types';
 
 export default function Profile() {
+  const { publicKey } = useWallet();
   const { user, isLoading } = useAuth();
   const [claims, setClaims] = useState<ClaimItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [lastLoadedUser, setLastLoadedUser] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) {
-      setLoading(false);
       return;
     }
     let cancelled = false;
     api
       .getClaims()
       .then((data) => {
-        if (!cancelled) setClaims(data);
+        if (!cancelled) {
+          setClaims(data);
+          setError(null);
+        }
       })
       .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load claims");
+        if (!cancelled) {
+          setClaims([]);
+          setError(e instanceof Error ? e.message : 'Failed to load claims');
+        }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLastLoadedUser(user.github_username);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [user?.github_username]);
+  }, [user]);
 
   if (isLoading) {
     return (
@@ -49,9 +58,8 @@ export default function Profile() {
     );
   }
 
-  const totalAvailable = claims
-    .filter((c) => !c.claimed)
-    .reduce((sum, c) => sum + c.amount, 0);
+  const totalAvailable = claims.filter((c) => !c.claimed).reduce((sum, c) => sum + c.amount, 0);
+  const loading = Boolean(user) && lastLoadedUser !== user?.github_username;
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -71,11 +79,23 @@ export default function Profile() {
             <h2 className="text-xl font-bold">@{user.github_username}</h2>
             {user.wallet_address && (
               <p className="text-sm text-gray-400 font-mono">
-                {user.wallet_address.slice(0, 6)}...{user.wallet_address.slice(-6)}
+                Saved profile wallet: {user.wallet_address.slice(0, 6)}...
+                {user.wallet_address.slice(-6)}
+              </p>
+            )}
+            {publicKey && (
+              <p className="text-sm text-solana-green font-mono">
+                Connected claim wallet: {publicKey.toBase58().slice(0, 6)}...
+                {publicKey.toBase58().slice(-6)}
               </p>
             )}
           </div>
         </div>
+        <p className="text-xs text-gray-500">
+          Claims use the wallet currently connected on the campaign page, and that wallet must sign
+          a one-time proof before payout. Saved profile wallets remain informational only in this
+          MVP.
+        </p>
       </div>
 
       <div className="card">
@@ -98,8 +118,7 @@ export default function Profile() {
           </div>
         ) : claims.length === 0 ? (
           <p className="text-sm text-gray-400 text-center py-8">
-            No claimable rewards found. Finalized campaigns where you contributed will appear
-            here.
+            No claimable rewards found. Finalized campaigns where you contributed will appear here.
           </p>
         ) : (
           <div className="space-y-3">
@@ -111,7 +130,9 @@ export default function Profile() {
                 <div className="flex items-center justify-between mb-1">
                   <div>
                     <span className="font-mono text-sm">{claim.repo}</span>
-                    <span className="text-xs text-gray-500 ml-2">#{claim.campaign_id.slice(0, 8)}</span>
+                    <span className="text-xs text-gray-500 ml-2">
+                      #{claim.campaign_id.slice(0, 8)}
+                    </span>
                   </div>
                   <span className="font-bold text-solana-green">
                     {claim.amount_sol} SOL ({(claim.percentage / 100).toFixed(1)}%)

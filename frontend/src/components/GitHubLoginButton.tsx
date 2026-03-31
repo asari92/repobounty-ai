@@ -1,4 +1,4 @@
-import { useAuth } from "../hooks/useAuth";
+import { useAuth } from '../hooks/useAuth';
 
 export function GitHubLoginButton() {
   const { login, isLoading } = useAuth();
@@ -16,7 +16,7 @@ export function GitHubLoginButton() {
           clipRule="evenodd"
         />
       </svg>
-      {isLoading ? "Loading..." : "Login with GitHub"}
+      {isLoading ? 'Loading...' : 'Login with GitHub'}
     </button>
   );
 }

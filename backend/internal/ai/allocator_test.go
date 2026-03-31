@@ -13,7 +13,10 @@ func TestDeterministicAllocate(t *testing.T) {
 		{Username: "bob", Commits: 5, PullRequests: 2, Reviews: 1},
 	}
 
-	allocs := deterministicAllocate(contributors, 1_000_000_000)
+	allocs, err := deterministicAllocate(contributors, 1_000_000_000)
+	if err != nil {
+		t.Fatalf("deterministicAllocate: %v", err)
+	}
 
 	if len(allocs) != 2 {
 		t.Fatalf("len = %d, want 2", len(allocs))
@@ -46,7 +49,10 @@ func TestDeterministicAllocate_SingleContributor(t *testing.T) {
 		{Username: "solo", Commits: 10, PullRequests: 5, Reviews: 3},
 	}
 
-	allocs := deterministicAllocate(contributors, 1_000_000_000)
+	allocs, err := deterministicAllocate(contributors, 1_000_000_000)
+	if err != nil {
+		t.Fatalf("deterministicAllocate: %v", err)
+	}
 
 	if len(allocs) != 1 {
 		t.Fatalf("len = %d, want 1", len(allocs))
@@ -65,7 +71,10 @@ func TestDeterministicAllocate_MinWeight(t *testing.T) {
 		{Username: "active", Commits: 10, PullRequests: 5, Reviews: 3},
 	}
 
-	allocs := deterministicAllocate(contributors, 1_000_000_000)
+	allocs, err := deterministicAllocate(contributors, 1_000_000_000)
+	if err != nil {
+		t.Fatalf("deterministicAllocate: %v", err)
+	}
 
 	var totalBps uint16
 	for _, a := range allocs {
@@ -85,7 +94,10 @@ func TestDeterministicEvaluate(t *testing.T) {
 		"bob":   {"diff --git a/other.go b/other.go\n+line1"},
 	}
 
-	allocs := deterministicEvaluate(prs, 2_000_000_000)
+	allocs, err := deterministicEvaluate(prs, 2_000_000_000)
+	if err != nil {
+		t.Fatalf("deterministicEvaluate: %v", err)
+	}
 
 	if len(allocs) != 2 {
 		t.Fatalf("len = %d, want 2", len(allocs))

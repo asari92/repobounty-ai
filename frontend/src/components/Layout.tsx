@@ -1,7 +1,7 @@
-import { Link, useLocation } from "react-router-dom";
-import WalletButton from "./WalletButton";
-import { GitHubLoginButton } from "./GitHubLoginButton";
-import { useAuth } from "../hooks/useAuth";
+import { Link, useLocation } from 'react-router-dom';
+import WalletButton from './WalletButton';
+import { GitHubLoginButton } from './GitHubLoginButton';
+import { useAuth } from '../hooks/useAuth';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
@@ -15,18 +15,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-solana-purple to-solana-green flex items-center justify-center font-bold text-sm">
               RB
             </div>
-            <span className="text-xl font-bold gradient-text">
-              RepoBounty AI
-            </span>
+            <span className="text-xl font-bold gradient-text">RepoBounty AI</span>
           </Link>
 
           <nav className="flex items-center gap-6">
             <Link
               to="/"
               className={`text-sm transition-colors ${
-                location.pathname === "/"
-                  ? "text-white"
-                  : "text-gray-400 hover:text-white"
+                location.pathname === '/' ? 'text-white' : 'text-gray-400 hover:text-white'
               }`}
             >
               Campaigns
@@ -34,9 +30,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <Link
               to="/create"
               className={`text-sm transition-colors ${
-                location.pathname === "/create"
-                  ? "text-white"
-                  : "text-gray-400 hover:text-white"
+                location.pathname === '/create' ? 'text-white' : 'text-gray-400 hover:text-white'
               }`}
             >
               Create
@@ -44,9 +38,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <Link
               to="/profile"
               className={`text-sm transition-colors ${
-                location.pathname === "/profile"
-                  ? "text-white"
-                  : "text-gray-400 hover:text-white"
+                location.pathname === '/profile' ? 'text-white' : 'text-gray-400 hover:text-white'
               }`}
             >
               Profile
@@ -59,9 +51,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     alt={user.github_username}
                     className="w-8 h-8 rounded-full"
                   />
-                  <span className="text-sm text-solana-green">
-                    @{user.github_username}
-                  </span>
+                  <span className="text-sm text-solana-green">@{user.github_username}</span>
                   <button
                     onClick={logout}
                     className="text-sm text-gray-400 hover:text-white transition-colors"
@@ -78,9 +68,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <main className="flex-1 max-w-6xl mx-auto px-6 py-8 w-full">
-        {children}
-      </main>
+      <main className="flex-1 max-w-6xl mx-auto px-6 py-8 w-full">{children}</main>
 
       <footer className="border-t border-solana-border py-6">
         <div className="max-w-6xl mx-auto px-6 text-center text-sm text-gray-500">
