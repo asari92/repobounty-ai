@@ -251,7 +251,7 @@ export default function CreateCampaign() {
   return (
     <div>
       {/* Title */}
-      <div className="mb-8">
+      <div className="mb-8 animate-fade-in-up">
         <h1 className="text-4xl font-bold tracking-tight mb-2">
           <span className="gradient-text">Create Campaign</span>
         </h1>
@@ -261,7 +261,7 @@ export default function CreateCampaign() {
       </div>
 
       {/* Step indicator */}
-      <div className="flex items-center gap-4 mb-8">
+      <div className="flex items-center gap-4 mb-8 animate-fade-in-up" style={{ animationDelay: '75ms' }}>
         <div
           className={`flex items-center gap-2.5 px-5 py-2.5 rounded-xl text-sm font-medium transition-all ${
             step >= 1
@@ -303,7 +303,7 @@ export default function CreateCampaign() {
       {step === 1 && (
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
           {/* Form */}
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-3 animate-fade-in-up" style={{ animationDelay: '150ms' }}>
             <form onSubmit={handleCreate} className="space-y-6">
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2 uppercase tracking-wide">
@@ -419,7 +419,7 @@ export default function CreateCampaign() {
           </div>
 
           {/* How it works sidebar */}
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-2 animate-fade-in-up" style={{ animationDelay: '250ms' }}>
             <div className="card border-solana-green/20 bg-solana-green/[0.03]">
               <h3 className="text-lg font-semibold text-solana-green mb-5">How it works</h3>
               <div className="space-y-5">
@@ -476,7 +476,7 @@ export default function CreateCampaign() {
       )}
 
       {step === 2 && (
-        <div className="max-w-xl mx-auto space-y-6">
+        <div className="max-w-xl mx-auto space-y-6 animate-fade-in-up">
           <div className="card space-y-4">
             <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-2">
               Campaign Summary

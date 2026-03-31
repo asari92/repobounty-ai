@@ -103,14 +103,14 @@ export default function Profile() {
   return (
     <div className="max-w-3xl mx-auto">
       {/* User card */}
-      <div className="card text-center mb-6">
+      <div className="card text-center mb-6 animate-fade-in-up">
         <div className="flex flex-col items-center py-4">
           <img
             src={user.avatar_url}
             alt={user.github_username}
-            className="w-24 h-24 rounded-full ring-4 ring-solana-border mb-4"
+            className="w-24 h-24 rounded-full ring-4 ring-solana-border mb-4 animate-fade-in-scale transition-all duration-500 ease-out-expo hover:ring-solana-purple/40 hover:scale-105"
           />
-          <h1 className="text-2xl font-bold mb-2">@{user.github_username}</h1>
+          <h1 className="text-2xl font-bold mb-2 animate-fade-in" style={{ animationDelay: '100ms' }}>@{user.github_username}</h1>
           {(publicKey || user.wallet_address) && (
             <WalletBadge address={publicKey ? publicKey.toBase58() : user.wallet_address!} />
           )}
@@ -118,15 +118,15 @@ export default function Profile() {
 
         {/* Stats row */}
         <div className="grid grid-cols-3 gap-4 mt-6 pt-6 border-t border-solana-border">
-          <div className="text-center">
+          <div className="text-center animate-fade-in-up" style={{ animationDelay: '150ms' }}>
             <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Bounties</p>
             <p className="text-2xl font-bold">{claims.length}</p>
           </div>
-          <div className="text-center">
+          <div className="text-center animate-fade-in-up" style={{ animationDelay: '225ms' }}>
             <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Claimed</p>
             <p className="text-2xl font-bold">{claimedCount}</p>
           </div>
-          <div className="text-center">
+          <div className="text-center animate-fade-in-up" style={{ animationDelay: '300ms' }}>
             <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Earned</p>
             <p className="text-2xl font-bold text-solana-green">
               {formatSOL(totalClaimed)}
@@ -136,7 +136,7 @@ export default function Profile() {
       </div>
 
       {/* Rewards Portfolio */}
-      <div className="card mb-6">
+      <div className="card mb-6 animate-fade-in-up" style={{ animationDelay: '200ms' }}>
         <h2 className="text-lg font-semibold mb-6">Rewards Portfolio</h2>
 
         <div className="text-center py-6 mb-6 rounded-xl bg-solana-dark border border-solana-border">
@@ -182,7 +182,7 @@ export default function Profile() {
                 to={`/campaign/${claim.campaign_id}`}
                 className="block"
               >
-                <div className="p-4 rounded-xl border border-solana-border hover:border-solana-purple/40 transition-all hover:bg-solana-card-hover group">
+                <div className="p-4 rounded-xl border border-solana-border hover:border-solana-purple/40 transition-all duration-300 ease-out-expo hover:bg-solana-card-hover hover:-translate-y-0.5 group">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-sm text-white">{claim.repo}</span>
@@ -203,7 +203,7 @@ export default function Profile() {
                     <span className="text-xs text-gray-500">
                       {(claim.percentage / 100).toFixed(1)}% allocation
                     </span>
-                    <span className="text-xs text-solana-purple opacity-0 group-hover:opacity-100 transition-opacity">
+                    <span className="text-xs text-solana-purple opacity-0 group-hover:opacity-100 transition-all duration-300 group-hover:translate-x-1">
                       View campaign &rarr;
                     </span>
                   </div>
@@ -215,7 +215,7 @@ export default function Profile() {
       </div>
 
       {/* Action cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 animate-fade-in-up" style={{ animationDelay: '350ms' }}>
         <Link to="/" className="card card-hover group cursor-pointer">
           <div className="flex items-start justify-between">
             <div className="w-10 h-10 rounded-xl bg-solana-purple/15 flex items-center justify-center mb-3">
@@ -234,7 +234,7 @@ export default function Profile() {
               </svg>
             </div>
             <svg
-              className="w-4 h-4 text-gray-600 group-hover:text-solana-purple transition-colors"
+              className="w-4 h-4 text-gray-600 group-hover:text-solana-purple transition-all duration-300 ease-out-expo group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -271,7 +271,7 @@ export default function Profile() {
               </svg>
             </div>
             <svg
-              className="w-4 h-4 text-gray-600 group-hover:text-solana-green transition-colors"
+              className="w-4 h-4 text-gray-600 group-hover:text-solana-green transition-all duration-300 ease-out-expo group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"

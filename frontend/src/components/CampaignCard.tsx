@@ -36,7 +36,7 @@ function ContributorAvatars({ allocations }: { allocations: Campaign['allocation
       {allocations.slice(0, 4).map((a, i) => (
         <div
           key={a.contributor}
-          className={`w-7 h-7 rounded-full ${colors[i % colors.length]} ring-2 ring-solana-card flex items-center justify-center text-[10px] font-bold text-white`}
+          className={`w-7 h-7 rounded-full ${colors[i % colors.length]} ring-2 ring-solana-card flex items-center justify-center text-[10px] font-bold text-white transition-transform duration-300 ease-spring hover:scale-110 hover:z-10`}
           title={`@${a.contributor}`}
         >
           {a.contributor.slice(0, 2).toUpperCase()}
@@ -70,11 +70,11 @@ export default function CampaignCard({ campaign }: { campaign: Campaign }) {
         {/* Header */}
         <div className="flex items-start justify-between mb-5">
           <div className="flex items-start gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-solana-dark border border-solana-border flex items-center justify-center flex-shrink-0 group-hover:border-solana-purple/40 transition-colors">
+            <div className="w-10 h-10 rounded-xl bg-solana-dark border border-solana-border flex items-center justify-center flex-shrink-0 group-hover:border-solana-purple/40 transition-all duration-300 ease-out-expo group-hover:shadow-md group-hover:shadow-solana-purple/10">
               <RepoIcon />
             </div>
             <div className="min-w-0">
-              <h3 className="font-semibold text-base text-white truncate group-hover:text-solana-purple transition-colors">
+              <h3 className="font-semibold text-base text-white truncate group-hover:text-solana-purple transition-colors duration-300">
                 {campaign.repo}
               </h3>
               <p className="text-xs text-gray-500 font-mono mt-0.5 truncate">
@@ -100,7 +100,7 @@ export default function CampaignCard({ campaign }: { campaign: Campaign }) {
           <div className="flex items-center justify-between text-sm">
             <span className="text-gray-500">Pool</span>
             <span className="font-semibold text-solana-green flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-solana-green inline-block" />
+              <span className="w-2 h-2 rounded-full bg-solana-green inline-block animate-pulse" />
               {formatSOL(campaign.pool_amount)} SOL
             </span>
           </div>
@@ -113,7 +113,7 @@ export default function CampaignCard({ campaign }: { campaign: Campaign }) {
         {/* Footer */}
         <div className="flex items-center justify-between mt-5 pt-4 border-t border-solana-border">
           <ContributorAvatars allocations={campaign.allocations ?? []} />
-          <span className="text-xs text-solana-purple font-medium group-hover:translate-x-0.5 transition-transform">
+          <span className="text-xs text-solana-purple font-medium group-hover:translate-x-1 transition-transform duration-300 ease-out-expo">
             DETAILS &rarr;
           </span>
         </div>

@@ -67,17 +67,17 @@ export default function Home() {
   return (
     <div>
       {/* Hero section */}
-      <div className="mb-10">
+      <div className="mb-10 animate-fade-in-up">
         <h1 className="text-5xl font-bold tracking-tight mb-3">
-          <span className="gradient-text">Campaigns</span>
+          <span className="gradient-text-animated">Campaigns</span>
         </h1>
-        <p className="text-gray-400 text-lg max-w-xl">
+        <p className="text-gray-400 text-lg max-w-xl animate-fade-in" style={{ animationDelay: '150ms' }}>
           Fund open-source contributors with AI-powered reward allocation on Solana
         </p>
       </div>
 
       {/* Controls bar */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8 animate-fade-in-up" style={{ animationDelay: '100ms' }}>
         <div className="inline-flex rounded-xl border border-solana-border bg-solana-card p-1">
           <button
             onClick={() => setView('all')}
@@ -187,8 +187,14 @@ export default function Home() {
             {view === 'mine' && user ? ' you created' : ''}
           </p>
           <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-            {visibleCampaigns.map((c) => (
-              <CampaignCard key={c.campaign_id} campaign={c} />
+            {visibleCampaigns.map((c, i) => (
+              <div
+                key={c.campaign_id}
+                className="animate-fade-in-up"
+                style={{ animationDelay: `${Math.min(i * 75, 600)}ms` }}
+              >
+                <CampaignCard campaign={c} />
+              </div>
             ))}
           </div>
         </>

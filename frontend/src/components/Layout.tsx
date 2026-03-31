@@ -12,13 +12,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     return (
       <Link
         to={path}
-        className={`text-sm font-medium transition-colors relative py-1 ${
+        className={`text-sm font-medium transition-all duration-300 relative py-1 ${
           active ? 'text-white' : 'text-gray-400 hover:text-white'
         }`}
       >
         {label}
         {active && (
-          <span className="absolute -bottom-[1.125rem] left-0 right-0 h-[2px] bg-gradient-to-r from-solana-purple to-solana-green rounded-full" />
+          <span className="absolute -bottom-[1.125rem] left-0 right-0 h-[2px] bg-gradient-to-r from-solana-purple to-solana-green rounded-full animate-fade-in" />
         )}
       </Link>
     );
@@ -29,11 +29,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <header className="sticky top-0 z-50 border-b border-solana-border bg-solana-dark/80 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-8">
-            <Link to="/" className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-solana-purple to-solana-green flex items-center justify-center font-bold text-sm shadow-lg shadow-solana-purple/25">
+            <Link to="/" className="flex items-center gap-3 group">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-solana-purple to-solana-green flex items-center justify-center font-bold text-sm shadow-lg shadow-solana-purple/25 transition-all duration-500 ease-out-expo group-hover:shadow-xl group-hover:shadow-solana-purple/40 group-hover:scale-105">
                 RB
               </div>
-              <span className="text-lg font-bold gradient-text hidden sm:inline">
+              <span className="text-lg font-bold gradient-text hidden sm:inline transition-opacity duration-300">
                 RepoBounty AI
               </span>
             </Link>
@@ -50,12 +50,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <div className="flex items-center gap-3">
                 <Link
                   to="/profile"
-                  className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+                  className="flex items-center gap-2 hover:opacity-80 transition-all duration-300"
                 >
                   <img
                     src={user.avatar_url}
                     alt={user.github_username}
-                    className="w-8 h-8 rounded-full ring-2 ring-solana-border"
+                    className="w-8 h-8 rounded-full ring-2 ring-solana-border transition-all duration-300 hover:ring-solana-purple/50 hover:scale-110"
                   />
                 </Link>
                 <button

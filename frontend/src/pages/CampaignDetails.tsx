@@ -183,7 +183,7 @@ export default function CampaignDetails() {
     <div className="max-w-3xl mx-auto">
       <Link
         to="/"
-        className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-white transition-colors mb-6"
+        className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-white transition-all duration-300 mb-6 hover:-translate-x-0.5"
       >
         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
@@ -192,7 +192,7 @@ export default function CampaignDetails() {
       </Link>
 
       {/* Header */}
-      <div className="card mb-6">
+      <div className="card mb-6 animate-fade-in-up">
         <div className="flex items-start justify-between mb-6">
           <div className="flex items-start gap-4">
             <div className="w-12 h-12 rounded-xl bg-solana-dark border border-solana-border flex items-center justify-center flex-shrink-0">
@@ -224,21 +224,21 @@ export default function CampaignDetails() {
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-solana-dark rounded-xl p-3 border border-solana-border/50">
+          <div className="bg-solana-dark rounded-xl p-3 border border-solana-border/50 animate-fade-in-up" style={{ animationDelay: '100ms' }}>
             <span className="text-[10px] text-gray-500 uppercase tracking-wider">Pool</span>
             <p className="text-lg font-bold text-solana-green mt-1">
               {formatSOL(campaign.pool_amount)} SOL
             </p>
           </div>
-          <div className="bg-solana-dark rounded-xl p-3 border border-solana-border/50">
+          <div className="bg-solana-dark rounded-xl p-3 border border-solana-border/50 animate-fade-in-up" style={{ animationDelay: '175ms' }}>
             <span className="text-[10px] text-gray-500 uppercase tracking-wider">Deadline</span>
             <p className="text-sm font-semibold mt-1">{formatDate(campaign.deadline)}</p>
           </div>
-          <div className="bg-solana-dark rounded-xl p-3 border border-solana-border/50">
+          <div className="bg-solana-dark rounded-xl p-3 border border-solana-border/50 animate-fade-in-up" style={{ animationDelay: '250ms' }}>
             <span className="text-[10px] text-gray-500 uppercase tracking-wider">Created</span>
             <p className="text-sm font-semibold mt-1">{formatDate(campaign.created_at)}</p>
           </div>
-          <div className="bg-solana-dark rounded-xl p-3 border border-solana-border/50">
+          <div className="bg-solana-dark rounded-xl p-3 border border-solana-border/50 animate-fade-in-up" style={{ animationDelay: '325ms' }}>
             <span className="text-[10px] text-gray-500 uppercase tracking-wider">Sponsor</span>
             <p className="text-xs font-mono mt-1.5 truncate">
               {campaign.sponsor || campaign.authority || 'N/A'}
@@ -310,7 +310,7 @@ export default function CampaignDetails() {
 
       {/* Finalize Actions */}
       {canShowFinalizeCard && (
-        <div className="card mb-6">
+        <div className="card mb-6 animate-fade-in-up" style={{ animationDelay: '150ms' }}>
           <h2 className="text-lg font-semibold mb-4">Finalize Campaign</h2>
           <p className="text-sm text-gray-500 mb-4">
             The deadline has passed. Preview now saves a frozen allocation snapshot, and manual
@@ -368,7 +368,7 @@ export default function CampaignDetails() {
 
       {/* Preview */}
       {preview && !isFinalized && (
-        <div className="card mb-6 border-yellow-500/20">
+        <div className="card mb-6 border-yellow-500/20 animate-fade-in-up">
           <h2 className="text-lg font-semibold mb-1">AI Allocation Preview</h2>
           <p className="text-xs text-gray-500 mb-4">
             Model: {preview.ai_model} | Source: {allocationModeLabel} | Snapshot v
@@ -431,7 +431,7 @@ export default function CampaignDetails() {
 
       {/* Finalized Allocations with Claim Buttons */}
       {isFinalized && campaign.allocations && campaign.allocations.length > 0 && (
-        <div className="card">
+        <div className="card animate-fade-in-up" style={{ animationDelay: '100ms' }}>
           <h2 className="text-lg font-semibold mb-4">Final Allocations (On-Chain)</h2>
           <p className="text-xs text-gray-500 mb-4">
             Claims send SOL to the wallet currently connected in Phantom, and that wallet must sign
@@ -450,10 +450,10 @@ export default function CampaignDetails() {
               return (
                 <div
                   key={a.contributor}
-                  className={`p-4 rounded-xl border transition-all ${
+                  className={`p-4 rounded-xl border transition-all duration-300 ease-out-expo ${
                     a.claimed
                       ? 'border-solana-green/30 bg-solana-green/[0.03]'
-                      : 'border-solana-border hover:border-solana-purple/30'
+                      : 'border-solana-border hover:border-solana-purple/30 hover:-translate-y-0.5'
                   }`}
                 >
                   <div className="flex items-center justify-between mb-1">

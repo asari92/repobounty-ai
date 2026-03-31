@@ -48,30 +48,32 @@ body {
 
 .btn-primary {
   @apply bg-gradient-to-r from-solana-purple to-solana-green px-6 py-3 rounded-xl font-semibold
-    transition-all duration-200 hover:opacity-90 hover:scale-[1.02] active:scale-[0.98]
+    transition-all duration-300 ease-out-expo hover:opacity-90 hover:scale-[1.02] active:scale-[0.97]
     disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100
-    text-white shadow-lg shadow-solana-purple/20;
+    text-white shadow-lg shadow-solana-purple/20 hover:shadow-xl hover:shadow-solana-purple/30;
 }
 
 .btn-secondary {
   @apply px-6 py-3 rounded-xl font-semibold border border-solana-border
-    transition-all duration-200 hover:border-solana-purple/60 hover:bg-solana-card
+    transition-all duration-300 ease-out-expo hover:border-solana-purple/60 hover:bg-solana-card
+    hover:shadow-md hover:shadow-solana-purple/5
     disabled:opacity-50 disabled:cursor-not-allowed text-gray-300;
 }
 
 .card {
   @apply bg-solana-card rounded-2xl border border-solana-border p-6
-    transition-all duration-200;
+    transition-all duration-300 ease-out-expo;
 }
 
 .card-hover {
-  @apply hover:border-solana-purple/40 hover:bg-solana-card-hover hover:shadow-lg hover:shadow-solana-purple/5;
+  @apply hover:border-solana-purple/40 hover:bg-solana-card-hover
+    hover:shadow-xl hover:shadow-solana-purple/5 hover:-translate-y-0.5;
 }
 
 .input {
   @apply w-full bg-solana-dark border border-solana-border rounded-xl px-4 py-3
     text-white placeholder-gray-500 focus:outline-none focus:border-solana-purple/60
-    focus:ring-1 focus:ring-solana-purple/30 transition-all;
+    focus:ring-1 focus:ring-solana-purple/30 transition-all duration-300 ease-out-expo;
 }
 
 .input-with-icon {
@@ -112,4 +114,60 @@ body {
 
 .glow-green {
   box-shadow: 0 0 40px rgba(20, 241, 149, 0.15), 0 0 80px rgba(20, 241, 149, 0.05);
+}
+
+/* Staggered animation delay utilities */
+.stagger-1 { animation-delay: 50ms; }
+.stagger-2 { animation-delay: 100ms; }
+.stagger-3 { animation-delay: 150ms; }
+.stagger-4 { animation-delay: 200ms; }
+.stagger-5 { animation-delay: 250ms; }
+.stagger-6 { animation-delay: 300ms; }
+.stagger-7 { animation-delay: 350ms; }
+.stagger-8 { animation-delay: 400ms; }
+
+/* Shimmer loading effect */
+.shimmer-bg {
+  background: linear-gradient(
+    90deg,
+    rgba(153, 69, 255, 0) 0%,
+    rgba(153, 69, 255, 0.06) 50%,
+    rgba(153, 69, 255, 0) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s linear infinite;
+}
+
+/* Smooth gradient text animation on hover */
+.gradient-text-animated {
+  background: linear-gradient(90deg, #9945ff, #14f195, #9945ff);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 4s linear infinite;
+}
+
+/* Badge pulse for active states */
+.badge-pulse {
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+
+/* Smooth underline animation for links */
+.link-underline {
+  position: relative;
+}
+.link-underline::after {
+  content: "";
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #9945ff, #14f195);
+  border-radius: 1px;
+  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.link-underline:hover::after {
+  width: 100%;
 }
