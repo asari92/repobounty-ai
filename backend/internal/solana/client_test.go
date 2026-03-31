@@ -10,7 +10,7 @@ import (
 )
 
 func TestDecodeCampaignAccountHandlesCurrentCampaignLayout(t *testing.T) {
-	programID, err := gosolana.PublicKeyFromBase58("GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy")
+	programID, err := gosolana.PublicKeyFromBase58("97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo")
 	if err != nil {
 		t.Fatalf("parse program id: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestDecodeCampaignAccountHandlesCurrentCampaignLayout(t *testing.T) {
 }
 
 func TestNewFundCampaignInstructionIncludesSystemProgram(t *testing.T) {
-	programID, err := gosolana.PublicKeyFromBase58("GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy")
+	programID, err := gosolana.PublicKeyFromBase58("97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo")
 	if err != nil {
 		t.Fatalf("parse program id: %v", err)
 	}

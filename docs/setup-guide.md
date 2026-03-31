@@ -84,7 +84,7 @@ GITHUB_CLIENT_SECRET=...               # OAuth App → Client Secret
 # === Solana ===
 SOLANA_RPC_URL=https://api.devnet.solana.com
 SOLANA_PRIVATE_KEY=<base58-или-json>   # Keypair backend-authority (см. раздел 5)
-PROGRAM_ID=GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy
+PROGRAM_ID=97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo
 
 # === AI (опционально) ===
 OPENROUTER_API_KEY=sk-or-...           # Без ключа работает deterministic fallback
@@ -224,7 +224,7 @@ anchor deploy --provider.cluster devnet
 
 Anchor выведет Program ID. Если используешь существующий keypair — ID останется прежним:
 ```
-Program Id: GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy
+Program Id: 97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo
 ```
 
 ### 5.6. Деплой на mainnet-beta

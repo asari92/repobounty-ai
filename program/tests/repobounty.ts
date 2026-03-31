@@ -5,14 +5,19 @@ import { expect } from "chai";
 import type { Repobounty } from "../target/types/repobounty";
 
 const DAY_IN_SECONDS = 24 * 60 * 60;
-const POOL_AMOUNT = new anchor.BN(1_000_000_000);
+const BN = (
+  anchor as typeof anchor & {
+    default: { BN: typeof anchor.BN };
+  }
+).default.BN;
+const POOL_AMOUNT = new BN(1_000_000_000);
 
 function deadlineAtLeast24HoursOut(): anchor.BN {
-  return new anchor.BN(Math.floor(Date.now() / 1000) + DAY_IN_SECONDS + 60);
+  return new BN(Math.floor(Date.now() / 1000) + DAY_IN_SECONDS + 60);
 }
 
 function deadlineTooSoon(): anchor.BN {
-  return new anchor.BN(Math.floor(Date.now() / 1000) + DAY_IN_SECONDS - 60);
+  return new BN(Math.floor(Date.now() / 1000) + DAY_IN_SECONDS - 60);
 }
 
 function deriveCampaignAddresses(
