@@ -98,10 +98,10 @@ func autoFinalize(
 			zap.String("repo", c.Repo),
 		)
 
-		contributors, err := ghClient.FetchContributors(ctx, c.Repo)
+		result, err := (&Handlers{github: ghClient, ai: allocator}).calculateAllocations(ctx, c)
 		if err != nil {
 			retries[c.CampaignID]++
-			logger.Error("auto-finalize: github fetch failed",
+			logger.Error("auto-finalize: allocation failed",
 				zap.String("campaign_id", c.CampaignID),
 				zap.Int("attempt", retries[c.CampaignID]),
 				zap.Error(err),
@@ -109,35 +109,8 @@ func autoFinalize(
 			continue
 		}
 
-		contributorPRDiffs, err := ghClient.FetchContributorsPRDiffs(ctx, c.Repo, c.CreatedAt.Unix())
-		if err != nil {
-			logger.Warn("auto-finalize: PR diff fetch failed, falling back to metric-based allocation", zap.Error(err))
-		}
-
-		var allocations []models.Allocation
-		if len(contributorPRDiffs) > 0 {
-			allocations, err = allocator.EvaluateCodeImpact(ctx, c.Repo, contributorPRDiffs, c.PoolAmount)
-			if err != nil {
-				logger.Warn("auto-finalize: code impact evaluation failed, falling back", zap.Error(err))
-				allocations = nil
-			}
-		}
-
-		if allocations == nil {
-			allocations, err = allocator.Allocate(ctx, c.Repo, contributors, c.PoolAmount)
-			if err != nil {
-				retries[c.CampaignID]++
-				logger.Error("auto-finalize: AI allocation failed",
-					zap.String("campaign_id", c.CampaignID),
-					zap.Int("attempt", retries[c.CampaignID]),
-					zap.Error(err),
-				)
-				continue
-			}
-		}
-
-		solanaInputs := make([]solana.AllocationInput, len(allocations))
-		for i, a := range allocations {
+		solanaInputs := make([]solana.AllocationInput, len(result.allocations))
+		for i, a := range result.allocations {
 			solanaInputs[i] = solana.AllocationInput{
 				Contributor: a.Contributor,
 				Percentage:  a.Percentage,
@@ -157,7 +130,7 @@ func autoFinalize(
 
 		finalizedAt := time.Now()
 		c.State = models.StateFinalized
-		c.Allocations = allocations
+		c.Allocations = result.allocations
 		c.FinalizedAt = &finalizedAt
 		c.TxSignature = txSig
 
@@ -185,7 +158,7 @@ func autoFinalize(
 		logger.Info("auto-finalize: campaign finalized",
 			zap.String("campaign_id", c.CampaignID),
 			zap.String("tx", explorerURL),
-			zap.Int("allocations", len(allocations)),
+			zap.Int("allocations", len(result.allocations)),
 		)
 	}
 }

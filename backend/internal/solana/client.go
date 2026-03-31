@@ -26,6 +26,7 @@ type Client struct {
 }
 
 var campaignAccountDiscriminator = anchorDiscriminator("account:Campaign")
+var ErrNotConfigured = errors.New("solana client not configured")
 
 func NewClient(rpcURL, privateKeyBase58, programIDStr string) (*Client, error) {
 	if strings.TrimSpace(privateKeyBase58) == "" || isPlaceholderProgramID(programIDStr) {
@@ -80,6 +81,13 @@ func isPlaceholderProgramID(programID string) bool {
 
 func (c *Client) IsConfigured() bool {
 	return c.rpcClient != nil
+}
+
+func (c *Client) AuthorityAddress() string {
+	if !c.IsConfigured() {
+		return ""
+	}
+	return c.privateKey.PublicKey().String()
 }
 
 func (c *Client) ListCampaigns(ctx context.Context) ([]*models.Campaign, error) {
@@ -172,6 +180,10 @@ func (c *Client) GetBalance(ctx context.Context, wallet string) (uint64, error) 
 }
 
 func (c *Client) ClaimAllocation(ctx context.Context, campaignID, contributorGitHub string, contributorWallet string) (string, error) {
+	if !c.IsConfigured() {
+		return "", ErrNotConfigured
+	}
+
 	campaignPDA, _, err := solana.FindProgramAddress(
 		[][]byte{
 			[]byte("campaign"),
@@ -240,11 +252,7 @@ func newFundCampaignInstruction(programID, campaignPDA, vaultPDA, sponsorKey sol
 
 func (c *Client) BuildFundTransaction(ctx context.Context, campaignID string, poolAmount uint64, sponsorPubkey string) (*FundTransaction, error) {
 	if !c.IsConfigured() {
-		return &FundTransaction{
-			Transaction:  "mock_fund_tx_" + campaignID,
-			CampaignPDA:  "mock_campaign_pda",
-			VaultAddress: "mock_vault_pda",
-		}, nil
+		return nil, ErrNotConfigured
 	}
 
 	sponsorKey, err := solana.PublicKeyFromBase58(sponsorPubkey)
@@ -316,8 +324,7 @@ func (c *Client) BuildFundTransaction(ctx context.Context, campaignID string, po
 
 func (c *Client) CreateCampaign(ctx context.Context, campaignID, repo string, poolAmount uint64, deadline int64, sponsorPubkey string) (string, string, string, error) {
 	if !c.IsConfigured() {
-		log.Printf("solana: mock create_campaign for %s", repo)
-		return "mock_tx_" + campaignID, "mock_campaign_pda", "mock_vault_pda", nil
+		return "", "", "", ErrNotConfigured
 	}
 
 	authority := c.privateKey.PublicKey()
@@ -383,8 +390,7 @@ type AllocationInput struct {
 
 func (c *Client) FinalizeCampaign(ctx context.Context, campaignID string, allocations []AllocationInput) (string, error) {
 	if !c.IsConfigured() {
-		log.Printf("solana: mock finalize_campaign for %s", campaignID)
-		return "mock_finalize_tx_" + campaignID, nil
+		return "", ErrNotConfigured
 	}
 
 	authority := c.privateKey.PublicKey()

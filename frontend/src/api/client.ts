@@ -10,6 +10,7 @@ import type {
   LinkWalletRequest,
   ClaimItem,
   FundTransactionResponse,
+  HealthResponse,
 } from "../types";
 
 const API_BASE = "/api";
@@ -68,7 +69,7 @@ export const api = {
     return request(`/campaigns/${id}/finalize`, { method: "POST" });
   },
 
-  claimAllocation(campaignId: string, contributorGithub: string, walletAddress: string): Promise<{ tx_signature: string }> {
+  claimAllocation(campaignId: string, contributorGithub: string, walletAddress: string): Promise<FinalizeResponse> {
     return request(`/campaigns/${campaignId}/claim`, {
       method: "POST",
       body: JSON.stringify({ contributor_github: contributorGithub, wallet_address: walletAddress }),
@@ -106,5 +107,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ sponsor_wallet: sponsorWallet }),
     });
+  },
+
+  getHealth(): Promise<HealthResponse> {
+    return request("/health");
   },
 };

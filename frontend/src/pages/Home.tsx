@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { useWallet } from "@solana/wallet-adapter-react";
 import { api } from "../api/client";
 import CampaignCard from "../components/CampaignCard";
+import { useAuth } from "../hooks/useAuth";
 import type { Campaign } from "../types";
 
 export default function Home() {
-  const { publicKey } = useWallet();
+  const { user } = useAuth();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -28,15 +28,14 @@ export default function Home() {
     return () => { cancelled = true; };
   }, []);
 
-  const walletAddress = publicKey?.toBase58();
   const visibleCampaigns = useMemo(
     () =>
-      view === "mine" && walletAddress
-        ? campaigns.filter((campaign) => campaign.sponsor === walletAddress)
+      view === "mine" && user
+        ? campaigns.filter((campaign) => campaign.owner_github_username === user.github_username)
         : view === "mine"
           ? []
           : campaigns,
-    [campaigns, view, walletAddress]
+    [campaigns, user, view]
   );
 
   return (
@@ -83,7 +82,7 @@ export default function Home() {
         <p className="text-sm text-gray-400">
           Showing {visibleCampaigns.length} campaign
           {visibleCampaigns.length === 1 ? "" : "s"}
-          {view === "mine" && walletAddress ? " for your wallet" : ""}
+          {view === "mine" && user ? " you created" : ""}
         </p>
       </div>
 
@@ -106,26 +105,26 @@ export default function Home() {
         </div>
       )}
 
-      {!loading && !error && view === "mine" && !walletAddress && (
+      {!loading && !error && view === "mine" && !user && (
         <div className="card text-center py-16">
           <h3 className="text-xl font-semibold mb-2">
-            Connect your wallet
+            Log in with GitHub
           </h3>
           <p className="text-gray-400">
-            Connect a wallet to view campaigns created by your address.
+            Sign in to view campaigns created from your RepoBounty account.
           </p>
         </div>
       )}
 
-      {!loading && !error && visibleCampaigns.length === 0 && !(view === "mine" && !walletAddress) && (
+      {!loading && !error && visibleCampaigns.length === 0 && !(view === "mine" && !user) && (
         <div className="card text-center py-16">
           <div className="text-4xl mb-4">{"{ }"}</div>
           <h3 className="text-xl font-semibold mb-2">
-            {view === "mine" ? "No campaigns for this wallet" : "No campaigns yet"}
+            {view === "mine" ? "No campaigns for this account" : "No campaigns yet"}
           </h3>
           <p className="text-gray-400 mb-6">
             {view === "mine"
-              ? "Create a campaign from the connected wallet to see it here."
+              ? "Create a campaign while signed in with GitHub to see it here."
               : "Create your first campaign to fund open-source contributors"}
           </p>
           <Link to="/create" className="btn-primary">

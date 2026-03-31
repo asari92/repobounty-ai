@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useConnection } from "@solana/wallet-adapter-react";
@@ -6,6 +6,7 @@ import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { VersionedTransaction } from "@solana/web3.js";
 import bs58 from "bs58";
 import { api } from "../api/client";
+import { useAuth } from "../hooks/useAuth";
 
 function pad(value: number): string {
   return value.toString().padStart(2, "0");
@@ -29,6 +30,7 @@ export default function CreateCampaign() {
   const { publicKey, sendTransaction } = useWallet();
   const { connection } = useConnection();
   const { setVisible } = useWalletModal();
+  const { user, isLoading: authLoading, login } = useAuth();
   const navigate = useNavigate();
 
   const [step, setStep] = useState<1 | 2>(1);
@@ -38,17 +40,42 @@ export default function CreateCampaign() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdId, setCreatedId] = useState<string | null>(null);
+  const [solanaReady, setSolanaReady] = useState(true);
 
   const minDeadline = toDateTimeLocalValue(
     new Date(Date.now() + 24 * 60 * 60 * 1000)
   );
 
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getHealth()
+      .then((health) => {
+        if (!cancelled) {
+          setSolanaReady(health.solana);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
+    if (!user) {
+      setError("Log in with GitHub to create a campaign.");
+      return;
+    }
     if (!publicKey) {
       setVisible(true);
+      return;
+    }
+    if (!solanaReady) {
+      setError("Campaign creation is unavailable until the backend is connected to Solana.");
       return;
     }
 
@@ -93,6 +120,12 @@ export default function CreateCampaign() {
   async function handleFund() {
     if (!publicKey || !createdId) return;
     setError(null);
+
+    if (!solanaReady) {
+      setError("Funding is unavailable until the backend is connected to Solana.");
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -137,9 +170,17 @@ export default function CreateCampaign() {
         <span className="gradient-text">Create Campaign</span>
       </h1>
       <p className="text-gray-400 mb-8">
-        Fund a public GitHub repository and let AI allocate rewards to
-        contributors
+        Create a campaign as your GitHub account, then fund it from the
+        connected wallet.
       </p>
+
+      {!solanaReady && (
+        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 text-sm text-yellow-200 mb-6">
+          The backend is not connected to Solana right now. Creating and funding
+          campaigns is disabled until a real authority key and program ID are
+          configured.
+        </div>
+      )}
 
       <div className="flex gap-2 mb-8">
         <div
@@ -188,6 +229,19 @@ export default function CreateCampaign() {
             </p>
           </div>
 
+          <div className="bg-solana-card border border-solana-border rounded-lg p-4 text-sm">
+            <p className="text-gray-300">
+              Campaign owner:
+              <span className="ml-2 font-medium text-white">
+                {user ? `@${user.github_username}` : "GitHub login required"}
+              </span>
+            </p>
+            <p className="text-xs text-gray-500 mt-2">
+              Manual funding and finalization stay attached to the GitHub account
+              that created the campaign.
+            </p>
+          </div>
+
           <div>
             <label className="block text-sm font-medium mb-2">
               Reward Pool (SOL)
@@ -227,13 +281,26 @@ export default function CreateCampaign() {
           )}
 
           <div className="flex gap-4 pt-2">
-            {!publicKey ? (
+            {!user ? (
+              <button
+                type="button"
+                onClick={() => void login()}
+                className="btn-primary flex-1"
+                disabled={authLoading}
+              >
+                {authLoading ? "Checking session..." : "Log in with GitHub"}
+              </button>
+            ) : !publicKey ? (
               <button
                 type="button"
                 onClick={() => setVisible(true)}
                 className="btn-primary flex-1"
               >
                 Connect Wallet to Continue
+              </button>
+            ) : !solanaReady ? (
+              <button type="button" disabled className="btn-primary flex-1 opacity-60 cursor-not-allowed">
+                Solana Backend Required
               </button>
             ) : (
               <button
@@ -270,6 +337,12 @@ export default function CreateCampaign() {
               <span className="text-gray-400">Deadline</span>
               <span>{deadline}</span>
             </div>
+            {user && (
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-400">Owner</span>
+                <span>@{user.github_username}</span>
+              </div>
+            )}
           </div>
 
           <div className="bg-solana-purple/10 border border-solana-purple/30 rounded-lg p-6 text-center">
@@ -282,6 +355,12 @@ export default function CreateCampaign() {
             </p>
           </div>
 
+          <p className="text-xs text-gray-500">
+            The connected wallet signs the funding transaction, but future manual
+            management stays limited to the GitHub account that created this
+            campaign.
+          </p>
+
           {error && (
             <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-sm text-red-400">
               {error}
@@ -292,10 +371,10 @@ export default function CreateCampaign() {
             <button
               type="button"
               onClick={handleFund}
-              disabled={submitting || !publicKey}
+              disabled={submitting || !publicKey || !solanaReady}
               className="btn-primary flex-1"
             >
-              {submitting ? "Confirming..." : "Fund Campaign"}
+              {submitting ? "Confirming..." : solanaReady ? "Fund Campaign" : "Solana Backend Required"}
             </button>
             <button
               type="button"

@@ -55,6 +55,7 @@ func migrate(db *sql.DB) error {
 		state TEXT NOT NULL DEFAULT 'created',
 		authority TEXT NOT NULL DEFAULT '',
 		sponsor TEXT NOT NULL DEFAULT '',
+		owner_github_username TEXT NOT NULL DEFAULT '',
 		allocations TEXT NOT NULL DEFAULT '[]',
 		created_at TEXT NOT NULL,
 		finalized_at TEXT,
@@ -70,8 +71,19 @@ func migrate(db *sql.DB) error {
 		created_at TEXT NOT NULL
 	);
 	`
-	_, err := db.Exec(schema)
-	return err
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+
+	for _, stmt := range []string{
+		`ALTER TABLE campaigns ADD COLUMN owner_github_username TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (s *SQLiteStore) Create(c *models.Campaign) error {
@@ -82,10 +94,10 @@ func (s *SQLiteStore) Create(c *models.Campaign) error {
 
 	_, err = s.db.Exec(`
 		INSERT INTO campaigns (campaign_id, campaign_pda, vault_address, repo, pool_amount, total_claimed,
-			deadline, state, authority, sponsor, allocations, created_at, finalized_at, tx_signature)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			deadline, state, authority, sponsor, owner_github_username, allocations, created_at, finalized_at, tx_signature)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.CampaignID, c.CampaignPDA, c.VaultAddress, c.Repo, c.PoolAmount, c.TotalClaimed,
-		c.Deadline.Format(time.RFC3339Nano), string(c.State), c.Authority, c.Sponsor,
+		c.Deadline.Format(time.RFC3339Nano), string(c.State), c.Authority, c.Sponsor, c.OwnerGitHubUsername,
 		string(allocs), c.CreatedAt.Format(time.RFC3339Nano), nilifyTime(c.FinalizedAt), c.TxSignature,
 	)
 	if err != nil {
@@ -100,7 +112,7 @@ func (s *SQLiteStore) Create(c *models.Campaign) error {
 func (s *SQLiteStore) Get(id string) (*models.Campaign, error) {
 	c, err := s.scanCampaign(s.db.QueryRow(`
 		SELECT campaign_id, campaign_pda, vault_address, repo, pool_amount, total_claimed,
-			deadline, state, authority, sponsor, allocations, created_at, finalized_at, tx_signature
+			deadline, state, authority, sponsor, owner_github_username, allocations, created_at, finalized_at, tx_signature
 		FROM campaigns WHERE campaign_id = ?`, id))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -119,10 +131,10 @@ func (s *SQLiteStore) Update(c *models.Campaign) error {
 
 	res, err := s.db.Exec(`
 		UPDATE campaigns SET campaign_pda=?, vault_address=?, repo=?, pool_amount=?, total_claimed=?,
-			deadline=?, state=?, authority=?, sponsor=?, allocations=?, created_at=?, finalized_at=?, tx_signature=?
+			deadline=?, state=?, authority=?, sponsor=?, owner_github_username=?, allocations=?, created_at=?, finalized_at=?, tx_signature=?
 		WHERE campaign_id=?`,
 		c.CampaignPDA, c.VaultAddress, c.Repo, c.PoolAmount, c.TotalClaimed,
-		c.Deadline.Format(time.RFC3339Nano), string(c.State), c.Authority, c.Sponsor,
+		c.Deadline.Format(time.RFC3339Nano), string(c.State), c.Authority, c.Sponsor, c.OwnerGitHubUsername,
 		string(allocs), c.CreatedAt.Format(time.RFC3339Nano), nilifyTime(c.FinalizedAt),
 		c.TxSignature, c.CampaignID,
 	)
@@ -139,7 +151,7 @@ func (s *SQLiteStore) Update(c *models.Campaign) error {
 func (s *SQLiteStore) List() []*models.Campaign {
 	rows, err := s.db.Query(`
 		SELECT campaign_id, campaign_pda, vault_address, repo, pool_amount, total_claimed,
-			deadline, state, authority, sponsor, allocations, created_at, finalized_at, tx_signature
+			deadline, state, authority, sponsor, owner_github_username, allocations, created_at, finalized_at, tx_signature
 		FROM campaigns ORDER BY created_at DESC`)
 	if err != nil {
 		log.Printf("sqlite: list campaigns query failed: %v", err)
@@ -252,7 +264,7 @@ func (s *SQLiteStore) scanCampaign(scanner interface{ Scan(...interface{}) error
 	err := scanner.Scan(
 		&c.CampaignID, &c.CampaignPDA, &c.VaultAddress, &c.Repo,
 		&c.PoolAmount, &c.TotalClaimed, &deadlineStr, &c.State,
-		&c.Authority, &c.Sponsor, &allocJSON, &createdAtStr,
+		&c.Authority, &c.Sponsor, &c.OwnerGitHubUsername, &allocJSON, &createdAtStr,
 		&finalizedAtStr, &txSigStr,
 	)
 	if err != nil {

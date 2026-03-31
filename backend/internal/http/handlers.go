@@ -10,6 +10,8 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,6 +52,12 @@ type Handlers struct {
 	claimLocks sync.Map // campaign_id -> *sync.Mutex
 }
 
+type allocationResult struct {
+	contributors   []models.Contributor
+	allocations    []models.Allocation
+	allocationMode models.AllocationMode
+}
+
 func NewHandlers(
 	s store.CampaignStore,
 	gh *github.Client,
@@ -82,6 +90,16 @@ func (h *Handlers) ListCampaigns(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	if h.solana == nil || !h.solana.IsConfigured() {
+		writeError(w, http.StatusServiceUnavailable, "campaign creation is disabled until Solana is configured")
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req models.CreateCampaignRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -163,18 +181,19 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 	}
 
 	campaign := &models.Campaign{
-		CampaignID:   campaignID,
-		CampaignPDA:  campaignPDA,
-		VaultAddress: vaultPDA,
-		Repo:         req.Repo,
-		PoolAmount:   req.PoolAmount,
-		Deadline:     deadline,
-		State:        models.StateCreated,
-		Authority:    "",
-		Sponsor:      req.SponsorWallet,
-		Allocations:  []models.Allocation{},
-		CreatedAt:    now,
-		TxSignature:  txSig,
+		CampaignID:          campaignID,
+		CampaignPDA:         campaignPDA,
+		VaultAddress:        vaultPDA,
+		Repo:                req.Repo,
+		PoolAmount:          req.PoolAmount,
+		Deadline:            deadline,
+		State:               models.StateCreated,
+		Authority:           h.solana.AuthorityAddress(),
+		Sponsor:             req.SponsorWallet,
+		OwnerGitHubUsername: user.GitHubUsername,
+		Allocations:         []models.Allocation{},
+		CreatedAt:           now,
+		TxSignature:         txSig,
 	}
 
 	if err := h.store.Create(campaign); err != nil {
@@ -200,6 +219,15 @@ type fundTxRequest struct {
 
 func (h *Handlers) FundTx(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	user, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	if h.solana == nil || !h.solana.IsConfigured() {
+		writeError(w, http.StatusServiceUnavailable, "campaign funding is unavailable until Solana is configured")
+		return
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req fundTxRequest
@@ -229,9 +257,17 @@ func (h *Handlers) FundTx(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "campaign is not in created state")
 		return
 	}
+	if err := requireCampaignOwner(user, campaign, "fund"); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
 
 	fundTx, err := h.solana.BuildFundTransaction(r.Context(), id, campaign.PoolAmount, req.SponsorWallet)
 	if err != nil {
+		if errors.Is(err, solana.ErrNotConfigured) {
+			writeError(w, http.StatusServiceUnavailable, "campaign funding is unavailable until Solana is configured")
+			return
+		}
 		log.Printf("solana build_fund_tx failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to build fund transaction")
 		return
@@ -256,6 +292,12 @@ func (h *Handlers) GetCampaign(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) FinalizePreview(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	user, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
 	campaign, err := h.loadCampaign(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -266,34 +308,39 @@ func (h *Handlers) FinalizePreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if campaign.State == models.StateFinalized {
-		writeError(w, http.StatusConflict, "campaign already finalized")
+	if err := requireCampaignOwner(user, campaign, "preview allocations for"); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	if status, msg := validateFinalizeState(campaign); status != http.StatusOK {
+		writeError(w, status, msg)
 		return
 	}
 
-	contributors, err := h.github.FetchContributors(r.Context(), campaign.Repo)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to fetch contributor data from GitHub")
-		return
-	}
-
-	allocations, err := h.ai.Allocate(r.Context(), campaign.Repo, contributors, campaign.PoolAmount)
+	result, err := h.calculateAllocations(r.Context(), campaign)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "AI allocation failed")
 		return
 	}
 
 	writeJSON(w, http.StatusOK, models.FinalizePreviewResponse{
-		CampaignID:   campaign.CampaignID,
-		Repo:         campaign.Repo,
-		Contributors: contributors,
-		Allocations:  allocations,
-		AIModel:      h.ai.Model(),
+		CampaignID:     campaign.CampaignID,
+		Repo:           campaign.Repo,
+		Contributors:   result.contributors,
+		Allocations:    result.allocations,
+		AIModel:        h.ai.Model(),
+		AllocationMode: result.allocationMode,
 	})
 }
 
 func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	user, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
 	campaign, err := h.loadCampaign(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -304,50 +351,27 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if campaign.State == models.StateFinalized || campaign.State == models.StateCompleted {
-		writeError(w, http.StatusConflict, "campaign already finalized")
+	if err := requireCampaignOwner(user, campaign, "finalize"); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
-	if campaign.State != models.StateFunded {
-		writeError(w, http.StatusBadRequest, "campaign must be funded before finalization")
+	if status, msg := validateFinalizeState(campaign); status != http.StatusOK {
+		writeError(w, status, msg)
+		return
+	}
+	if h.solana == nil || !h.solana.IsConfigured() {
+		writeError(w, http.StatusServiceUnavailable, "campaign finalization is unavailable until Solana is configured")
 		return
 	}
 
-	if time.Now().Before(campaign.Deadline) {
-		writeError(w, http.StatusConflict, "campaign deadline has not been reached yet")
-		return
-	}
-
-	contributors, err := h.github.FetchContributors(r.Context(), campaign.Repo)
+	result, err := h.calculateAllocations(r.Context(), campaign)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to fetch contributor data from GitHub")
+		writeError(w, http.StatusInternalServerError, "AI allocation failed")
 		return
 	}
 
-	contributorPRDiffs, err := h.github.FetchContributorsPRDiffs(r.Context(), campaign.Repo, campaign.CreatedAt.Unix())
-	if err != nil {
-		log.Printf("github: PR diff fetch failed (%v), falling back to metric-based allocation", err)
-	}
-
-	var allocations []models.Allocation
-	if len(contributorPRDiffs) > 0 {
-		allocations, err = h.ai.EvaluateCodeImpact(r.Context(), campaign.Repo, contributorPRDiffs, campaign.PoolAmount)
-		if err != nil {
-			log.Printf("ai: code impact evaluation failed (%v), falling back to metric-based allocation", err)
-			allocations = nil
-		}
-	}
-
-	if allocations == nil {
-		allocations, err = h.ai.Allocate(r.Context(), campaign.Repo, contributors, campaign.PoolAmount)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "AI allocation failed")
-			return
-		}
-	}
-
-	solanaInputs := make([]solana.AllocationInput, len(allocations))
-	for i, a := range allocations {
+	solanaInputs := make([]solana.AllocationInput, len(result.allocations))
+	for i, a := range result.allocations {
 		solanaInputs[i] = solana.AllocationInput{
 			Contributor: a.Contributor,
 			Percentage:  a.Percentage,
@@ -356,6 +380,10 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 
 	txSig, err := h.solana.FinalizeCampaign(r.Context(), campaign.CampaignID, solanaInputs)
 	if err != nil {
+		if errors.Is(err, solana.ErrNotConfigured) {
+			writeError(w, http.StatusServiceUnavailable, "campaign finalization is unavailable until Solana is configured")
+			return
+		}
 		log.Printf("solana finalize_campaign failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to finalize on-chain")
 		return
@@ -363,7 +391,7 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	campaign.State = models.StateFinalized
-	campaign.Allocations = allocations
+	campaign.Allocations = result.allocations
 	campaign.FinalizedAt = &now
 	campaign.TxSignature = txSig
 
@@ -375,9 +403,10 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusAccepted, models.FinalizeResponse{
 					CampaignID:        campaign.CampaignID,
 					State:             models.StateFinalized,
-					Allocations:       allocations,
+					Allocations:       result.allocations,
 					TxSignature:       txSig,
 					SolanaExplorerURL: explorerURL,
+					AllocationMode:    result.allocationMode,
 				})
 				return
 			}
@@ -387,9 +416,10 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusAccepted, models.FinalizeResponse{
 				CampaignID:        campaign.CampaignID,
 				State:             models.StateFinalized,
-				Allocations:       allocations,
+				Allocations:       result.allocations,
 				TxSignature:       txSig,
 				SolanaExplorerURL: explorerURL,
+				AllocationMode:    result.allocationMode,
 			})
 			return
 		}
@@ -400,9 +430,10 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, models.FinalizeResponse{
 		CampaignID:        campaign.CampaignID,
 		State:             models.StateFinalized,
-		Allocations:       allocations,
+		Allocations:       result.allocations,
 		TxSignature:       txSig,
 		SolanaExplorerURL: explorerURL,
+		AllocationMode:    result.allocationMode,
 	})
 
 	go func() {
@@ -413,8 +444,8 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 		}()
 		ctx := context.Background()
 		appClient := githubapp.NewClient(h.config.GitHubAppID, h.config.GitHubAppPrivateKey)
-		appAllocations := make([]githubapp.Allocation, len(allocations))
-		for i, a := range allocations {
+		appAllocations := make([]githubapp.Allocation, len(result.allocations))
+		for i, a := range result.allocations {
 			appAllocations[i] = githubapp.Allocation{
 				Contributor: a.Contributor,
 				Percentage:  a.Percentage,
@@ -447,6 +478,10 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 
 	if campaign.State != models.StateFinalized && campaign.State != models.StateCompleted {
 		writeError(w, http.StatusConflict, "campaign is not finalized")
+		return
+	}
+	if h.solana == nil || !h.solana.IsConfigured() {
+		writeError(w, http.StatusServiceUnavailable, "claims are unavailable until Solana is configured")
 		return
 	}
 
@@ -511,6 +546,10 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 
 	txSig, err := h.solana.ClaimAllocation(r.Context(), campaign.CampaignID, req.ContributorGithub, req.WalletAddress)
 	if err != nil {
+		if errors.Is(err, solana.ErrNotConfigured) {
+			writeError(w, http.StatusServiceUnavailable, "claims are unavailable until Solana is configured")
+			return
+		}
 		log.Printf("solana claim failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to claim on-chain")
 		return
@@ -625,7 +664,7 @@ type healthResponse struct {
 func (h *Handlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, healthResponse{
 		Status:  "ok",
-		Solana:  h.solana.IsConfigured(),
+		Solana:  h.solana != nil && h.solana.IsConfigured(),
 		GitHub:  h.github != nil,
 		AIModel: h.ai.Model(),
 		Store:   h.store != nil,
@@ -633,16 +672,43 @@ func (h *Handlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) listCampaigns(ctx context.Context) ([]*models.Campaign, error) {
-	if h.solana != nil && h.solana.IsConfigured() {
-		campaigns, err := h.solana.ListCampaigns(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if campaigns != nil {
-			return campaigns, nil
-		}
+	storedCampaigns := h.store.List()
+	if h.solana == nil || !h.solana.IsConfigured() {
+		return storedCampaigns, nil
 	}
-	return h.store.List(), nil
+
+	onChainCampaigns, err := h.solana.ListCampaigns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if onChainCampaigns == nil {
+		return storedCampaigns, nil
+	}
+
+	storedByID := make(map[string]*models.Campaign, len(storedCampaigns))
+	for _, campaign := range storedCampaigns {
+		storedByID[campaign.CampaignID] = campaign
+	}
+
+	mergedCampaigns := make([]*models.Campaign, 0, len(onChainCampaigns)+len(storedCampaigns))
+	for _, onChainCampaign := range onChainCampaigns {
+		if storedCampaign, ok := storedByID[onChainCampaign.CampaignID]; ok {
+			mergedCampaigns = append(mergedCampaigns, mergeCampaignWithChainData(storedCampaign, onChainCampaign))
+			delete(storedByID, onChainCampaign.CampaignID)
+			continue
+		}
+		mergedCampaigns = append(mergedCampaigns, onChainCampaign)
+	}
+
+	for _, storedCampaign := range storedByID {
+		mergedCampaigns = append(mergedCampaigns, storedCampaign)
+	}
+
+	sort.Slice(mergedCampaigns, func(i, j int) bool {
+		return mergedCampaigns[i].CreatedAt.After(mergedCampaigns[j].CreatedAt)
+	})
+
+	return mergedCampaigns, nil
 }
 
 func (h *Handlers) loadCampaign(ctx context.Context, id string) (*models.Campaign, error) {
@@ -711,6 +777,67 @@ func mergeCampaignWithChainData(stored, onChain *models.Campaign) *models.Campai
 	}
 
 	return &merged
+}
+
+func requireCampaignOwner(user *store.User, campaign *models.Campaign, action string) error {
+	if campaign.OwnerGitHubUsername == "" {
+		return errors.New("manual campaign management is unavailable for campaigns without a stored creator")
+	}
+	if !strings.EqualFold(campaign.OwnerGitHubUsername, user.GitHubUsername) {
+		return fmt.Errorf("only @%s can %s this campaign", campaign.OwnerGitHubUsername, action)
+	}
+	return nil
+}
+
+func validateFinalizeState(campaign *models.Campaign) (int, string) {
+	if campaign.State == models.StateFinalized || campaign.State == models.StateCompleted {
+		return http.StatusConflict, "campaign already finalized"
+	}
+	if campaign.State != models.StateFunded {
+		return http.StatusBadRequest, "campaign must be funded before finalization"
+	}
+	if time.Now().Before(campaign.Deadline) {
+		return http.StatusConflict, "campaign deadline has not been reached yet"
+	}
+	return http.StatusOK, ""
+}
+
+func (h *Handlers) calculateAllocations(ctx context.Context, campaign *models.Campaign) (*allocationResult, error) {
+	contributors, err := h.github.FetchContributors(ctx, campaign.Repo)
+	if err != nil {
+		return nil, fmt.Errorf("fetch contributors: %w", err)
+	}
+
+	contributorPRDiffs, err := h.github.FetchContributorsPRDiffs(ctx, campaign.Repo, campaign.CreatedAt.Unix())
+	if err != nil {
+		log.Printf("github: PR diff fetch failed (%v), falling back to metric-based allocation", err)
+	}
+
+	var allocations []models.Allocation
+	allocationMode := models.AllocationModeMetrics
+	if len(contributorPRDiffs) > 0 {
+		allocations, err = h.ai.EvaluateCodeImpact(ctx, campaign.Repo, contributorPRDiffs, campaign.PoolAmount)
+		if err != nil {
+			log.Printf("ai: code impact evaluation failed (%v), falling back to metric-based allocation", err)
+			allocations = nil
+		} else {
+			allocationMode = models.AllocationModeCodeImpact
+		}
+	}
+
+	if allocations == nil {
+		allocations, err = h.ai.Allocate(ctx, campaign.Repo, contributors, campaign.PoolAmount)
+		if err != nil {
+			return nil, err
+		}
+		allocationMode = models.AllocationModeMetrics
+	}
+
+	return &allocationResult{
+		contributors:   contributors,
+		allocations:    allocations,
+		allocationMode: allocationMode,
+	}, nil
 }
 
 func (h *Handlers) GetGitHubAuthURL(w http.ResponseWriter, r *http.Request) {

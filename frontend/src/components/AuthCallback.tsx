@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
+import { useAuth } from "../hooks/useAuth";
 
 export function AuthCallback() {
   const navigate = useNavigate();
+  const { completeAuth } = useAuth();
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -22,7 +24,7 @@ export function AuthCallback() {
       try {
         const state = urlParams.get("state") || undefined;
         const response = await api.githubCallback({ code, state });
-        localStorage.setItem("token", response.token);
+        completeAuth(response);
         if (!cancelled) navigate("/");
       } catch (err) {
         console.error("Auth callback failed:", err);
@@ -38,7 +40,7 @@ export function AuthCallback() {
       cancelled = true;
       clearTimeout(redirectTimer);
     };
-  }, [navigate]);
+  }, [completeAuth, navigate]);
 
   if (error) {
     return (

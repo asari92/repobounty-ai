@@ -9,6 +9,7 @@ export interface Campaign {
   state: "created" | "funded" | "finalized" | "completed";
   authority: string;
   sponsor: string;
+  owner_github_username?: string;
   allocations: Allocation[];
   created_at: string;
   finalized_at?: string;
@@ -42,6 +43,8 @@ export interface CreateCampaignRequest {
 
 export interface CreateCampaignResponse {
   campaign_id: string;
+  campaign_pda: string;
+  vault_address: string;
   repo: string;
   pool_amount: number;
   deadline: string;
@@ -55,14 +58,16 @@ export interface FinalizePreviewResponse {
   contributors: Contributor[];
   allocations: Allocation[];
   ai_model: string;
+  allocation_mode: "code_impact" | "metrics";
 }
 
 export interface FinalizeResponse {
   campaign_id: string;
-  state: "finalized";
+  state: "finalized" | "completed";
   allocations: Allocation[];
   tx_signature: string;
   solana_explorer_url: string;
+  allocation_mode?: "code_impact" | "metrics";
 }
 
 export interface ApiError {
@@ -108,4 +113,12 @@ export interface FundTransactionResponse {
   transaction: string;
   campaign_pda: string;
   vault_address: string;
+}
+
+export interface HealthResponse {
+  status: string;
+  solana: boolean;
+  github: boolean;
+  ai_model: string;
+  store: boolean;
 }

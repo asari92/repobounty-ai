@@ -31,6 +31,7 @@ export default function CampaignDetails() {
   const [previewing, setPreviewing] = useState(false);
   const [claiming, setClaiming] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [solanaReady, setSolanaReady] = useState(true);
 
   useEffect(() => {
     if (!id) return;
@@ -48,6 +49,22 @@ export default function CampaignDetails() {
       });
     return () => { cancelled = true; };
   }, [id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getHealth()
+      .then((health) => {
+        if (!cancelled) {
+          setSolanaReady(health.solana);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handlePreview() {
     if (!id) return;
@@ -84,23 +101,16 @@ export default function CampaignDetails() {
       if (!publicKey) setError("Connect wallet first");
       return;
     }
+    if (!solanaReady) {
+      setError("Claims are unavailable until the backend is connected to Solana.");
+      return;
+    }
     setClaiming(contributor);
     setError(null);
     try {
       await api.claimAllocation(id, contributor, publicKey.toBase58());
-      setCampaign((prev) => {
-        if (!prev) return null;
-        return {
-          ...prev,
-          allocations: prev.allocations.map((a) =>
-            a.contributor === contributor
-              ? { ...a, claimed: true, claimant_wallet: publicKey?.toBase58() || "" }
-              : a
-          ),
-          total_claimed: prev.total_claimed + (prev.allocations.find((a) => a.contributor === contributor)?.amount || 0),
-          state: prev.allocations.every((a) => a.contributor === contributor ? true : a.claimed) ? "completed" : prev.state,
-        };
-      });
+      const updated = await api.getCampaign(id);
+      setCampaign(updated);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Claim failed");
     } finally {
@@ -130,8 +140,13 @@ export default function CampaignDetails() {
   const isFinalized = campaign.state === "finalized" || campaign.state === "completed";
   const isCompleted = campaign.state === "completed";
   const isPastDeadline = new Date(campaign.deadline) < new Date();
-  const canFinalize = campaign.state === "funded" && isPastDeadline;
+  const isOwner = user?.github_username === campaign.owner_github_username;
+  const canShowFinalizeCard = campaign.state === "funded" && isPastDeadline;
   const stateConfig = getStateConfig(campaign.state, isPastDeadline);
+  const allocationModeLabel =
+    preview?.allocation_mode === "code_impact"
+      ? "PR diff impact scoring"
+      : "Contributor metrics fallback";
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -153,6 +168,11 @@ export default function CampaignDetails() {
             {campaign.sponsor && campaign.sponsor !== "" && (
               <p className="text-xs text-gray-500 mt-0.5">
                 Sponsored by {campaign.sponsor.slice(0, 8)}...
+              </p>
+            )}
+            {campaign.owner_github_username && (
+              <p className="text-xs text-gray-500 mt-0.5">
+                Created by @{campaign.owner_github_username}
               </p>
             )}
           </div>
@@ -243,31 +263,64 @@ export default function CampaignDetails() {
       )}
 
       {/* Finalize Actions */}
-      {canFinalize && (
+      {canShowFinalizeCard && (
         <div className="card mb-6">
           <h2 className="text-lg font-semibold mb-4">Finalize Campaign</h2>
           <p className="text-sm text-gray-400 mb-4">
-            The deadline has passed. Fetch contributor data and generate
-            AI-powered reward allocations.
+            The deadline has passed. Preview and finalization follow the same
+            off-chain allocation logic that the backend will use for the actual
+            on-chain finalize call.
           </p>
-          <div className="flex gap-3">
-            <button
-              onClick={handlePreview}
-              disabled={previewing}
-              className="btn-secondary text-sm"
-            >
-              {previewing ? "Loading preview..." : "Preview Allocations"}
-            </button>
-            {preview && (
-              <button
-                onClick={handleFinalize}
-                disabled={finalizing}
-                className="btn-primary text-sm"
-              >
-                {finalizing ? "Finalizing on Solana..." : "Finalize on Solana"}
-              </button>
-            )}
-          </div>
+          {!campaign.owner_github_username ? (
+            <p className="text-sm text-yellow-200">
+              Manual finalize is unavailable for this legacy campaign because no
+              creator account was stored. The backend auto-finalize worker is
+              the remaining safe path.
+            </p>
+          ) : !user ? (
+            <p className="text-sm text-yellow-200">
+              Log in as @{campaign.owner_github_username} to run preview or
+              manual finalize. Otherwise wait for backend-controlled
+              finalization.
+            </p>
+          ) : !isOwner ? (
+            <p className="text-sm text-yellow-200">
+              Only @{campaign.owner_github_username} can run manual preview or
+              finalize for this campaign.
+            </p>
+          ) : (
+            <div className="space-y-4">
+              {!solanaReady && (
+                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 text-sm text-yellow-200">
+                  The backend is not connected to Solana right now. You can
+                  still inspect a preview, but on-chain finalization is
+                  disabled until the authority is configured again.
+                </div>
+              )}
+              <div className="flex gap-3">
+                <button
+                  onClick={handlePreview}
+                  disabled={previewing}
+                  className="btn-secondary text-sm"
+                >
+                  {previewing ? "Loading preview..." : "Preview Allocations"}
+                </button>
+                {preview && (
+                  <button
+                    onClick={handleFinalize}
+                    disabled={finalizing || !solanaReady}
+                    className="btn-primary text-sm"
+                  >
+                    {finalizing
+                      ? "Finalizing on Solana..."
+                      : solanaReady
+                        ? "Finalize on Solana"
+                        : "Solana Backend Required"}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -276,7 +329,7 @@ export default function CampaignDetails() {
         <div className="card mb-6 border-yellow-500/30">
           <h2 className="text-lg font-semibold mb-1">AI Allocation Preview</h2>
           <p className="text-xs text-gray-400 mb-4">
-            Model: {preview.ai_model}
+            Model: {preview.ai_model} | Source: {allocationModeLabel}
           </p>
 
           {preview.contributors.length > 0 && (
@@ -331,6 +384,16 @@ export default function CampaignDetails() {
       {isFinalized && campaign.allocations.length > 0 && (
         <div className="card">
           <h2 className="text-lg font-semibold mb-4">Final Allocations (On-Chain)</h2>
+          <p className="text-xs text-gray-500 mb-4">
+            Claims send SOL to the wallet currently connected in Phantom. Saved
+            profile wallets are informational only in this MVP.
+          </p>
+          {!solanaReady && (
+            <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 text-sm text-yellow-200 mb-4">
+              The backend is not connected to Solana, so claiming is currently
+              disabled.
+            </div>
+          )}
           <div className="space-y-4">
             {campaign.allocations.map((a) => {
               const isOwnAllocation = user?.github_username === a.contributor;
@@ -368,6 +431,13 @@ export default function CampaignDetails() {
                           className="btn-primary text-xs py-1.5 px-3"
                         >
                           Connect Wallet to Claim
+                        </button>
+                      ) : !solanaReady ? (
+                        <button
+                          disabled
+                          className="btn-primary text-xs py-1.5 px-3 opacity-60 cursor-not-allowed"
+                        >
+                          Solana Backend Required
                         </button>
                       ) : (
                         <button

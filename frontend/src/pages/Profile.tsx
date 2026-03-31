@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { useWallet } from "@solana/wallet-adapter-react";
 import { useAuth } from "../hooks/useAuth";
 import { api } from "../api/client";
 import { formatSOL } from "../utils/campaign";
 import type { ClaimItem } from "../types";
 
 export default function Profile() {
+  const { publicKey } = useWallet();
   const { user, isLoading } = useAuth();
   const [claims, setClaims] = useState<ClaimItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,11 +73,22 @@ export default function Profile() {
             <h2 className="text-xl font-bold">@{user.github_username}</h2>
             {user.wallet_address && (
               <p className="text-sm text-gray-400 font-mono">
-                {user.wallet_address.slice(0, 6)}...{user.wallet_address.slice(-6)}
+                Saved profile wallet: {user.wallet_address.slice(0, 6)}...
+                {user.wallet_address.slice(-6)}
+              </p>
+            )}
+            {publicKey && (
+              <p className="text-sm text-solana-green font-mono">
+                Connected claim wallet: {publicKey.toBase58().slice(0, 6)}...
+                {publicKey.toBase58().slice(-6)}
               </p>
             )}
           </div>
         </div>
+        <p className="text-xs text-gray-500">
+          Claims use the wallet currently connected on the campaign page. Saved
+          profile wallets are informational only in this MVP.
+        </p>
       </div>
 
       <div className="card">

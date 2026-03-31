@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import type { User } from "../types";
+import type { GitHubAuthResponse, User } from "../types";
 import { api } from "../api/client";
 
 interface AuthContextType {
@@ -9,6 +9,7 @@ interface AuthContextType {
   logout: () => void;
   linkWallet: (walletAddress: string) => Promise<User>;
   refreshUser: () => Promise<void>;
+  completeAuth: (session: GitHubAuthResponse) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -73,8 +74,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(userData);
   }, []);
 
+  const completeAuth = useCallback((session: GitHubAuthResponse) => {
+    localStorage.setItem("token", session.token);
+    setUser(session.user);
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout, linkWallet, refreshUser }}>
+    <AuthContext.Provider value={{ user, isLoading, login, logout, linkWallet, refreshUser, completeAuth }}>
       {children}
     </AuthContext.Provider>
   );
