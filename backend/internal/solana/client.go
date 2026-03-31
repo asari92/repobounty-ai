@@ -15,6 +15,7 @@ import (
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/rpc"
+	rpcjson "github.com/gagliardetto/solana-go/rpc/jsonrpc"
 	"github.com/mr-tron/base58"
 	"github.com/repobounty/repobounty-ai/internal/models"
 )
@@ -453,6 +454,23 @@ func (c *Client) sendTransaction(ctx context.Context, instruction solana.Instruc
 
 	sig, err := c.rpcClient.SendTransaction(ctx, tx)
 	if err != nil {
+		var rpcErr *rpcjson.RPCError
+		if errors.As(err, &rpcErr) {
+			dataJSON, marshalErr := json.Marshal(rpcErr.Data)
+			if marshalErr == nil {
+				return "", fmt.Errorf(
+					"send transaction: rpc code=%d message=%s data=%s",
+					rpcErr.Code,
+					rpcErr.Message,
+					string(dataJSON),
+				)
+			}
+			return "", fmt.Errorf(
+				"send transaction: rpc code=%d message=%s",
+				rpcErr.Code,
+				rpcErr.Message,
+			)
+		}
 		return "", fmt.Errorf("send transaction: %w", err)
 	}
 
