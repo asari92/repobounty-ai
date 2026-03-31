@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy");
+declare_id!("97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo");
 
 /// Maximum repo identifier length (e.g. "owner/repo-name").
 const MAX_REPO_LEN: usize = 64;

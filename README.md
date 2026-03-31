@@ -137,7 +137,7 @@ MODEL=nvidia/nemotron-3-super-120b-a12b:free
 
 SOLANA_RPC_URL=https://api.devnet.solana.com
 SOLANA_PRIVATE_KEY=<backend authority keypair>
-PROGRAM_ID=GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy
+PROGRAM_ID=97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo
 
 FRONTEND_URL=http://localhost:3000
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
@@ -166,7 +166,7 @@ anchor test
 ## On-Chain Notes
 
 - Program ID:
-  `GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy`
+  `97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo`
 - Campaign PDA seeds:
   `["campaign", campaign_id]`
 - Vault PDA seeds:

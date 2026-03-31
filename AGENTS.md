@@ -148,7 +148,7 @@ Use alias for package name conflicts: `handler "github.com/repobounty/repobounty
 - Allocations use basis points: percentages always sum to 10000 (100%).
 - Max 10 allocations per campaign. No duplicate contributors in a single allocation set.
 - Campaign PDA seeds: `["campaign", authority_pubkey, campaign_id_bytes]`.
-- Program ID: `GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy`.
+- Program ID: `97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo`.
 - Campaign states: `created` → `finalized` (one-way transition).
 - The backend works without external keys — mock data and deterministic allocation kick in automatically.
 
