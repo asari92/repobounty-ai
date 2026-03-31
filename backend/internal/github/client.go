@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -172,6 +173,92 @@ func (c *Client) doGet(ctx context.Context, url string) ([]byte, error) {
 	}
 
 	return io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+}
+
+// CheckRepoExists returns true if the repository exists and is accessible.
+func (c *Client) CheckRepoExists(ctx context.Context, repo string) (bool, error) {
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 {
+		return false, fmt.Errorf("invalid repo format: %s", repo)
+	}
+	owner, name := parts[0], parts[1]
+
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s", owner, name)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("request github repo: %w", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		return false, fmt.Errorf("github API returned %d", resp.StatusCode)
+	}
+}
+
+// CreateIssue opens an issue in the given repository and returns its number.
+// Returns an error if the token is not configured or the request fails.
+func (c *Client) CreateIssue(ctx context.Context, repo, title, body string) (int, error) {
+	if c.token == "" {
+		return 0, fmt.Errorf("github token not configured")
+	}
+
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 {
+		return 0, fmt.Errorf("invalid repo format: %s", repo)
+	}
+	owner, name := parts[0], parts[1]
+
+	payload, err := json.Marshal(struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}{Title: title, Body: body})
+	if err != nil {
+		return 0, err
+	}
+
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues", owner, name)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("create issue: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("create issue: %d %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Number int `json:"number"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("decode issue response: %w", err)
+	}
+
+	return result.Number, nil
 }
 
 func mockContributors() []models.Contributor {

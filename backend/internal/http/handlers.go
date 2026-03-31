@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,6 +93,19 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "repo must be in owner/repo format")
 		return
 	}
+
+	// Validate that the repository actually exists on GitHub.
+	exists, err := h.github.CheckRepoExists(r.Context(), req.Repo)
+	if err != nil {
+		log.Printf("github: repo existence check failed for %s: %v", req.Repo, err)
+		writeError(w, http.StatusBadGateway, "failed to verify repository on GitHub")
+		return
+	}
+	if !exists {
+		writeError(w, http.StatusUnprocessableEntity, "repository not found on GitHub")
+		return
+	}
+
 	if req.PoolAmount == 0 {
 		writeError(w, http.StatusBadRequest, "pool_amount must be greater than 0")
 		return
@@ -147,6 +161,46 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to store campaign")
 		return
 	}
+
+	// Notify the repository by opening an issue — non-blocking.
+	go func(camp *models.Campaign) {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("panic in CreateCampaign issue goroutine: %v", r)
+			}
+		}()
+		ctx := context.Background()
+		poolSOL := fmt.Sprintf("%.4f", float64(camp.PoolAmount)/1e9)
+		issueTitle := fmt.Sprintf("🚀 RepoBounty Campaign Started — %s", camp.CampaignID)
+		issueBody := fmt.Sprintf(
+			"## A new bounty campaign has been created for this repository!\n\n"+
+				"| Field | Value |\n|---|---|\n"+
+				"| Campaign ID | `%s` |\n"+
+				"| Pool Amount | **%s SOL** |\n"+
+				"| Deadline | `%s` |\n\n"+
+				"Contributors will be automatically analyzed after the deadline. "+
+				"RepoBounty AI will evaluate code impact and distribute rewards accordingly.\n\n"+
+				"[🔗 View Campaign Details](%s/campaign/%s)\n\n"+
+				"---\n*Powered by [RepoBounty AI](%s)*",
+			camp.CampaignID,
+			poolSOL,
+			camp.Deadline.UTC().Format("January 02, 2006 15:04 UTC"),
+			h.config.FrontendURL, camp.CampaignID,
+			h.config.FrontendURL,
+		)
+		appClient := githubapp.NewClient(h.config.GitHubAppID, h.config.GitHubAppPrivateKey)
+		if issueNum, ok := githubapp.TryCreateIssue(ctx, appClient, camp.Repo, issueTitle, issueBody); ok {
+			log.Printf("githubapp: created campaign announcement issue #%d in %s", issueNum, camp.Repo)
+			return
+		}
+		// Fall back to PAT
+		issueNum, err := h.github.CreateIssue(ctx, camp.Repo, issueTitle, issueBody)
+		if err != nil {
+			log.Printf("github: failed to create campaign issue in %s: %v", camp.Repo, err)
+			return
+		}
+		log.Printf("github: created campaign announcement issue #%d in %s", issueNum, camp.Repo)
+	}(campaign)
 
 	writeJSON(w, http.StatusCreated, models.CreateCampaignResponse{
 		CampaignID:   campaign.CampaignID,
@@ -397,6 +451,8 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 			h.config.FrontendURL,
 		)
 	}()
+
+	go h.postFinalizeIssue(campaign, allocations)
 }
 
 func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
@@ -784,4 +840,57 @@ func generateState() string {
 		panic("crypto/rand failed: " + err.Error())
 	}
 	return hex.EncodeToString(b)
+}
+
+// postFinalizeIssue creates an issue in the repo announcing the allocation results
+// and @-mentioning every selected contributor. Runs in a background goroutine.
+func (h *Handlers) postFinalizeIssue(campaign *models.Campaign, allocations []models.Allocation) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("panic in postFinalizeIssue: %v", r)
+		}
+	}()
+
+	ctx := context.Background()
+
+	var rows strings.Builder
+	var mentions strings.Builder
+	rows.WriteString("| Contributor | Share | Amount |\n|---|---|---|\n")
+	for i, a := range allocations {
+		amountSOL := fmt.Sprintf("%.4f", float64(a.Amount)/1e9)
+		pct := fmt.Sprintf("%.1f%%", float64(a.Percentage)/100)
+		rows.WriteString(fmt.Sprintf("| @%s | %s | %s SOL |\n", a.Contributor, pct, amountSOL))
+		if i > 0 {
+			mentions.WriteString(", ")
+		}
+		mentions.WriteString("@" + a.Contributor)
+	}
+
+	claimURL := fmt.Sprintf("%s/campaign/%s", h.config.FrontendURL, campaign.CampaignID)
+
+	issueTitle := fmt.Sprintf("🏆 RepoBounty Campaign %s — Rewards Distributed!", campaign.CampaignID)
+	issueBody := fmt.Sprintf(
+		"## The AI has analyzed contributions and finalized the reward allocation!\n\n"+
+			"### Allocation Results\n\n%s\n"+
+			"%s — your rewards are ready to claim! 🎉\n\n"+
+			"[🔗 Claim your rewards](%s)\n\n"+
+			"---\n*Powered by [RepoBounty AI](%s)*",
+		rows.String(),
+		mentions.String(),
+		claimURL,
+		h.config.FrontendURL,
+	)
+
+	appClient := githubapp.NewClient(h.config.GitHubAppID, h.config.GitHubAppPrivateKey)
+	if issueNum, ok := githubapp.TryCreateIssue(ctx, appClient, campaign.Repo, issueTitle, issueBody); ok {
+		log.Printf("githubapp: created finalize announcement issue #%d in %s", issueNum, campaign.Repo)
+		return
+	}
+	// Fall back to PAT
+	issueNum, err := h.github.CreateIssue(ctx, campaign.Repo, issueTitle, issueBody)
+	if err != nil {
+		log.Printf("github: failed to create finalize issue in %s: %v", campaign.Repo, err)
+		return
+	}
+	log.Printf("github: created finalize announcement issue #%d in %s", issueNum, campaign.Repo)
 }

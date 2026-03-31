@@ -381,3 +381,82 @@ type Allocation struct {
 	Amount      uint64
 	Claimed     bool
 }
+
+// createIssueWithToken opens a GitHub issue using a pre-obtained installation access token.
+func (c *Client) createIssueWithToken(ctx context.Context, token, repo, title, body string) (int, error) {
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 {
+		return 0, fmt.Errorf("invalid repo format: %s", repo)
+	}
+	owner, name := parts[0], parts[1]
+
+	payload, err := json.Marshal(struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}{Title: title, Body: body})
+	if err != nil {
+		return 0, err
+	}
+
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues", owner, name)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("create issue: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("create issue: %d %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Number int `json:"number"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("decode issue response: %w", err)
+	}
+
+	return result.Number, nil
+}
+
+// TryCreateIssue attempts to open a repo issue via GitHub App installation token.
+// Returns (issueNumber, true) on success.
+// Returns (0, false) when the App is not configured, not installed on this repo,
+// or any error occurs — so the caller can fall back to a PAT.
+func TryCreateIssue(ctx context.Context, client *Client, repo, title, body string) (int, bool) {
+	if !client.IsConfigured() {
+		return 0, false
+	}
+
+	installation, err := client.GetAppInstallation(ctx, repo)
+	if err != nil {
+		log.Printf("githubapp: TryCreateIssue — get installation for %s: %v", repo, err)
+		return 0, false
+	}
+	if installation == nil {
+		return 0, false
+	}
+
+	token, err := client.GetInstallationToken(ctx, installation.ID)
+	if err != nil {
+		log.Printf("githubapp: TryCreateIssue — get token for %s: %v", repo, err)
+		return 0, false
+	}
+
+	num, err := client.createIssueWithToken(ctx, token, repo, title, body)
+	if err != nil {
+		log.Printf("githubapp: TryCreateIssue — create issue in %s: %v", repo, err)
+		return 0, false
+	}
+
+	return num, true
+}
