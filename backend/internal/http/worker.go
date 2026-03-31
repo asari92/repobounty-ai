@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -70,6 +71,14 @@ func autoFinalize(
 	retries map[string]int,
 ) {
 	campaigns := campaignStore.List()
+	if solClient != nil && solClient.IsConfigured() {
+		onChainCampaigns, err := solClient.ListCampaigns(ctx)
+		if err != nil {
+			logger.Warn("auto-finalize: failed to list on-chain campaigns, using store snapshot", zap.Error(err))
+		} else if onChainCampaigns != nil {
+			campaigns = onChainCampaigns
+		}
+	}
 	now := time.Now()
 
 	for _, c := range campaigns {
@@ -153,11 +162,21 @@ func autoFinalize(
 		c.TxSignature = txSig
 
 		if err := campaignStore.Update(c); err != nil {
-			logger.Error("auto-finalize: store update failed",
-				zap.String("campaign_id", c.CampaignID),
-				zap.Error(err),
-			)
-			continue
+			if errors.Is(err, store.ErrNotFound) {
+				if createErr := campaignStore.Create(c); createErr != nil {
+					logger.Error("auto-finalize: store create failed after on-chain finalization",
+						zap.String("campaign_id", c.CampaignID),
+						zap.Error(createErr),
+					)
+					continue
+				}
+			} else {
+				logger.Error("auto-finalize: store update failed",
+					zap.String("campaign_id", c.CampaignID),
+					zap.Error(err),
+				)
+				continue
+			}
 		}
 
 		delete(retries, c.CampaignID) // clear retry counter on success

@@ -30,6 +30,39 @@ func NewClientWithEnv(token string, isProduction bool) *Client {
 	return &Client{token: token, httpClient: &http.Client{Timeout: 30 * time.Second}, isProduction: isProduction}
 }
 
+func (c *Client) RepositoryExists(ctx context.Context, repo string) (bool, error) {
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 {
+		return false, fmt.Errorf("invalid repo format, expected owner/repo: %s", repo)
+	}
+
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s", parts[0], parts[1])
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("request %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return false, fmt.Errorf("github repo lookup %s returned %d: %s", url, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+}
+
 func (c *Client) FetchContributors(ctx context.Context, repo string) ([]models.Contributor, error) {
 	parts := strings.SplitN(repo, "/", 2)
 	if len(parts) != 2 {

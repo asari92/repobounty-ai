@@ -29,6 +29,8 @@ import (
 var repoPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$`)
 var base58Pattern = regexp.MustCompile(`^[1-9A-HJ-NP-Za-km-z]{32,44}$`)
 
+const minCampaignLeadTime = 24 * time.Hour
+
 func isValidSolanaAddress(addr string) bool {
 	return base58Pattern.MatchString(addr)
 }
@@ -95,7 +97,11 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "pool_amount must be greater than 0")
 		return
 	}
-	if req.SponsorWallet != "" && !isValidSolanaAddress(req.SponsorWallet) {
+	if req.SponsorWallet == "" {
+		writeError(w, http.StatusBadRequest, "sponsor_wallet is required")
+		return
+	}
+	if !isValidSolanaAddress(req.SponsorWallet) {
 		writeError(w, http.StatusBadRequest, "invalid sponsor wallet address")
 		return
 	}
@@ -105,7 +111,37 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "deadline must be RFC3339 format")
 		return
 	}
-	if deadline.Before(time.Now()) {
+	now := time.Now().UTC()
+	if deadline.Before(now.Add(minCampaignLeadTime)) {
+		writeError(w, http.StatusBadRequest, "deadline must be at least 24 hours in the future")
+		return
+	}
+
+	repoExists, err := h.github.RepositoryExists(r.Context(), req.Repo)
+	if err != nil {
+		log.Printf("github repository lookup failed for %s: %v", req.Repo, err)
+		writeError(w, http.StatusBadGateway, "failed to verify repository on GitHub")
+		return
+	}
+	if !repoExists {
+		writeError(w, http.StatusBadRequest, "repository was not found or is not public")
+		return
+	}
+
+	if h.solana != nil && h.solana.IsConfigured() {
+		balance, err := h.solana.GetBalance(r.Context(), req.SponsorWallet)
+		if err != nil {
+			log.Printf("solana balance lookup failed for %s: %v", req.SponsorWallet, err)
+			writeError(w, http.StatusBadGateway, "failed to verify sponsor wallet balance")
+			return
+		}
+		if balance < req.PoolAmount {
+			writeError(w, http.StatusBadRequest, "sponsor wallet does not have enough SOL to fund this campaign")
+			return
+		}
+	}
+
+	if deadline.Before(now) {
 		writeError(w, http.StatusBadRequest, "deadline must be in the future")
 		return
 	}
@@ -126,7 +162,6 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now()
 	campaign := &models.Campaign{
 		CampaignID:   campaignID,
 		CampaignPDA:  campaignPDA,
@@ -177,7 +212,7 @@ func (h *Handlers) FundTx(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	campaign, err := h.store.Get(id)
+	campaign, err := h.loadCampaign(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "campaign not found")
@@ -611,22 +646,71 @@ func (h *Handlers) listCampaigns(ctx context.Context) ([]*models.Campaign, error
 }
 
 func (h *Handlers) loadCampaign(ctx context.Context, id string) (*models.Campaign, error) {
-	campaign, err := h.store.Get(id)
-	if err == nil {
-		return campaign, nil
-	}
-	if !errors.Is(err, store.ErrNotFound) {
+	storedCampaign, err := h.store.Get(id)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, err
 	}
 
 	if h.solana != nil && h.solana.IsConfigured() {
-		campaign, err := h.solana.GetCampaign(ctx, id)
+		onChainCampaign, err := h.solana.GetCampaign(ctx, id)
 		if err == nil {
-			return campaign, nil
+			if storedCampaign == nil {
+				return onChainCampaign, nil
+			}
+			mergedCampaign := mergeCampaignWithChainData(storedCampaign, onChainCampaign)
+			if err := h.store.Update(mergedCampaign); err != nil && !errors.Is(err, store.ErrNotFound) {
+				log.Printf("campaign sync failed for %s: %v", id, err)
+			}
+			return mergedCampaign, nil
 		}
 	}
 
+	if storedCampaign != nil {
+		return storedCampaign, nil
+	}
+
 	return nil, store.ErrNotFound
+}
+
+func mergeCampaignWithChainData(stored, onChain *models.Campaign) *models.Campaign {
+	if stored == nil {
+		return onChain
+	}
+	if onChain == nil {
+		return stored
+	}
+
+	merged := *stored
+	merged.CampaignPDA = onChain.CampaignPDA
+	merged.VaultAddress = onChain.VaultAddress
+	merged.Repo = onChain.Repo
+	merged.PoolAmount = onChain.PoolAmount
+	merged.TotalClaimed = onChain.TotalClaimed
+	merged.Deadline = onChain.Deadline
+	merged.State = onChain.State
+	merged.Authority = onChain.Authority
+	merged.Sponsor = onChain.Sponsor
+	merged.CreatedAt = onChain.CreatedAt
+	merged.FinalizedAt = onChain.FinalizedAt
+
+	if len(onChain.Allocations) > 0 || len(stored.Allocations) > 0 {
+		reasoningByContributor := make(map[string]string, len(stored.Allocations))
+		for _, alloc := range stored.Allocations {
+			if alloc.Reasoning != "" {
+				reasoningByContributor[alloc.Contributor] = alloc.Reasoning
+			}
+		}
+
+		merged.Allocations = make([]models.Allocation, len(onChain.Allocations))
+		for i, alloc := range onChain.Allocations {
+			if reasoning, ok := reasoningByContributor[alloc.Contributor]; ok {
+				alloc.Reasoning = reasoning
+			}
+			merged.Allocations[i] = alloc
+		}
+	}
+
+	return &merged
 }
 
 func (h *Handlers) GetGitHubAuthURL(w http.ResponseWriter, r *http.Request) {

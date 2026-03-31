@@ -130,7 +130,7 @@ export default function CampaignDetails() {
   const isFinalized = campaign.state === "finalized" || campaign.state === "completed";
   const isCompleted = campaign.state === "completed";
   const isPastDeadline = new Date(campaign.deadline) < new Date();
-  const canFinalize = (campaign.state === "created" || campaign.state === "funded") && isPastDeadline;
+  const canFinalize = campaign.state === "funded" && isPastDeadline;
   const stateConfig = getStateConfig(campaign.state, isPastDeadline);
 
   return (

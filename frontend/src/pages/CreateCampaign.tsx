@@ -40,7 +40,7 @@ export default function CreateCampaign() {
   const [createdId, setCreatedId] = useState<string | null>(null);
 
   const minDeadline = toDateTimeLocalValue(
-    new Date(Date.now() + 15 * 60 * 1000)
+    new Date(Date.now() + 24 * 60 * 60 * 1000)
   );
 
   async function handleCreate(e: React.FormEvent) {
@@ -216,7 +216,7 @@ export default function CreateCampaign() {
               required
             />
             <p className="text-xs text-gray-500 mt-1">
-              Choose the exact date and time when finalization becomes available
+              Choose a deadline at least 24 hours from now
             </p>
           </div>
 
