@@ -177,189 +177,215 @@ export default function CreateCampaign() {
   }
 
   return (
-    <div className="max-w-xl mx-auto">
-      <h1 className="text-3xl font-bold mb-2">
-        <span className="gradient-text">Create Campaign</span>
-      </h1>
-      <p className="text-gray-400 mb-8">
-        Create a campaign as your GitHub account, prove control of the sponsor wallet with a signed
-        message, then fund it from the connected wallet.
-      </p>
+    <div className="max-w-lg mx-auto">
+      {/* Header */}
+      <div className="mb-6 animate-fade-in-up">
+        <h1 className="text-2xl font-bold tracking-tight mb-1">
+          <span className="gradient-text">Create Campaign</span>
+        </h1>
+        <p className="text-xs text-gray-500">
+          Fund a GitHub repo and let AI allocate rewards to contributors
+        </p>
+        <div className="gradient-line mt-3" />
+      </div>
 
-      {!solanaReady && (
-        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 text-sm text-yellow-200 mb-6">
-          The backend is not connected to Solana right now. Creating and funding campaigns is
-          disabled until a real authority key and program ID are configured.
-        </div>
-      )}
-
-      <div className="flex gap-2 mb-8">
+      {/* Step indicator */}
+      <div className="flex items-center gap-3 mb-6 animate-fade-in" style={{ animationDelay: '60ms' }}>
         <div
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium ${
-            step >= 1 ? 'bg-solana-purple/20 text-solana-purple' : 'bg-solana-dark text-gray-500'
+          className={`flex items-center gap-2 text-xs font-medium ${
+            step >= 1 ? 'text-solana-purple' : 'text-gray-600'
           }`}
         >
-          <span className="w-6 h-6 rounded-full bg-solana-purple text-white flex items-center justify-center text-xs">
+          <span className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold ${
+            step >= 1 ? 'bg-solana-purple text-white' : 'bg-solana-border text-gray-500'
+          }`}>
             1
           </span>
           Details
         </div>
-        <div className="flex-1 border-t border-solana-border self-center" />
+        <div className="flex-1 h-px bg-solana-border" />
         <div
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium ${
-            step >= 2 ? 'bg-solana-green/20 text-solana-green' : 'bg-solana-dark text-gray-500'
+          className={`flex items-center gap-2 text-xs font-medium ${
+            step >= 2 ? 'text-solana-green' : 'text-gray-600'
           }`}
         >
-          <span className="w-6 h-6 rounded-full bg-solana-green text-white flex items-center justify-center text-xs">
+          <span className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold ${
+            step >= 2 ? 'bg-solana-green text-white' : 'bg-solana-border text-gray-500'
+          }`}>
             2
           </span>
           Fund
         </div>
       </div>
 
+      {!solanaReady && (
+        <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-lg p-3 text-xs text-yellow-200 mb-5">
+          Backend is not connected to Solana. Creating and funding campaigns is disabled.
+        </div>
+      )}
+
       {step === 1 && (
-        <form onSubmit={handleCreate} className="space-y-6">
-          <div>
-            <label className="block text-sm font-medium mb-2">GitHub Repository</label>
-            <input
-              type="text"
-              value={repo}
-              onChange={(e) => setRepo(e.target.value)}
-              placeholder="owner/repo"
-              className="input"
-              required
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Public repository in &quot;owner/repo&quot; format
-            </p>
-          </div>
+        <div className="animate-fade-in-up" style={{ animationDelay: '100ms' }}>
+          <form onSubmit={handleCreate} className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">
+                GitHub Repository
+              </label>
+              <input
+                type="text"
+                value={repo}
+                onChange={(e) => setRepo(e.target.value)}
+                placeholder="owner/repo"
+                className="input"
+                required
+              />
+            </div>
 
-          <div className="bg-solana-card border border-solana-border rounded-lg p-4 text-sm">
-            <p className="text-gray-300">
-              Campaign owner:
-              <span className="ml-2 font-medium text-white">
-                {user ? `@${user.github_username}` : 'GitHub login required'}
-              </span>
-            </p>
-            <p className="text-xs text-gray-500 mt-2">
-              Manual funding and finalization stay attached to the GitHub account that created the
-              campaign, and the connected wallet must sign the create proof before the backend
-              accepts it.
-            </p>
-          </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">
+                  Reward Pool (SOL)
+                </label>
+                <input
+                  type="number"
+                  value={poolSol}
+                  onChange={(e) => setPoolSol(e.target.value)}
+                  placeholder="1.0"
+                  step="0.01"
+                  min="0.01"
+                  className="input"
+                  required
+                />
+              </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-2">Reward Pool (SOL)</label>
-            <input
-              type="number"
-              value={poolSol}
-              onChange={(e) => setPoolSol(e.target.value)}
-              placeholder="1.0"
-              step="0.01"
-              min="0.01"
-              className="input"
-              required
-            />
-          </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">
+                  Deadline
+                </label>
+                <input
+                  type="datetime-local"
+                  value={deadline}
+                  onChange={(e) => setDeadline(e.target.value)}
+                  min={minDeadline}
+                  step="60"
+                  className="input"
+                  required
+                />
+              </div>
+            </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-2">Deadline</label>
-            <input
-              type="datetime-local"
-              value={deadline}
-              onChange={(e) => setDeadline(e.target.value)}
-              min={minDeadline}
-              step="60"
-              className="input"
-              required
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Choose a deadline at least 24 hours from now
-            </p>
-          </div>
+            {/* Info box */}
+            <div className="card !p-4 !bg-solana-green/[0.03] !border-solana-green/15 text-xs text-gray-400 space-y-1.5">
+              <p><span className="text-solana-green font-medium">AI analysis</span> — commits and PRs are scored automatically</p>
+              <p><span className="text-solana-green font-medium">Escrow</span> — funds held in Solana smart contract until deadline</p>
+              <p><span className="text-solana-green font-medium">Merged code only</span> — only main branch contributions qualify</p>
+            </div>
 
-          {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-sm text-red-400">
-              {error}
+            {error && (
+              <div className="bg-red-500/5 border border-red-500/15 rounded-lg p-3 text-xs text-red-400">
+                {error}
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-1">
+              {!user ? (
+                <button
+                  type="button"
+                  onClick={() => void login()}
+                  className="btn-primary flex-1"
+                  disabled={authLoading}
+                >
+                  {authLoading ? 'Checking...' : 'Log in with GitHub'}
+                </button>
+              ) : !publicKey ? (
+                <button
+                  type="button"
+                  onClick={() => setVisible(true)}
+                  className="btn-primary flex-1"
+                >
+                  Connect Wallet
+                </button>
+              ) : !solanaReady ? (
+                <button
+                  type="button"
+                  disabled
+                  className="btn-primary flex-1"
+                >
+                  Solana Required
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="btn-primary flex-1"
+                >
+                  {submitting ? 'Creating...' : 'Create Campaign →'}
+                </button>
+              )}
+              <button type="button" onClick={handleBack} className="btn-secondary">
+                Cancel
+              </button>
+            </div>
+          </form>
+
+          {user && (
+            <div className="flex items-center gap-2 mt-4 text-xs text-gray-600">
+              <img
+                src={user.avatar_url}
+                alt={user.github_username}
+                className="w-5 h-5 rounded-full"
+              />
+              Creating as @{user.github_username}
             </div>
           )}
-
-          <div className="flex gap-4 pt-2">
-            {!user ? (
-              <button
-                type="button"
-                onClick={() => void login()}
-                className="btn-primary flex-1"
-                disabled={authLoading}
-              >
-                {authLoading ? 'Checking session...' : 'Log in with GitHub'}
-              </button>
-            ) : !publicKey ? (
-              <button type="button" onClick={() => setVisible(true)} className="btn-primary flex-1">
-                Connect Wallet to Continue
-              </button>
-            ) : !solanaReady ? (
-              <button
-                type="button"
-                disabled
-                className="btn-primary flex-1 opacity-60 cursor-not-allowed"
-              >
-                Solana Backend Required
-              </button>
-            ) : (
-              <button type="submit" disabled={submitting} className="btn-primary flex-1">
-                {submitting ? 'Creating...' : 'Create Campaign'}
-              </button>
-            )}
-            <button type="button" onClick={handleBack} className="btn-secondary">
-              Cancel
-            </button>
-          </div>
-        </form>
+        </div>
       )}
 
       {step === 2 && (
-        <div className="space-y-6">
-          <div className="bg-solana-card border border-solana-border rounded-lg p-6 space-y-3">
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-400">Repository</span>
-              <span className="font-mono">{repo}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-400">Reward Pool</span>
-              <span className="font-mono">{poolSol} SOL</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-400">Deadline</span>
-              <span>{deadline}</span>
-            </div>
-            {user && (
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Owner</span>
-                <span>@{user.github_username}</span>
+        <div className="animate-fade-in-up space-y-4">
+          <div className="card">
+            <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">
+              Summary
+            </h3>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between py-1.5 border-b border-solana-border/30">
+                <span className="text-gray-500">Repository</span>
+                <span className="font-mono text-white">{repo}</span>
               </div>
-            )}
+              <div className="flex justify-between py-1.5 border-b border-solana-border/30">
+                <span className="text-gray-500">Pool</span>
+                <span className="font-mono text-solana-green">{poolSol} SOL</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-solana-border/30">
+                <span className="text-gray-500">Deadline</span>
+                <span className="text-white">{deadline}</span>
+              </div>
+              {user && (
+                <div className="flex justify-between py-1.5">
+                  <span className="text-gray-500">Owner</span>
+                  <span className="text-white">@{user.github_username}</span>
+                </div>
+              )}
+            </div>
           </div>
 
-          <div className="bg-solana-purple/10 border border-solana-purple/30 rounded-lg p-6 text-center">
-            <p className="text-sm text-gray-300 mb-2">
-              You will be prompted to sign a transaction in your wallet to fund the escrow vault.
-            </p>
-            <p className="text-2xl font-bold text-solana-purple">{poolSol} SOL</p>
+          <div className="stat-block text-center py-6">
+            <p className="text-xs text-gray-500 mb-2">Sign a wallet transaction to fund the escrow</p>
+            <p className="text-3xl font-bold text-solana-purple">{poolSol} SOL</p>
           </div>
 
-          <p className="text-xs text-gray-500">
-            The connected wallet signs the funding transaction, but future manual management stays
+          <p className="text-[10px] text-gray-600 text-center">
+            The connected wallet signs the funding transaction, but future management stays
             limited to the GitHub account that created this campaign.
           </p>
 
           {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-sm text-red-400">
+            <div className="bg-red-500/5 border border-red-500/15 rounded-lg p-3 text-xs text-red-400">
               {error}
             </div>
           )}
 
-          <div className="flex gap-4 pt-2">
+          <div className="flex gap-3">
             <button
               type="button"
               onClick={handleFund}
@@ -369,8 +395,8 @@ export default function CreateCampaign() {
               {submitting
                 ? 'Confirming...'
                 : solanaReady
-                  ? 'Fund Campaign'
-                  : 'Solana Backend Required'}
+                  ? 'Fund Campaign →'
+                  : 'Solana Required'}
             </button>
             <button
               type="button"
@@ -378,7 +404,7 @@ export default function CreateCampaign() {
               className="btn-secondary"
               disabled={submitting}
             >
-              Skip for Now
+              Skip
             </button>
           </div>
         </div>
