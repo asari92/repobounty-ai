@@ -2,26 +2,29 @@ import type {
   Campaign,
   CreateCampaignRequest,
   CreateCampaignResponse,
+  WalletChallengeRequest,
+  WalletChallengeResponse,
   FinalizePreviewResponse,
   FinalizeResponse,
   User,
   GitHubAuthRequest,
   GitHubAuthResponse,
   LinkWalletRequest,
+  ClaimChallengeRequest,
   ClaimItem,
   FundTransactionResponse,
   HealthResponse,
-} from "../types";
+} from '../types';
 
-const API_BASE = "/api";
+const API_BASE = '/api';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem('token');
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    'Content-Type': 'application/json',
   };
   if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+    headers['Authorization'] = `Bearer ${token}`;
   }
   if (options?.headers) {
     Object.entries(options.headers).forEach(([key, value]) => {
@@ -36,8 +39,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     if (res.status === 401) {
-      localStorage.removeItem("token");
-      window.dispatchEvent(new Event("auth-expired"));
+      localStorage.removeItem('token');
+      window.dispatchEvent(new Event('auth-expired'));
     }
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(body.error || `Request failed: ${res.status}`);
@@ -46,9 +49,16 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  createCampaignChallenge(data: WalletChallengeRequest): Promise<WalletChallengeResponse> {
+    return request('/campaigns/create-challenge', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
   createCampaign(data: CreateCampaignRequest): Promise<CreateCampaignResponse> {
-    return request("/campaigns/", {
-      method: "POST",
+    return request('/campaigns/', {
+      method: 'POST',
       body: JSON.stringify(data),
     });
   },
@@ -58,58 +68,79 @@ export const api = {
   },
 
   listCampaigns(): Promise<Campaign[]> {
-    return request("/campaigns/");
+    return request('/campaigns/');
   },
 
   finalizePreview(id: string): Promise<FinalizePreviewResponse> {
-    return request(`/campaigns/${id}/finalize-preview`, { method: "POST" });
+    return request(`/campaigns/${id}/finalize-preview`, { method: 'POST' });
   },
 
   finalize(id: string): Promise<FinalizeResponse> {
-    return request(`/campaigns/${id}/finalize`, { method: "POST" });
+    return request(`/campaigns/${id}/finalize`, { method: 'POST' });
   },
 
-  claimAllocation(campaignId: string, contributorGithub: string, walletAddress: string): Promise<FinalizeResponse> {
+  claimChallenge(
+    campaignId: string,
+    data: ClaimChallengeRequest
+  ): Promise<WalletChallengeResponse> {
+    return request(`/campaigns/${campaignId}/claim-challenge`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  claimAllocation(
+    campaignId: string,
+    contributorGithub: string,
+    walletAddress: string,
+    challengeId: string,
+    signature: string
+  ): Promise<FinalizeResponse> {
     return request(`/campaigns/${campaignId}/claim`, {
-      method: "POST",
-      body: JSON.stringify({ contributor_github: contributorGithub, wallet_address: walletAddress }),
+      method: 'POST',
+      body: JSON.stringify({
+        contributor_github: contributorGithub,
+        wallet_address: walletAddress,
+        challenge_id: challengeId,
+        signature,
+      }),
     });
   },
 
   getGithubAuthUrl(): Promise<{ auth_url: string }> {
-    return request("/auth/github/url");
+    return request('/auth/github/url');
   },
 
   githubCallback(data: GitHubAuthRequest): Promise<GitHubAuthResponse> {
-    return request("/auth/github/callback", {
-      method: "POST",
+    return request('/auth/github/callback', {
+      method: 'POST',
       body: JSON.stringify(data),
     });
   },
 
   getMe(): Promise<User> {
-    return request("/auth/me");
+    return request('/auth/me');
   },
 
   linkWallet(data: LinkWalletRequest): Promise<User> {
-    return request("/auth/wallet/link", {
-      method: "POST",
+    return request('/auth/wallet/link', {
+      method: 'POST',
       body: JSON.stringify(data),
     });
   },
 
   getClaims(): Promise<ClaimItem[]> {
-    return request("/auth/claims");
+    return request('/auth/claims');
   },
 
   fundTx(campaignId: string, sponsorWallet: string): Promise<FundTransactionResponse> {
     return request(`/campaigns/${campaignId}/fund-tx`, {
-      method: "POST",
+      method: 'POST',
       body: JSON.stringify({ sponsor_wallet: sponsorWallet }),
     });
   },
 
   getHealth(): Promise<HealthResponse> {
-    return request("/health");
+    return request('/health');
   },
 };

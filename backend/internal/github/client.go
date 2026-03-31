@@ -369,6 +369,7 @@ type ghPullRequestDetailed struct {
 	CreatedAt    string    `json:"created_at"`
 	MergedAt     time.Time `json:"merged_at"`
 	Merged       bool      `json:"merged"`
+	Commits      int       `json:"commits"`
 	Additions    int       `json:"additions"`
 	Deletions    int       `json:"deletions"`
 	ChangedFiles int       `json:"changed_files"`

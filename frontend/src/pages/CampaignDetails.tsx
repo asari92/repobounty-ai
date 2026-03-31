@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
-import { useWallet } from "@solana/wallet-adapter-react";
-import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { api } from "../api/client";
-import { useAuth } from "../hooks/useAuth";
-import { getStateConfig, formatSOL, formatDate } from "../utils/campaign";
-import type { Campaign, FinalizePreviewResponse } from "../types";
+import { useEffect, useState } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { useWalletModal } from '@solana/wallet-adapter-react-ui';
+import bs58 from 'bs58';
+import { api } from '../api/client';
+import { useAuth } from '../hooks/useAuth';
+import { getStateConfig, formatSOL, formatDate } from '../utils/campaign';
+import type { Campaign, FinalizePreviewResponse } from '../types';
 
 function AllocationBar({ percentage }: { percentage: number }) {
   const pct = percentage / 100;
@@ -21,7 +22,7 @@ function AllocationBar({ percentage }: { percentage: number }) {
 
 export default function CampaignDetails() {
   const { id } = useParams<{ id: string }>();
-  const { publicKey } = useWallet();
+  const { publicKey, signMessage } = useWallet();
   const { setVisible } = useWalletModal();
   const { user } = useAuth();
   const [campaign, setCampaign] = useState<Campaign | null>(null);
@@ -47,7 +48,9 @@ export default function CampaignDetails() {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   useEffect(() => {
@@ -74,7 +77,7 @@ export default function CampaignDetails() {
       const result = await api.finalizePreview(id);
       setPreview(result);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Preview failed");
+      setError(e instanceof Error ? e.message : 'Preview failed');
     } finally {
       setPreviewing(false);
     }
@@ -90,7 +93,7 @@ export default function CampaignDetails() {
       setCampaign(updated);
       setPreview(null);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Finalization failed");
+      setError(e instanceof Error ? e.message : 'Finalization failed');
     } finally {
       setFinalizing(false);
     }
@@ -98,21 +101,36 @@ export default function CampaignDetails() {
 
   async function handleClaim(contributor: string) {
     if (!id || !publicKey) {
-      if (!publicKey) setError("Connect wallet first");
+      if (!publicKey) setError('Connect wallet first');
+      return;
+    }
+    if (!signMessage) {
+      setError('This wallet does not support message signing.');
       return;
     }
     if (!solanaReady) {
-      setError("Claims are unavailable until the backend is connected to Solana.");
+      setError('Claims are unavailable until the backend is connected to Solana.');
       return;
     }
     setClaiming(contributor);
     setError(null);
     try {
-      await api.claimAllocation(id, contributor, publicKey.toBase58());
+      const challenge = await api.claimChallenge(id, {
+        contributor_github: contributor,
+        wallet_address: publicKey.toBase58(),
+      });
+      const signatureBytes = await signMessage(new TextEncoder().encode(challenge.message));
+      await api.claimAllocation(
+        id,
+        contributor,
+        publicKey.toBase58(),
+        challenge.challenge_id,
+        bs58.encode(signatureBytes)
+      );
       const updated = await api.getCampaign(id);
       setCampaign(updated);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Claim failed");
+      setError(e instanceof Error ? e.message : 'Claim failed');
     } finally {
       setClaiming(null);
     }
@@ -137,16 +155,19 @@ export default function CampaignDetails() {
     );
   }
 
-  const isFinalized = campaign.state === "finalized" || campaign.state === "completed";
-  const isCompleted = campaign.state === "completed";
+  const isFinalized = campaign.state === 'finalized' || campaign.state === 'completed';
+  const isCompleted = campaign.state === 'completed';
   const isPastDeadline = new Date(campaign.deadline) < new Date();
   const isOwner = user?.github_username === campaign.owner_github_username;
-  const canShowFinalizeCard = campaign.state === "funded" && isPastDeadline;
+  const canShowFinalizeCard = campaign.state === 'funded' && isPastDeadline;
   const stateConfig = getStateConfig(campaign.state, isPastDeadline);
   const allocationModeLabel =
-    preview?.allocation_mode === "code_impact"
-      ? "PR diff impact scoring"
-      : "Contributor metrics fallback";
+    preview?.allocation_mode === 'code_impact'
+      ? 'PR diff impact scoring'
+      : 'Contributor metrics fallback';
+  const previewWindowLabel =
+    preview &&
+    `${formatDate(preview.snapshot.window_start)} to ${formatDate(preview.snapshot.window_end)}`;
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -162,10 +183,8 @@ export default function CampaignDetails() {
         <div className="flex items-start justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold">{campaign.repo}</h1>
-            <p className="text-sm text-gray-400 mt-1 font-mono">
-              {campaign.campaign_id}
-            </p>
-            {campaign.sponsor && campaign.sponsor !== "" && (
+            <p className="text-sm text-gray-400 mt-1 font-mono">{campaign.campaign_id}</p>
+            {campaign.sponsor && campaign.sponsor !== '' && (
               <p className="text-xs text-gray-500 mt-0.5">
                 Sponsored by {campaign.sponsor.slice(0, 8)}...
               </p>
@@ -176,9 +195,7 @@ export default function CampaignDetails() {
               </p>
             )}
           </div>
-          <span
-            className={`text-sm font-semibold px-4 py-1.5 rounded-full ${stateConfig.classes}`}
-          >
+          <span className={`text-sm font-semibold px-4 py-1.5 rounded-full ${stateConfig.classes}`}>
             {stateConfig.label}
           </span>
         </div>
@@ -201,7 +218,7 @@ export default function CampaignDetails() {
           <div>
             <span className="text-xs text-gray-400 uppercase tracking-wide">Sponsor</span>
             <p className="text-sm font-mono mt-1 truncate">
-              {campaign.sponsor || campaign.authority || "N/A"}
+              {campaign.sponsor || campaign.authority || 'N/A'}
             </p>
           </div>
         </div>
@@ -227,7 +244,7 @@ export default function CampaignDetails() {
           <div className="mt-4 pt-4 border-t border-solana-border">
             <span className="text-xs text-gray-400">Transaction: </span>
             <a
-              href={`https://explorer.solana.com/tx/${campaign.tx_signature}?cluster=${import.meta.env.VITE_SOLANA_NETWORK || "devnet"}`}
+              href={`https://explorer.solana.com/tx/${campaign.tx_signature}?cluster=${import.meta.env.VITE_SOLANA_NETWORK || 'devnet'}`}
               target="_blank"
               rel="noopener noreferrer"
               className="text-sm text-solana-purple hover:underline font-mono"
@@ -247,7 +264,7 @@ export default function CampaignDetails() {
               <h3 className="text-sm font-semibold text-blue-300">Auto-notify contributors</h3>
               <p className="text-xs text-gray-400 mt-1">
                 Install the RepoBounty GitHub App to automatically post reward notifications on
-                contributors' PRs after finalization.
+                contributors&apos; PRs after finalization.
               </p>
               <a
                 href="https://github.com/apps/repobounty-ai/installations/new"
@@ -267,34 +284,30 @@ export default function CampaignDetails() {
         <div className="card mb-6">
           <h2 className="text-lg font-semibold mb-4">Finalize Campaign</h2>
           <p className="text-sm text-gray-400 mb-4">
-            The deadline has passed. Preview and finalization follow the same
-            off-chain allocation logic that the backend will use for the actual
-            on-chain finalize call.
+            The deadline has passed. Preview now saves a frozen allocation snapshot, and manual
+            finalization reuses that exact snapshot for the on-chain finalize call.
           </p>
           {!campaign.owner_github_username ? (
             <p className="text-sm text-yellow-200">
-              Manual finalize is unavailable for this legacy campaign because no
-              creator account was stored. The backend auto-finalize worker is
-              the remaining safe path.
+              Manual finalize is unavailable for this legacy campaign because no creator account was
+              stored. The backend auto-finalize worker is the remaining safe path.
             </p>
           ) : !user ? (
             <p className="text-sm text-yellow-200">
-              Log in as @{campaign.owner_github_username} to run preview or
-              manual finalize. Otherwise wait for backend-controlled
-              finalization.
+              Log in as @{campaign.owner_github_username} to run preview or manual finalize.
+              Otherwise wait for backend-controlled finalization.
             </p>
           ) : !isOwner ? (
             <p className="text-sm text-yellow-200">
-              Only @{campaign.owner_github_username} can run manual preview or
-              finalize for this campaign.
+              Only @{campaign.owner_github_username} can run manual preview or finalize for this
+              campaign.
             </p>
           ) : (
             <div className="space-y-4">
               {!solanaReady && (
                 <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 text-sm text-yellow-200">
-                  The backend is not connected to Solana right now. You can
-                  still inspect a preview, but on-chain finalization is
-                  disabled until the authority is configured again.
+                  The backend is not connected to Solana right now. You can still inspect a preview,
+                  but on-chain finalization is disabled until the authority is configured again.
                 </div>
               )}
               <div className="flex gap-3">
@@ -303,7 +316,7 @@ export default function CampaignDetails() {
                   disabled={previewing}
                   className="btn-secondary text-sm"
                 >
-                  {previewing ? "Loading preview..." : "Preview Allocations"}
+                  {previewing ? 'Loading preview...' : 'Preview Allocations'}
                 </button>
                 {preview && (
                   <button
@@ -312,10 +325,10 @@ export default function CampaignDetails() {
                     className="btn-primary text-sm"
                   >
                     {finalizing
-                      ? "Finalizing on Solana..."
+                      ? 'Finalizing on Solana...'
                       : solanaReady
-                        ? "Finalize on Solana"
-                        : "Solana Backend Required"}
+                        ? 'Finalize on Solana'
+                        : 'Solana Backend Required'}
                   </button>
                 )}
               </div>
@@ -329,8 +342,17 @@ export default function CampaignDetails() {
         <div className="card mb-6 border-yellow-500/30">
           <h2 className="text-lg font-semibold mb-1">AI Allocation Preview</h2>
           <p className="text-xs text-gray-400 mb-4">
-            Model: {preview.ai_model} | Source: {allocationModeLabel}
+            Model: {preview.ai_model} | Source: {allocationModeLabel} | Snapshot v
+            {preview.snapshot.version}
           </p>
+          <p className="text-xs text-gray-500 mb-4">
+            Saved at {formatDate(preview.snapshot.created_at)} for contribution window{' '}
+            {previewWindowLabel}. Finalize will use this exact snapshot unless campaign inputs
+            become stale and you regenerate it.
+          </p>
+          {preview.snapshot.contributor_notes && (
+            <p className="text-xs text-gray-500 mb-4">{preview.snapshot.contributor_notes}</p>
+          )}
 
           {preview.contributors.length > 0 && (
             <div className="mb-4">
@@ -371,9 +393,7 @@ export default function CampaignDetails() {
                   </span>
                 </div>
                 <AllocationBar percentage={a.percentage} />
-                {a.reasoning && (
-                  <p className="text-xs text-gray-500 mt-1">{a.reasoning}</p>
-                )}
+                {a.reasoning && <p className="text-xs text-gray-500 mt-1">{a.reasoning}</p>}
               </div>
             ))}
           </div>
@@ -385,13 +405,12 @@ export default function CampaignDetails() {
         <div className="card">
           <h2 className="text-lg font-semibold mb-4">Final Allocations (On-Chain)</h2>
           <p className="text-xs text-gray-500 mb-4">
-            Claims send SOL to the wallet currently connected in Phantom. Saved
-            profile wallets are informational only in this MVP.
+            Claims send SOL to the wallet currently connected in Phantom, and that wallet must sign
+            a one-time proof before the backend submits the claim.
           </p>
           {!solanaReady && (
             <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 text-sm text-yellow-200 mb-4">
-              The backend is not connected to Solana, so claiming is currently
-              disabled.
+              The backend is not connected to Solana, so claiming is currently disabled.
             </div>
           )}
           <div className="space-y-4">
@@ -403,7 +422,7 @@ export default function CampaignDetails() {
                 <div
                   key={a.contributor}
                   className={`p-4 rounded-lg border ${
-                    a.claimed ? "border-solana-green/30 bg-solana-green/5" : "border-solana-border"
+                    a.claimed ? 'border-solana-green/30 bg-solana-green/5' : 'border-solana-border'
                   }`}
                 >
                   <div className="flex items-center justify-between mb-1">
@@ -420,9 +439,7 @@ export default function CampaignDetails() {
                     </span>
                   </div>
                   <AllocationBar percentage={a.percentage} />
-                  {a.reasoning && (
-                    <p className="text-xs text-gray-500 mt-1">{a.reasoning}</p>
-                  )}
+                  {a.reasoning && <p className="text-xs text-gray-500 mt-1">{a.reasoning}</p>}
                   {isOwnAllocation && !a.claimed && (
                     <div className="mt-3 pt-3 border-t border-solana-border/50">
                       {!publicKey ? (
@@ -445,7 +462,7 @@ export default function CampaignDetails() {
                           disabled={isCurrentlyClaiming}
                           className="btn-primary text-xs py-1.5 px-3"
                         >
-                          {isCurrentlyClaiming ? "Claiming..." : `Claim ${formatSOL(a.amount)} SOL`}
+                          {isCurrentlyClaiming ? 'Claiming...' : `Claim ${formatSOL(a.amount)} SOL`}
                         </button>
                       )}
                     </div>

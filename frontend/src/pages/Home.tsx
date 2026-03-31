@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { api } from "../api/client";
-import CampaignCard from "../components/CampaignCard";
-import { useAuth } from "../hooks/useAuth";
-import type { Campaign } from "../types";
+import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { api } from '../api/client';
+import CampaignCard from '../components/CampaignCard';
+import { useAuth } from '../hooks/useAuth';
+import type { Campaign } from '../types';
 
 export default function Home() {
   const { user } = useAuth();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<"all" | "mine">("all");
+  const [view, setView] = useState<'all' | 'mine'>('all');
 
   useEffect(() => {
     let cancelled = false;
@@ -25,14 +25,16 @@ export default function Home() {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const visibleCampaigns = useMemo(
     () =>
-      view === "mine" && user
+      view === 'mine' && user
         ? campaigns.filter((campaign) => campaign.owner_github_username === user.github_username)
-        : view === "mine"
+        : view === 'mine'
           ? []
           : campaigns,
     [campaigns, user, view]
@@ -46,8 +48,7 @@ export default function Home() {
             <span className="gradient-text">Campaigns</span>
           </h1>
           <p className="text-gray-400 mt-2">
-            Fund open-source contributors with AI-powered reward allocation on
-            Solana
+            Fund open-source contributors with AI-powered reward allocation on Solana
           </p>
         </div>
         <Link to="/create" className="btn-primary">
@@ -58,21 +59,17 @@ export default function Home() {
       <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
         <div className="inline-flex rounded-xl border border-solana-border bg-solana-dark/70 p-1">
           <button
-            onClick={() => setView("all")}
+            onClick={() => setView('all')}
             className={`px-4 py-2 text-sm rounded-lg transition-colors ${
-              view === "all"
-                ? "bg-solana-purple text-white"
-                : "text-gray-400 hover:text-white"
+              view === 'all' ? 'bg-solana-purple text-white' : 'text-gray-400 hover:text-white'
             }`}
           >
             All Campaigns
           </button>
           <button
-            onClick={() => setView("mine")}
+            onClick={() => setView('mine')}
             className={`px-4 py-2 text-sm rounded-lg transition-colors ${
-              view === "mine"
-                ? "bg-solana-purple text-white"
-                : "text-gray-400 hover:text-white"
+              view === 'mine' ? 'bg-solana-purple text-white' : 'text-gray-400 hover:text-white'
             }`}
           >
             My Campaigns
@@ -81,8 +78,8 @@ export default function Home() {
 
         <p className="text-sm text-gray-400">
           Showing {visibleCampaigns.length} campaign
-          {visibleCampaigns.length === 1 ? "" : "s"}
-          {view === "mine" && user ? " you created" : ""}
+          {visibleCampaigns.length === 1 ? '' : 's'}
+          {view === 'mine' && user ? ' you created' : ''}
         </p>
       </div>
 
@@ -96,36 +93,31 @@ export default function Home() {
       {error && (
         <div className="card border-red-500/30 bg-red-500/10 text-center py-12">
           <p className="text-red-400">{error}</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="btn-secondary text-sm mt-4"
-          >
+          <button onClick={() => window.location.reload()} className="btn-secondary text-sm mt-4">
             Retry
           </button>
         </div>
       )}
 
-      {!loading && !error && view === "mine" && !user && (
+      {!loading && !error && view === 'mine' && !user && (
         <div className="card text-center py-16">
-          <h3 className="text-xl font-semibold mb-2">
-            Log in with GitHub
-          </h3>
+          <h3 className="text-xl font-semibold mb-2">Log in with GitHub</h3>
           <p className="text-gray-400">
             Sign in to view campaigns created from your RepoBounty account.
           </p>
         </div>
       )}
 
-      {!loading && !error && visibleCampaigns.length === 0 && !(view === "mine" && !user) && (
+      {!loading && !error && visibleCampaigns.length === 0 && !(view === 'mine' && !user) && (
         <div className="card text-center py-16">
-          <div className="text-4xl mb-4">{"{ }"}</div>
+          <div className="text-4xl mb-4">{'{ }'}</div>
           <h3 className="text-xl font-semibold mb-2">
-            {view === "mine" ? "No campaigns for this account" : "No campaigns yet"}
+            {view === 'mine' ? 'No campaigns for this account' : 'No campaigns yet'}
           </h3>
           <p className="text-gray-400 mb-6">
-            {view === "mine"
-              ? "Create a campaign while signed in with GitHub to see it here."
-              : "Create your first campaign to fund open-source contributors"}
+            {view === 'mine'
+              ? 'Create a campaign while signed in with GitHub to see it here.'
+              : 'Create your first campaign to fund open-source contributors'}
           </p>
           <Link to="/create" className="btn-primary">
             Create Campaign

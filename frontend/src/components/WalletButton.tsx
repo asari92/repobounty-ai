@@ -1,5 +1,5 @@
-import { useWallet } from "@solana/wallet-adapter-react";
-import { useWalletModal } from "@solana/wallet-adapter-react-ui";
+import { useWallet } from '@solana/wallet-adapter-react';
+import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 
 export default function WalletButton() {
   const { publicKey, disconnect, connecting } = useWallet();
