@@ -14,6 +14,8 @@ body {
     Roboto,
     sans-serif;
   -webkit-font-smoothing: antialiased;
+  background-color: #0E0E10;
+  color: #fff;
 }
 
 .gradient-text {
@@ -45,23 +47,69 @@ body {
 }
 
 .btn-primary {
-  @apply bg-gradient-to-r from-solana-purple to-solana-green px-6 py-3 rounded-lg font-semibold
+  @apply bg-gradient-to-r from-solana-purple to-solana-green px-6 py-3 rounded-xl font-semibold
     transition-all duration-200 hover:opacity-90 hover:scale-[1.02] active:scale-[0.98]
-    disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100;
+    disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100
+    text-white shadow-lg shadow-solana-purple/20;
 }
 
 .btn-secondary {
-  @apply px-6 py-3 rounded-lg font-semibold border border-solana-border
-    transition-all duration-200 hover:border-solana-purple hover:bg-solana-card
-    disabled:opacity-50 disabled:cursor-not-allowed;
+  @apply px-6 py-3 rounded-xl font-semibold border border-solana-border
+    transition-all duration-200 hover:border-solana-purple/60 hover:bg-solana-card
+    disabled:opacity-50 disabled:cursor-not-allowed text-gray-300;
 }
 
 .card {
-  @apply bg-solana-card rounded-xl border border-solana-border p-6;
+  @apply bg-solana-card rounded-2xl border border-solana-border p-6
+    transition-all duration-200;
+}
+
+.card-hover {
+  @apply hover:border-solana-purple/40 hover:bg-solana-card-hover hover:shadow-lg hover:shadow-solana-purple/5;
 }
 
 .input {
-  @apply w-full bg-solana-dark border border-solana-border rounded-lg px-4 py-3
-    text-white placeholder-gray-500 focus:outline-none focus:border-solana-purple
-    transition-colors;
+  @apply w-full bg-solana-dark border border-solana-border rounded-xl px-4 py-3
+    text-white placeholder-gray-500 focus:outline-none focus:border-solana-purple/60
+    focus:ring-1 focus:ring-solana-purple/30 transition-all;
+}
+
+.input-with-icon {
+  @apply pl-11;
+}
+
+/* Subtle dot grid background */
+.bg-dots {
+  background-image: radial-gradient(circle, rgba(153, 69, 255, 0.05) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Status badge styles */
+.badge {
+  @apply text-xs font-bold px-3 py-1 rounded-full tracking-wide uppercase;
+}
+
+.badge-funded {
+  @apply bg-solana-green/15 text-solana-green border border-solana-green/20;
+}
+
+.badge-created {
+  @apply bg-solana-purple/15 text-solana-purple border border-solana-purple/20;
+}
+
+.badge-finalized {
+  @apply bg-solana-green/15 text-solana-green border border-solana-green/20;
+}
+
+.badge-completed {
+  @apply bg-blue-500/15 text-blue-400 border border-blue-500/20;
+}
+
+/* Glow effect for hero elements */
+.glow-purple {
+  box-shadow: 0 0 40px rgba(153, 69, 255, 0.15), 0 0 80px rgba(153, 69, 255, 0.05);
+}
+
+.glow-green {
+  box-shadow: 0 0 40px rgba(20, 241, 149, 0.15), 0 0 80px rgba(20, 241, 149, 0.05);
 }
