@@ -11,9 +11,9 @@ import type { Campaign, FinalizePreviewResponse } from '../types';
 function AllocationBar({ percentage }: { percentage: number }) {
   const pct = percentage / 100;
   return (
-    <div className="w-full bg-solana-dark rounded-full h-2 overflow-hidden">
+    <div className="w-full bg-solana-dark rounded-sm h-1.5 overflow-hidden">
       <div
-        className="h-full rounded-full bg-gradient-to-r from-solana-purple to-solana-green transition-all duration-500"
+        className="h-full rounded-sm bg-gradient-to-r from-solana-purple to-solana-green transition-all duration-500"
         style={{ width: `${pct}%` }}
       />
     </div>
@@ -139,17 +139,17 @@ export default function CampaignDetails() {
   if (loading) {
     return (
       <div className="text-center py-24">
-        <div className="inline-block w-10 h-10 border-2 border-solana-purple border-t-transparent rounded-full animate-spin" />
+        <div className="inline-block w-8 h-8 border-2 border-solana-purple border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
   if (!campaign) {
     return (
-      <div className="card text-center py-16 max-w-lg mx-auto">
-        <p className="text-red-400 mb-4">Campaign not found</p>
-        <Link to="/" className="btn-secondary text-sm inline-block">
-          Back to Campaigns
+      <div className="card text-center py-12 max-w-md mx-auto">
+        <p className="text-red-400 text-sm mb-3">Campaign not found</p>
+        <Link to="/" className="btn-secondary text-xs inline-block">
+          ← Back
         </Link>
       </div>
     );
@@ -171,6 +171,15 @@ export default function CampaignDetails() {
           ? 'badge-completed'
           : 'badge-created';
 
+  const accentClass =
+    campaign.state === 'funded'
+      ? 'accent-funded'
+      : campaign.state === 'finalized'
+        ? 'accent-finalized'
+        : campaign.state === 'completed'
+          ? 'accent-completed'
+          : 'accent-created';
+
   const allocationModeLabel =
     preview?.allocation_mode === 'code_impact'
       ? 'PR diff impact scoring'
@@ -180,101 +189,79 @@ export default function CampaignDetails() {
     `${formatDate(preview.snapshot.window_start)} to ${formatDate(preview.snapshot.window_end)}`;
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="max-w-2xl mx-auto">
       <Link
         to="/"
-        className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-white transition-all duration-300 mb-6 hover:-translate-x-0.5"
+        className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-white transition-colors mb-5"
       >
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-        </svg>
-        Back to Campaigns
+        ← Campaigns
       </Link>
 
       {/* Header */}
-      <div className="card mb-6 animate-fade-in-up">
-        <div className="flex items-start justify-between mb-6">
-          <div className="flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-solana-dark border border-solana-border flex items-center justify-center flex-shrink-0">
-              <svg
-                className="w-6 h-6 text-gray-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 00-1.883 2.542l.857 6a2.25 2.25 0 002.227 1.932H19.05a2.25 2.25 0 002.227-1.932l.857-6a2.25 2.25 0 00-1.883-2.542m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.776"
-                />
-              </svg>
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold">{campaign.repo}</h1>
-              <p className="text-sm text-gray-500 mt-1 font-mono">{campaign.campaign_id}</p>
+      <div className={`card ${accentClass} mb-5 animate-fade-in-up`}>
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h1 className="text-xl font-bold">{campaign.repo}</h1>
+            <p className="text-[11px] text-gray-600 font-mono mt-1">
+              {campaign.campaign_id}
               {campaign.owner_github_username && (
-                <p className="text-xs text-gray-500 mt-0.5">
-                  Created by @{campaign.owner_github_username}
-                </p>
+                <> · @{campaign.owner_github_username}</>
               )}
-            </div>
+            </p>
           </div>
           <span className={`badge ${badgeClass} flex-shrink-0`}>{stateConfig.label}</span>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-solana-dark rounded-xl p-3 border border-solana-border/50 animate-fade-in-up" style={{ animationDelay: '100ms' }}>
-            <span className="text-[10px] text-gray-500 uppercase tracking-wider">Pool</span>
-            <p className="text-lg font-bold text-solana-green mt-1">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <div className="stat-block animate-fade-in" style={{ animationDelay: '60ms' }}>
+            <span className="text-[10px] text-gray-600 uppercase tracking-wider">Pool</span>
+            <p className="text-base font-bold text-solana-green mt-0.5">
               {formatSOL(campaign.pool_amount)} SOL
             </p>
           </div>
-          <div className="bg-solana-dark rounded-xl p-3 border border-solana-border/50 animate-fade-in-up" style={{ animationDelay: '175ms' }}>
-            <span className="text-[10px] text-gray-500 uppercase tracking-wider">Deadline</span>
-            <p className="text-sm font-semibold mt-1">{formatDate(campaign.deadline)}</p>
+          <div className="stat-block animate-fade-in" style={{ animationDelay: '120ms' }}>
+            <span className="text-[10px] text-gray-600 uppercase tracking-wider">Deadline</span>
+            <p className="text-xs font-semibold mt-1">{formatDate(campaign.deadline)}</p>
           </div>
-          <div className="bg-solana-dark rounded-xl p-3 border border-solana-border/50 animate-fade-in-up" style={{ animationDelay: '250ms' }}>
-            <span className="text-[10px] text-gray-500 uppercase tracking-wider">Created</span>
-            <p className="text-sm font-semibold mt-1">{formatDate(campaign.created_at)}</p>
+          <div className="stat-block animate-fade-in" style={{ animationDelay: '180ms' }}>
+            <span className="text-[10px] text-gray-600 uppercase tracking-wider">Created</span>
+            <p className="text-xs font-semibold mt-1">{formatDate(campaign.created_at)}</p>
           </div>
-          <div className="bg-solana-dark rounded-xl p-3 border border-solana-border/50 animate-fade-in-up" style={{ animationDelay: '325ms' }}>
-            <span className="text-[10px] text-gray-500 uppercase tracking-wider">Sponsor</span>
-            <p className="text-xs font-mono mt-1.5 truncate">
+          <div className="stat-block animate-fade-in" style={{ animationDelay: '240ms' }}>
+            <span className="text-[10px] text-gray-600 uppercase tracking-wider">Sponsor</span>
+            <p className="text-[10px] font-mono mt-1 truncate">
               {campaign.sponsor || campaign.authority || 'N/A'}
             </p>
           </div>
         </div>
 
         {(isCompleted || isFinalized) && (
-          <div className="mt-4 pt-4 border-t border-solana-border grid grid-cols-2 gap-4">
+          <div className="mt-3 pt-3 border-t border-solana-border/50 flex items-center justify-between text-sm">
             <div>
-              <span className="text-[10px] text-gray-500 uppercase tracking-wider">Claimed</span>
-              <p className="text-lg font-semibold mt-1">
+              <span className="text-[10px] text-gray-600 uppercase tracking-wider">Claimed</span>
+              <p className="font-semibold mt-0.5">
                 {formatSOL(campaign.total_claimed)} / {formatSOL(campaign.pool_amount)} SOL
               </p>
             </div>
             {campaign.campaign_pda && (
-              <div>
-                <span className="text-[10px] text-gray-500 uppercase tracking-wider">
-                  Campaign PDA
-                </span>
-                <p className="text-xs font-mono mt-1.5 truncate">{campaign.campaign_pda}</p>
+              <div className="text-right">
+                <span className="text-[10px] text-gray-600 uppercase tracking-wider">PDA</span>
+                <p className="text-[10px] font-mono mt-0.5 truncate max-w-[180px]">
+                  {campaign.campaign_pda}
+                </p>
               </div>
             )}
           </div>
         )}
 
         {campaign.tx_signature && (
-          <div className="mt-4 pt-4 border-t border-solana-border">
-            <span className="text-[10px] text-gray-500 uppercase tracking-wider">
-              Transaction:{' '}
-            </span>
+          <div className="mt-3 pt-3 border-t border-solana-border/50 flex items-center gap-2">
+            <span className="text-[10px] text-gray-600 uppercase tracking-wider">Tx</span>
             <a
               href={`https://explorer.solana.com/tx/${campaign.tx_signature}?cluster=${import.meta.env.VITE_SOLANA_NETWORK || 'devnet'}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-sm text-solana-purple hover:underline font-mono"
+              className="text-xs text-solana-purple hover:underline font-mono"
             >
               {campaign.tx_signature.slice(0, 20)}...
             </a>
@@ -284,80 +271,70 @@ export default function CampaignDetails() {
 
       {/* GitHub App Install Banner */}
       {!isFinalized && !isCompleted && (
-        <div className="card mb-6 border-blue-500/20 bg-blue-500/[0.03]">
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-500/15 flex items-center justify-center flex-shrink-0">
-              <span className="text-lg">🔔</span>
-            </div>
-            <div className="flex-1">
-              <h3 className="text-sm font-semibold text-blue-300">Auto-notify contributors</h3>
-              <p className="text-xs text-gray-500 mt-1">
-                Install the RepoBounty GitHub App to automatically post reward notifications on
-                contributors&apos; PRs after finalization.
-              </p>
-              <a
-                href="https://github.com/apps/repobounty-ai/installations/new"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-block mt-2 text-xs bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 px-3 py-1.5 rounded-full transition-colors border border-blue-500/20"
-              >
-                Install GitHub App
-              </a>
-            </div>
+        <div className="card !border-blue-500/15 !bg-blue-500/[0.02] mb-5 flex items-center gap-3 !p-3">
+          <span className="text-sm">🔔</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-blue-300 font-medium">Auto-notify contributors</p>
+            <p className="text-[10px] text-gray-600 mt-0.5">
+              Install the GitHub App to post reward notifications on PRs.
+            </p>
           </div>
+          <a
+            href="https://github.com/apps/repobounty-ai/installations/new"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[10px] bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 px-2.5 py-1 rounded-md transition-colors border border-blue-500/15 flex-shrink-0"
+          >
+            Install
+          </a>
         </div>
       )}
 
       {/* Finalize Actions */}
       {canShowFinalizeCard && (
-        <div className="card mb-6 animate-fade-in-up" style={{ animationDelay: '150ms' }}>
-          <h2 className="text-lg font-semibold mb-4">Finalize Campaign</h2>
-          <p className="text-sm text-gray-500 mb-4">
-            The deadline has passed. Preview now saves a frozen allocation snapshot, and manual
-            finalization reuses that exact snapshot for the on-chain finalize call.
+        <div className="card mb-5 animate-fade-in-up" style={{ animationDelay: '100ms' }}>
+          <h2 className="text-sm font-semibold mb-2">Finalize Campaign</h2>
+          <p className="text-xs text-gray-500 mb-3">
+            Deadline passed. Preview saves a frozen snapshot; finalize commits it on-chain.
           </p>
           {!campaign.owner_github_username ? (
-            <p className="text-sm text-yellow-200">
-              Manual finalize is unavailable for this legacy campaign because no creator account was
-              stored. The backend auto-finalize worker is the remaining safe path.
+            <p className="text-xs text-yellow-200">
+              Manual finalize unavailable — no creator account stored. The auto-finalize worker will handle it.
             </p>
           ) : !user ? (
-            <p className="text-sm text-yellow-200">
-              Log in as @{campaign.owner_github_username} to run preview or manual finalize.
-              Otherwise wait for backend-controlled finalization.
+            <p className="text-xs text-yellow-200">
+              Log in as @{campaign.owner_github_username} to preview/finalize.
             </p>
           ) : !isOwner ? (
-            <p className="text-sm text-yellow-200">
-              Only @{campaign.owner_github_username} can run manual preview or finalize for this
-              campaign.
+            <p className="text-xs text-yellow-200">
+              Only @{campaign.owner_github_username} can preview or finalize.
             </p>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {!solanaReady && (
-                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-sm text-yellow-200">
-                  The backend is not connected to Solana right now. You can still inspect a preview,
-                  but on-chain finalization is disabled until the authority is configured again.
+                <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-lg p-2.5 text-xs text-yellow-200">
+                  Backend not connected to Solana. Preview is available but finalization is disabled.
                 </div>
               )}
-              <div className="flex gap-3">
+              <div className="flex gap-2">
                 <button
                   onClick={handlePreview}
                   disabled={previewing}
-                  className="btn-secondary text-sm"
+                  className="btn-secondary text-xs"
                 >
-                  {previewing ? 'Loading preview...' : 'Preview Allocations'}
+                  {previewing ? 'Loading...' : 'Preview'}
                 </button>
                 {preview && (
                   <button
                     onClick={handleFinalize}
                     disabled={finalizing || !solanaReady}
-                    className="btn-primary text-sm"
+                    className="btn-primary text-xs"
                   >
                     {finalizing
-                      ? 'Finalizing on Solana...'
+                      ? 'Finalizing...'
                       : solanaReady
                         ? 'Finalize on Solana'
-                        : 'Solana Backend Required'}
+                        : 'Solana Required'}
                   </button>
                 )}
               </div>
@@ -368,41 +345,36 @@ export default function CampaignDetails() {
 
       {/* Preview */}
       {preview && !isFinalized && (
-        <div className="card mb-6 border-yellow-500/20 animate-fade-in-up">
-          <h2 className="text-lg font-semibold mb-1">AI Allocation Preview</h2>
-          <p className="text-xs text-gray-500 mb-4">
-            Model: {preview.ai_model} | Source: {allocationModeLabel} | Snapshot v
-            {preview.snapshot.version}
-          </p>
-          <p className="text-xs text-gray-600 mb-4">
-            Saved at {formatDate(preview.snapshot.created_at)} for contribution window{' '}
-            {previewWindowLabel}. Finalize will use this exact snapshot unless campaign inputs
-            become stale and you regenerate it.
+        <div className="card mb-5 !border-yellow-500/15 animate-fade-in-up">
+          <h2 className="text-sm font-semibold mb-1">AI Allocation Preview</h2>
+          <p className="text-[10px] text-gray-600 mb-3">
+            {preview.ai_model} · {allocationModeLabel} · v{preview.snapshot.version}
+            {previewWindowLabel && <> · {previewWindowLabel}</>}
           </p>
           {preview.snapshot.contributor_notes && (
-            <p className="text-xs text-gray-600 mb-4">{preview.snapshot.contributor_notes}</p>
+            <p className="text-[10px] text-gray-600 mb-3">{preview.snapshot.contributor_notes}</p>
           )}
 
           {preview.contributors.length > 0 && (
             <div className="mb-4">
-              <h3 className="text-sm font-medium text-gray-400 mb-2">Contributor Stats</h3>
+              <h3 className="text-xs font-medium text-gray-500 mb-1.5">Contributors</h3>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full text-xs">
                   <thead>
-                    <tr className="text-left text-gray-500 border-b border-solana-border">
-                      <th className="pb-2">User</th>
-                      <th className="pb-2">Commits</th>
-                      <th className="pb-2">PRs</th>
-                      <th className="pb-2">Reviews</th>
+                    <tr className="text-left text-gray-600 border-b border-solana-border/50">
+                      <th className="pb-1.5 font-medium">User</th>
+                      <th className="pb-1.5 font-medium">Commits</th>
+                      <th className="pb-1.5 font-medium">PRs</th>
+                      <th className="pb-1.5 font-medium">Reviews</th>
                     </tr>
                   </thead>
                   <tbody>
                     {preview.contributors.map((c) => (
-                      <tr key={c.username} className="border-b border-solana-border/50">
-                        <td className="py-2 font-mono">@{c.username}</td>
-                        <td className="py-2">{c.commits}</td>
-                        <td className="py-2">{c.pull_requests}</td>
-                        <td className="py-2">{c.reviews}</td>
+                      <tr key={c.username} className="border-b border-solana-border/30">
+                        <td className="py-1.5 font-mono">@{c.username}</td>
+                        <td className="py-1.5">{c.commits}</td>
+                        <td className="py-1.5">{c.pull_requests}</td>
+                        <td className="py-1.5">{c.reviews}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -411,38 +383,37 @@ export default function CampaignDetails() {
             </div>
           )}
 
-          <h3 className="text-sm font-medium text-gray-400 mb-2">Proposed Allocations</h3>
-          <div className="space-y-3">
+          <h3 className="text-xs font-medium text-gray-500 mb-2">Proposed Allocations</h3>
+          <div className="space-y-2.5">
             {preview.allocations.map((a) => (
               <div key={a.contributor}>
-                <div className="flex items-center justify-between text-sm mb-1">
+                <div className="flex items-center justify-between text-xs mb-1">
                   <span className="font-mono">@{a.contributor}</span>
                   <span className="font-semibold">
-                    {(a.percentage / 100).toFixed(1)}% &middot; {formatSOL(a.amount)} SOL
+                    {(a.percentage / 100).toFixed(1)}% · {formatSOL(a.amount)} SOL
                   </span>
                 </div>
                 <AllocationBar percentage={a.percentage} />
-                {a.reasoning && <p className="text-xs text-gray-500 mt-1">{a.reasoning}</p>}
+                {a.reasoning && <p className="text-[10px] text-gray-600 mt-0.5">{a.reasoning}</p>}
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Finalized Allocations with Claim Buttons */}
+      {/* Finalized Allocations with Claim */}
       {isFinalized && campaign.allocations && campaign.allocations.length > 0 && (
-        <div className="card animate-fade-in-up" style={{ animationDelay: '100ms' }}>
-          <h2 className="text-lg font-semibold mb-4">Final Allocations (On-Chain)</h2>
-          <p className="text-xs text-gray-500 mb-4">
-            Claims send SOL to the wallet currently connected in Phantom, and that wallet must sign
-            a one-time proof before the backend submits the claim.
+        <div className="card animate-fade-in-up" style={{ animationDelay: '60ms' }}>
+          <h2 className="text-sm font-semibold mb-1">Final Allocations</h2>
+          <p className="text-[10px] text-gray-600 mb-4">
+            Connect your wallet and sign a proof to claim your share.
           </p>
           {!solanaReady && (
-            <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-sm text-yellow-200 mb-4">
-              The backend is not connected to Solana, so claiming is currently disabled.
+            <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-lg p-2.5 text-xs text-yellow-200 mb-3">
+              Solana not connected — claiming is disabled.
             </div>
           )}
-          <div className="space-y-4">
+          <div className="space-y-2">
             {campaign.allocations.map((a) => {
               const isOwnAllocation = user?.github_username === a.contributor;
               const isCurrentlyClaiming = claiming === a.contributor;
@@ -450,44 +421,41 @@ export default function CampaignDetails() {
               return (
                 <div
                   key={a.contributor}
-                  className={`p-4 rounded-xl border transition-all duration-300 ease-out-expo ${
+                  className={`p-3 rounded-lg border transition-all duration-200 ${
                     a.claimed
-                      ? 'border-solana-green/30 bg-solana-green/[0.03]'
-                      : 'border-solana-border hover:border-solana-purple/30 hover:-translate-y-0.5'
+                      ? 'border-solana-green/20 bg-solana-green/[0.02]'
+                      : 'border-solana-border hover:border-solana-border-light'
                   }`}
                 >
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono font-medium">@{a.contributor}</span>
+                      <span className="font-mono text-xs font-medium">@{a.contributor}</span>
                       {a.claimed && <span className="badge badge-completed text-[10px]">Claimed</span>}
                     </div>
-                    <span className="font-bold text-solana-green">
-                      {(a.percentage / 100).toFixed(1)}% &middot; {formatSOL(a.amount)} SOL
+                    <span className="text-xs font-bold text-solana-green">
+                      {(a.percentage / 100).toFixed(1)}% · {formatSOL(a.amount)} SOL
                     </span>
                   </div>
                   <AllocationBar percentage={a.percentage} />
-                  {a.reasoning && <p className="text-xs text-gray-500 mt-1">{a.reasoning}</p>}
+                  {a.reasoning && <p className="text-[10px] text-gray-600 mt-1">{a.reasoning}</p>}
                   {isOwnAllocation && !a.claimed && (
-                    <div className="mt-3 pt-3 border-t border-solana-border/50">
+                    <div className="mt-2 pt-2 border-t border-solana-border/30">
                       {!publicKey ? (
                         <button
                           onClick={() => setVisible(true)}
-                          className="btn-primary text-xs py-1.5 px-4"
+                          className="btn-primary text-[10px] !py-1 !px-3"
                         >
-                          Connect Wallet to Claim
+                          Connect Wallet
                         </button>
                       ) : !solanaReady ? (
-                        <button
-                          disabled
-                          className="btn-primary text-xs py-1.5 px-4 opacity-60 cursor-not-allowed"
-                        >
-                          Solana Backend Required
+                        <button disabled className="btn-primary text-[10px] !py-1 !px-3 opacity-50">
+                          Solana Required
                         </button>
                       ) : (
                         <button
                           onClick={() => handleClaim(a.contributor)}
                           disabled={isCurrentlyClaiming}
-                          className="btn-primary text-xs py-1.5 px-4"
+                          className="btn-primary text-[10px] !py-1 !px-3"
                         >
                           {isCurrentlyClaiming ? 'Claiming...' : `Claim ${formatSOL(a.amount)} SOL`}
                         </button>
@@ -495,8 +463,8 @@ export default function CampaignDetails() {
                     </div>
                   )}
                   {a.claimed && a.claimant_wallet && (
-                    <p className="text-xs text-gray-600 mt-2 font-mono">
-                      Claimed by {a.claimant_wallet.slice(0, 8)}...{a.claimant_wallet.slice(-8)}
+                    <p className="text-[10px] text-gray-600 mt-1 font-mono">
+                      → {a.claimant_wallet.slice(0, 8)}...{a.claimant_wallet.slice(-8)}
                     </p>
                   )}
                 </div>
@@ -505,8 +473,8 @@ export default function CampaignDetails() {
           </div>
 
           {campaign.finalized_at && (
-            <p className="text-xs text-gray-600 mt-6 pt-4 border-t border-solana-border">
-              Finalized at {formatDate(campaign.finalized_at)}
+            <p className="text-[10px] text-gray-600 mt-4 pt-3 border-t border-solana-border/50">
+              Finalized {formatDate(campaign.finalized_at)}
             </p>
           )}
         </div>
@@ -514,8 +482,8 @@ export default function CampaignDetails() {
 
       {/* Error */}
       {error && (
-        <div className="card border-red-500/30 bg-red-500/[0.05] mt-6">
-          <p className="text-sm text-red-400">{error}</p>
+        <div className="bg-red-500/5 border border-red-500/15 rounded-lg p-3 text-xs text-red-400 mt-5">
+          {error}
         </div>
       )}
     </div>

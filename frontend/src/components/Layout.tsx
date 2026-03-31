@@ -12,33 +12,34 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     return (
       <Link
         to={path}
-        className={`text-sm font-medium transition-all duration-300 relative py-1 ${
-          active ? 'text-white' : 'text-gray-400 hover:text-white'
+        className={`text-sm font-medium px-3 py-1.5 rounded-md transition-all duration-200 ${
+          active
+            ? 'bg-solana-purple/15 text-solana-purple'
+            : 'text-gray-500 hover:text-gray-200 hover:bg-solana-card'
         }`}
       >
         {label}
-        {active && (
-          <span className="absolute -bottom-[1.125rem] left-0 right-0 h-[2px] bg-gradient-to-r from-solana-purple to-solana-green rounded-full animate-fade-in" />
-        )}
       </Link>
     );
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-solana-dark bg-dots">
-      <header className="sticky top-0 z-50 border-b border-solana-border bg-solana-dark/80 backdrop-blur-xl">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-8">
-            <Link to="/" className="flex items-center gap-3 group">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-solana-purple to-solana-green flex items-center justify-center font-bold text-sm shadow-lg shadow-solana-purple/25 transition-all duration-500 ease-out-expo group-hover:shadow-xl group-hover:shadow-solana-purple/40 group-hover:scale-105">
+    <div className="min-h-screen flex flex-col bg-solana-dark bg-vignette">
+      <header className="border-b border-solana-border">
+        <div className="max-w-6xl mx-auto px-6 py-3.5 flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <Link to="/" className="flex items-center gap-2.5 group">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-solana-purple to-solana-green flex items-center justify-center font-bold text-[11px] transition-transform duration-300 group-hover:scale-105">
                 RB
               </div>
-              <span className="text-lg font-bold gradient-text hidden sm:inline transition-opacity duration-300">
-                RepoBounty AI
+              <span className="text-sm font-bold text-white hidden sm:inline tracking-tight">
+                RepoBounty
               </span>
             </Link>
 
-            <nav className="hidden md:flex items-center gap-6">
+            <div className="h-5 w-px bg-solana-border hidden md:block" />
+
+            <nav className="hidden md:flex items-center gap-1">
               {navLink('/', 'Campaigns')}
               {navLink('/create', 'Create')}
               {navLink('/profile', 'Profile')}
@@ -50,17 +51,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <div className="flex items-center gap-3">
                 <Link
                   to="/profile"
-                  className="flex items-center gap-2 hover:opacity-80 transition-all duration-300"
+                  className="flex items-center gap-2 hover:opacity-80 transition-opacity duration-200"
                 >
                   <img
                     src={user.avatar_url}
                     alt={user.github_username}
-                    className="w-8 h-8 rounded-full ring-2 ring-solana-border transition-all duration-300 hover:ring-solana-purple/50 hover:scale-110"
+                    className="w-7 h-7 rounded-full ring-1 ring-solana-border"
                   />
+                  <span className="text-xs text-gray-400 hidden sm:inline">
+                    {user.github_username}
+                  </span>
                 </Link>
                 <button
                   onClick={logout}
-                  className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                  className="text-xs text-gray-600 hover:text-gray-300 transition-colors"
                 >
                   Logout
                 </button>
@@ -73,39 +77,30 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
 
         {/* Mobile nav */}
-        <div className="md:hidden border-t border-solana-border px-6 py-2 flex items-center gap-6">
+        <div className="md:hidden border-t border-solana-border px-6 py-2 flex items-center gap-1">
           {navLink('/', 'Campaigns')}
           {navLink('/create', 'Create')}
           {navLink('/profile', 'Profile')}
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl mx-auto px-6 py-8 w-full">{children}</main>
+      <main className="flex-1 max-w-6xl mx-auto px-6 py-8 w-full">{children}</main>
 
-      <footer className="border-t border-solana-border py-8 mt-8">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-solana-purple to-solana-green flex items-center justify-center font-bold text-[10px]">
-                RB
-              </div>
-              <span className="text-sm text-gray-500">RepoBounty AI</span>
-            </div>
-            <div className="flex items-center gap-6 text-xs text-gray-500">
-              <span>&copy; {new Date().getFullYear()} RepoBounty AI. Built on Solana</span>
-              <a
-                href="https://github.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover:text-gray-300 transition-colors"
-              >
-                GitHub
-              </a>
-              <span className="hover:text-gray-300 transition-colors cursor-default">
-                Documentation
-              </span>
-              <span className="hover:text-gray-300 transition-colors cursor-default">Support</span>
-            </div>
+      <footer className="border-t border-solana-border py-5">
+        <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">
+          <span className="text-xs text-gray-600">
+            &copy; {new Date().getFullYear()} RepoBounty AI
+          </span>
+          <div className="flex items-center gap-4 text-xs text-gray-600">
+            <span>Built on Solana</span>
+            <a
+              href="https://github.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-gray-400 transition-colors"
+            >
+              GitHub
+            </a>
           </div>
         </div>
       </footer>
