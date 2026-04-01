@@ -1,0 +1,6 @@
+Repo-local Codex instructions:
+
+- Use AGENTS.md as the primary source of repository workflow rules.
+- Treat docs/superpowers/plans/ as executable implementation plans.
+- Treat docs/superpowers/specs/ as architecture references for tasks that match those plans.
+- When docs mention superpowers:* workflows, execute them locally by working step-by-step, verifying each phase, and keeping progress explicit.
