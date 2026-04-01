@@ -68,6 +68,7 @@ func migrate(db *sql.DB) error {
 		email TEXT NOT NULL DEFAULT '',
 		avatar_url TEXT NOT NULL DEFAULT '',
 		wallet_address TEXT NOT NULL DEFAULT '',
+		github_token TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL
 	);
 
@@ -105,6 +106,7 @@ func migrate(db *sql.DB) error {
 
 	for _, stmt := range []string{
 		`ALTER TABLE campaigns ADD COLUMN owner_github_username TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN github_token TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return err
@@ -218,9 +220,9 @@ func (s *SQLiteStore) GetUser(username string) (*User, error) {
 	var u User
 	var createdAt string
 	err := s.db.QueryRow(`
-		SELECT github_username, github_id, email, avatar_url, wallet_address, created_at
+		SELECT github_username, github_id, email, avatar_url, wallet_address, github_token, created_at
 		FROM users WHERE github_username = ?`, username,
-	).Scan(&u.GitHubUsername, &u.GitHubID, &u.Email, &u.AvatarURL, &u.WalletAddress, &createdAt)
+	).Scan(&u.GitHubUsername, &u.GitHubID, &u.Email, &u.AvatarURL, &u.WalletAddress, &u.GitHubToken, &createdAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -242,13 +244,14 @@ func (s *SQLiteStore) CreateUser(u *User) error {
 			GitHubID:       u.GitHubID,
 			Email:          u.Email,
 			AvatarURL:      u.AvatarURL,
+			GitHubToken:    u.GitHubToken,
 			CreatedAt:      time.Now(),
 		}
 	}
 	_, err := s.db.Exec(`
-		INSERT INTO users (github_username, github_id, email, avatar_url, wallet_address, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		u.GitHubUsername, u.GitHubID, u.Email, u.AvatarURL, u.WalletAddress,
+		INSERT INTO users (github_username, github_id, email, avatar_url, wallet_address, github_token, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		u.GitHubUsername, u.GitHubID, u.Email, u.AvatarURL, u.WalletAddress, u.GitHubToken,
 		u.CreatedAt.Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -262,9 +265,9 @@ func (s *SQLiteStore) CreateUser(u *User) error {
 
 func (s *SQLiteStore) UpdateUser(u *User) error {
 	res, err := s.db.Exec(`
-		UPDATE users SET github_id=?, email=?, avatar_url=?, wallet_address=?, created_at=?
+		UPDATE users SET github_id=?, email=?, avatar_url=?, wallet_address=?, github_token=?, created_at=?
 		WHERE github_username=?`,
-		u.GitHubID, u.Email, u.AvatarURL, u.WalletAddress,
+		u.GitHubID, u.Email, u.AvatarURL, u.WalletAddress, u.GitHubToken,
 		u.CreatedAt.Format(time.RFC3339Nano), u.GitHubUsername,
 	)
 	if err != nil {

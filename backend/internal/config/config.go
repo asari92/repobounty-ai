@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,6 +30,18 @@ type Config struct {
 	DatabasePath        string
 }
 
+func decodeBase64PrivateKey(encoded string) string {
+	if encoded == "" {
+		return ""
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		// If it's not Base64, return as-is (already PEM)
+		return encoded
+	}
+	return string(decoded)
+}
+
 func Load() (*Config, error) {
 	if err := loadDotEnv(); err != nil {
 		return nil, fmt.Errorf("load .env: %w", err)
@@ -52,9 +65,9 @@ func Load() (*Config, error) {
 		SolanaPrivateKey:    os.Getenv("SOLANA_PRIVATE_KEY"),
 		ProgramID:           os.Getenv("PROGRAM_ID"),
 		Env:                 envOrDefault("ENV", "development"),
-		AllowedOrigins:      os.Getenv("ALLOWED_ORIGINS"),
+			AllowedOrigins:      os.Getenv("ALLOWED_ORIGINS"),
 		GitHubAppID:         envOrDefaultInt64("GITHUB_APP_ID", 0),
-		GitHubAppPrivateKey: os.Getenv("GITHUB_APP_PRIVATE_KEY"),
+		GitHubAppPrivateKey: decodeBase64PrivateKey(os.Getenv("GITHUB_APP_PRIVATE_KEY")),
 		DatabasePath:        databasePath,
 	}
 	if cfg.Env == "production" && cfg.JWTSecret == "" {

@@ -43,6 +43,7 @@ type User struct {
 	GitHubID       int       `json:"github_id"`
 	Email          string    `json:"email,omitempty"`
 	AvatarURL      string    `json:"avatar_url"`
+	GitHubToken    string    `json:"github_token,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 

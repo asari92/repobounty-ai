@@ -54,14 +54,14 @@ func (c *Client) generateJWT() (string, error) {
 	return token.SignedString(key)
 }
 
-type installationResponse struct {
-	ID        int64 `json:"id"`
-	AccountID int64 `json:"account_id"`
+type installationAccount struct {
+	Login string `json:"login"`
+	ID    int64  `json:"id"`
 }
 
-type installationsResponse struct {
-	TotalCount    int                    `json:"total_count"`
-	Installations []installationResponse `json:"installations"`
+type installationResponse struct {
+	ID      int64                `json:"id"`
+	Account installationAccount `json:"account"`
 }
 
 func (c *Client) GetInstallationToken(ctx context.Context, installationID int64) (string, error) {
@@ -131,21 +131,14 @@ func (c *Client) GetAppInstallation(ctx context.Context, repo string) (*installa
 		return nil, fmt.Errorf("list installations: %d", resp.StatusCode)
 	}
 
-	var result installationsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	var installations []installationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&installations); err != nil {
 		return nil, fmt.Errorf("decode installations: %w", err)
 	}
 
-	for _, inst := range result.Installations {
-		if inst.AccountID == 0 {
-			continue
-		}
-		accountLogin, err := c.getAccountLogin(ctx, jwtToken, inst.AccountID)
-		if err != nil {
-			continue
-		}
-		if accountLogin == owner {
-			return &inst, nil
+	for i, inst := range installations {
+		if strings.EqualFold(inst.Account.Login, owner) {
+			return &installations[i], nil
 		}
 	}
 
@@ -380,4 +373,79 @@ type Allocation struct {
 	Percentage  uint16
 	Amount      uint64
 	Claimed     bool
+}
+
+type CreateIssueBody struct {
+	Campaign string
+	PoolSOL  string
+	Deadline string
+	CampaignURL string
+	Repo string
+}
+
+func (c *Client) CreateCampaignIssue(
+	ctx context.Context,
+	installToken string,
+	repo string,
+	body *CreateIssueBody,
+) error {
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid repo format: %s", repo)
+	}
+	owner, name := parts[0], parts[1]
+
+	title := fmt.Sprintf("🎉 RepoBounty Campaign: %s SOL Rewards Available", body.PoolSOL)
+	
+	issueBody := fmt.Sprintf(
+		"# 🚀 RepoBounty AI Campaign\n\n"+
+			"A sponsor is rewarding **%s SOL** for contributions to this repository!\n\n"+
+			"**Campaign:** %s\n"+
+			"**Total Reward Pool:** %s SOL\n"+
+			"**Deadline:** %s\n\n"+
+			"## About RepoBounty AI\n"+
+			"RepoBounty AI uses artificial intelligence to analyze code contributions and automatically allocate rewards based on impact.\n\n"+
+			"→ [View Campaign Details](%s)\n\n"+
+			"*This issue was created automatically by RepoBounty AI.*",
+		body.PoolSOL,
+		body.Campaign,
+		body.PoolSOL,
+		body.Deadline,
+		body.CampaignURL,
+	)
+
+	issuePayload := struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}{
+		Title: title,
+		Body:  issueBody,
+	}
+
+	payload, err := json.Marshal(issuePayload)
+	if err != nil {
+		return fmt.Errorf("marshal issue: %w", err)
+	}
+
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues", owner, name)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+installToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("create issue: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("create issue: %d %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
 }
