@@ -3,7 +3,9 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -28,7 +30,14 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	_ = godotenv.Load()
+	if err := loadDotEnv(); err != nil {
+		return nil, fmt.Errorf("load .env: %w", err)
+	}
+
+	databasePath, err := resolveDatabasePath(envOrDefault("DATABASE_PATH", "repobounty.db"))
+	if err != nil {
+		return nil, fmt.Errorf("resolve DATABASE_PATH: %w", err)
+	}
 
 	cfg := &Config{
 		Port:                envOrDefault("PORT", "8080"),
@@ -46,7 +55,7 @@ func Load() (*Config, error) {
 		AllowedOrigins:      os.Getenv("ALLOWED_ORIGINS"),
 		GitHubAppID:         envOrDefaultInt64("GITHUB_APP_ID", 0),
 		GitHubAppPrivateKey: os.Getenv("GITHUB_APP_PRIVATE_KEY"),
-		DatabasePath:        envOrDefault("DATABASE_PATH", "repobounty.db"),
+		DatabasePath:        databasePath,
 	}
 	if cfg.Env == "production" && cfg.JWTSecret == "" {
 		return nil, fmt.Errorf("JWT_SECRET is required in production")
@@ -55,6 +64,107 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("JWT_SECRET must be at least 32 characters in production")
 	}
 	return cfg, nil
+}
+
+func loadDotEnv() error {
+	for _, path := range dotEnvCandidates() {
+		if path == "" {
+			continue
+		}
+		if _, err := os.Stat(path); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if err := godotenv.Load(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func dotEnvCandidates() []string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+
+	candidates := []string{filepath.Join(cwd, ".env")}
+	if backendRoot, ok := findBackendRootFrom(cwd); ok {
+		candidates = append(candidates, filepath.Join(filepath.Dir(backendRoot), ".env"))
+	}
+	return uniquePaths(candidates)
+}
+
+func resolveDatabasePath(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	switch {
+	case value == "":
+		return "", nil
+	case value == ":memory:", strings.HasPrefix(value, "file:"):
+		return value, nil
+	case filepath.IsAbs(value):
+		return filepath.Clean(value), nil
+	}
+
+	if backendRoot, ok := findBackendRoot(); ok {
+		return filepath.Join(backendRoot, value), nil
+	}
+
+	return filepath.Abs(value)
+}
+
+func findBackendRoot() (string, bool) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", false
+	}
+	return findBackendRootFrom(cwd)
+}
+
+func findBackendRootFrom(start string) (string, bool) {
+	dir := filepath.Clean(start)
+	for {
+		if isFile(filepath.Join(dir, "go.mod")) {
+			return dir, true
+		}
+
+		backendDir := filepath.Join(dir, "backend")
+		if isFile(filepath.Join(backendDir, "go.mod")) {
+			return backendDir, true
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+	}
+}
+
+func isFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
+}
+
+func uniquePaths(paths []string) []string {
+	seen := make(map[string]struct{}, len(paths))
+	result := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		result = append(result, path)
+	}
+	return result
 }
 
 func envOrDefault(key, fallback string) string {

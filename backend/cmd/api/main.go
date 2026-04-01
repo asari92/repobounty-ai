@@ -26,7 +26,7 @@ func main() {
 		log.Fatal("failed to load config:", err)
 	}
 
-	env := os.Getenv("ENV")
+	env := cfg.Env
 	if env == "" {
 		env = "development"
 	}
@@ -48,10 +48,14 @@ func main() {
 		}
 		campaignStore = sqliteStore
 		defer sqliteStore.Close()
-		logger.Info("using SQLite storage", zap.String("path", cfg.DatabasePath))
+		logger.Info(
+			"using SQLite storage",
+			zap.String("store_type", "sqlite"),
+			zap.String("resolved_database_path", cfg.DatabasePath),
+		)
 	} else {
 		campaignStore = store.New()
-		logger.Info("using in-memory storage")
+		logger.Info("using in-memory storage", zap.String("store_type", "memory"))
 	}
 	ghClient := github.NewClientWithEnv(cfg.GitHubToken, env == "production")
 	aiAllocator := ai.NewAllocator(cfg.OpenRouterAPIKey, cfg.Model)
@@ -79,6 +83,7 @@ func main() {
 		zap.Bool("solana_configured", solClient.IsConfigured()),
 		zap.Bool("github_token_set", cfg.GitHubToken != ""),
 		zap.String("ai_model", aiAllocator.Model()),
+		zap.String("resolved_database_path", cfg.DatabasePath),
 	)
 
 	router := handler.NewRouter(handlers, env)

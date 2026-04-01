@@ -94,10 +94,24 @@ func (h *Handlers) CreateCampaignChallenge(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := h.store.CreateWalletChallenge(challenge); err != nil {
+		h.logWalletChallengeEvent(
+			"create_failed",
+			challenge.ChallengeID,
+			challenge.Action,
+			challenge.WalletAddress,
+			"lookup_result", "store_error",
+		)
 		log.Printf("create challenge: store create failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to create wallet challenge")
 		return
 	}
+	h.logWalletChallengeEvent(
+		"created",
+		challenge.ChallengeID,
+		challenge.Action,
+		challenge.WalletAddress,
+		"lookup_result", "stored",
+	)
 
 	writeJSON(w, http.StatusCreated, models.WalletChallengeResponse{
 		ChallengeID:   challenge.ChallengeID,
@@ -180,10 +194,24 @@ func (h *Handlers) ClaimChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.CreateWalletChallenge(challenge); err != nil {
+		h.logWalletChallengeEvent(
+			"create_failed",
+			challenge.ChallengeID,
+			challenge.Action,
+			challenge.WalletAddress,
+			"lookup_result", "store_error",
+		)
 		log.Printf("claim challenge: store create failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to create wallet challenge")
 		return
 	}
+	h.logWalletChallengeEvent(
+		"created",
+		challenge.ChallengeID,
+		challenge.Action,
+		challenge.WalletAddress,
+		"lookup_result", "stored",
+	)
 
 	writeJSON(w, http.StatusCreated, models.WalletChallengeResponse{
 		ChallengeID:   challenge.ChallengeID,
@@ -227,16 +255,44 @@ func (h *Handlers) loadAndVerifyWalletChallenge(
 	signature string,
 ) (*models.WalletChallenge, error) {
 	if challengeID == "" || signature == "" {
+		h.logWalletChallengeEvent(
+			"lookup_rejected",
+			challengeID,
+			action,
+			walletAddress,
+			"lookup_result", "missing_wallet_proof",
+		)
 		return nil, errors.New("wallet proof is required")
 	}
 
 	challenge, err := h.store.GetWalletChallenge(challengeID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
+			h.logWalletChallengeEvent(
+				"lookup_failed",
+				challengeID,
+				action,
+				walletAddress,
+				"lookup_result", "not_found",
+			)
 			return nil, errors.New("wallet proof challenge was not found")
 		}
+		h.logWalletChallengeEvent(
+			"lookup_failed",
+			challengeID,
+			action,
+			walletAddress,
+			"lookup_result", "store_error",
+		)
 		return nil, err
 	}
+	h.logWalletChallengeEvent(
+		"lookup_succeeded",
+		challengeID,
+		action,
+		walletAddress,
+		"lookup_result", "found",
+	)
 	if challenge.Action != action {
 		return nil, errors.New("wallet proof challenge action did not match")
 	}
@@ -257,16 +313,66 @@ func (h *Handlers) loadAndVerifyWalletChallenge(
 }
 
 func (h *Handlers) markWalletChallengeUsed(challengeID string) error {
+	challenge, lookupErr := h.store.GetWalletChallenge(challengeID)
+	if lookupErr != nil {
+		if errors.Is(lookupErr, store.ErrNotFound) {
+			h.logWalletChallengeEvent(
+				"mark_used_failed",
+				challengeID,
+				"",
+				"",
+				"mark_used_result", "not_found",
+			)
+			return errors.New("wallet proof challenge was not found")
+		}
+		h.logWalletChallengeEvent(
+			"mark_used_failed",
+			challengeID,
+			"",
+			"",
+			"mark_used_result", "lookup_error",
+		)
+		return lookupErr
+	}
+
 	err := h.store.MarkWalletChallengeUsed(challengeID, time.Now().UTC())
 	if err == nil {
+		h.logWalletChallengeEvent(
+			"mark_used_succeeded",
+			challengeID,
+			challenge.Action,
+			challenge.WalletAddress,
+			"mark_used_result", "used",
+		)
 		return nil
 	}
 	if errors.Is(err, store.ErrAlreadyUsed) {
+		h.logWalletChallengeEvent(
+			"mark_used_failed",
+			challengeID,
+			challenge.Action,
+			challenge.WalletAddress,
+			"mark_used_result", "already_used",
+		)
 		return errors.New("wallet proof challenge has already been used")
 	}
 	if errors.Is(err, store.ErrNotFound) {
+		h.logWalletChallengeEvent(
+			"mark_used_failed",
+			challengeID,
+			challenge.Action,
+			challenge.WalletAddress,
+			"mark_used_result", "not_found",
+		)
 		return errors.New("wallet proof challenge was not found")
 	}
+	h.logWalletChallengeEvent(
+		"mark_used_failed",
+		challengeID,
+		challenge.Action,
+		challenge.WalletAddress,
+		"mark_used_result", "store_error",
+	)
 	return err
 }
 
