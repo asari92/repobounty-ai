@@ -110,6 +110,10 @@ export default function CreateCampaign() {
         deadline: deadlineRFC3339,
         sponsor_wallet: publicKey.toBase58(),
       });
+      if (!challenge.challenge_id?.trim()) {
+        throw new Error('Wallet proof challenge was not returned by the backend.');
+      }
+
       const signatureBytes = await signMessage(new TextEncoder().encode(challenge.message));
 
       const result = await api.createCampaign({

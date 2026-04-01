@@ -126,7 +126,7 @@ func (s *SQLiteStore) Create(c *models.Campaign) error {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.CampaignID, c.CampaignPDA, c.VaultAddress, c.Repo, c.PoolAmount, c.TotalClaimed,
 		c.Deadline.Format(time.RFC3339Nano), string(c.State), c.Authority, c.Sponsor, c.OwnerGitHubUsername,
-		string(allocs), c.CreatedAt.Format(time.RFC3339Nano), nilifyTime(c.FinalizedAt), c.TxSignature,
+		string(allocs), c.CreatedAt.Format(time.RFC3339Nano), nullableTime(c.FinalizedAt), c.TxSignature,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
@@ -175,7 +175,7 @@ func (s *SQLiteStore) Update(c *models.Campaign) error {
 		WHERE campaign_id=?`,
 		c.CampaignPDA, c.VaultAddress, c.Repo, c.PoolAmount, c.TotalClaimed,
 		c.Deadline.Format(time.RFC3339Nano), string(c.State), c.Authority, c.Sponsor, c.OwnerGitHubUsername,
-		string(allocs), c.CreatedAt.Format(time.RFC3339Nano), nilifyTime(c.FinalizedAt),
+		string(allocs), c.CreatedAt.Format(time.RFC3339Nano), nullableTime(c.FinalizedAt),
 		c.TxSignature, c.CampaignID,
 	)
 	if err != nil {
@@ -302,7 +302,7 @@ func (s *SQLiteStore) CreateWalletChallenge(challenge *models.WalletChallenge) e
 		challenge.PayloadJSON,
 		challenge.CreatedAt.Format(time.RFC3339Nano),
 		challenge.ExpiresAt.Format(time.RFC3339Nano),
-		nilifyTime(challenge.UsedAt),
+		nullableTime(challenge.UsedAt),
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
@@ -434,7 +434,7 @@ func (s *SQLiteStore) SaveFinalizeSnapshot(snapshot *models.FinalizeSnapshot) er
 		snapshot.ContributorNotes,
 		snapshot.CreatedAt.Format(time.RFC3339Nano),
 		snapshot.ApprovedByGitHubUsername,
-		nilifyTime(snapshot.ApprovedAt),
+		nullableTime(snapshot.ApprovedAt),
 	)
 	if err != nil {
 		return fmt.Errorf("insert finalize snapshot: %w", err)
@@ -574,9 +574,9 @@ func (s *SQLiteStore) scanCampaign(scanner interface{ Scan(...interface{}) error
 	return &c, nil
 }
 
-func nilifyTime(t *time.Time) string {
+func nullableTime(t *time.Time) any {
 	if t == nil {
-		return ""
+		return nil
 	}
 	return t.Format(time.RFC3339Nano)
 }

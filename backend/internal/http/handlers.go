@@ -38,10 +38,45 @@ func isValidSolanaAddress(addr string) bool {
 	return base58Pattern.MatchString(addr)
 }
 
+type githubService interface {
+	RepositoryExists(ctx context.Context, repo string) (bool, error)
+	FetchContributionWindowData(
+		ctx context.Context,
+		repo string,
+		windowStart time.Time,
+		windowEnd time.Time,
+	) (*github.ContributionWindowData, error)
+}
+
+type solanaService interface {
+	IsConfigured() bool
+	AuthorityAddress() string
+	ListCampaigns(ctx context.Context) ([]*models.Campaign, error)
+	GetCampaign(ctx context.Context, campaignID string) (*models.Campaign, error)
+	GetBalance(ctx context.Context, wallet string) (uint64, error)
+	CreateCampaign(
+		ctx context.Context,
+		campaignID string,
+		repo string,
+		poolAmount uint64,
+		deadline int64,
+		sponsorPubkey string,
+	) (string, string, string, error)
+	BuildFundTransaction(
+		ctx context.Context,
+		campaignID string,
+		poolAmount uint64,
+		sponsorPubkey string,
+	) (*solana.FundTransaction, error)
+	FinalizeCampaign(ctx context.Context, campaignID string, allocations []solana.AllocationInput) (string, error)
+	ClaimAllocation(ctx context.Context, campaignID, contributorGitHub, contributorWallet string) (string, error)
+}
+
 type Handlers struct {
 	store       store.CampaignStore
-	github      *github.Client
-	solana      *solana.Client
+	storeType   string
+	github      githubService
+	solana      solanaService
 	ai          *ai.Allocator
 	jwt         *auth.JWTManager
 	githubOAuth *auth.GitHubOAuth
@@ -65,8 +100,8 @@ type allocationResult struct {
 
 func NewHandlers(
 	s store.CampaignStore,
-	gh *github.Client,
-	sol *solana.Client,
+	gh githubService,
+	sol solanaService,
 	alloc *ai.Allocator,
 	jwt *auth.JWTManager,
 	githubOAuth *auth.GitHubOAuth,
@@ -74,6 +109,7 @@ func NewHandlers(
 ) *Handlers {
 	return &Handlers{
 		store:       s,
+		storeType:   detectStoreType(s),
 		github:      gh,
 		solana:      sol,
 		ai:          alloc,
@@ -83,6 +119,45 @@ func NewHandlers(
 		oauthStates: make(map[string]time.Time),
 		claimLocks:  sync.Map{},
 	}
+}
+
+func detectStoreType(s store.CampaignStore) string {
+	switch s.(type) {
+	case *store.SQLiteStore:
+		return "sqlite"
+	case *store.Store:
+		return "memory"
+	default:
+		return fmt.Sprintf("%T", s)
+	}
+}
+
+func (h *Handlers) resolvedDatabasePath() string {
+	if h == nil || h.config == nil || h.config.DatabasePath == "" {
+		return "in-memory"
+	}
+	return h.config.DatabasePath
+}
+
+func (h *Handlers) logWalletChallengeEvent(
+	event string,
+	challengeID string,
+	action models.WalletChallengeAction,
+	walletAddress string,
+	extra ...string,
+) {
+	parts := []string{
+		fmt.Sprintf("event=%s", event),
+		fmt.Sprintf("challenge_id=%s", challengeID),
+		fmt.Sprintf("action=%s", action),
+		fmt.Sprintf("wallet_address=%s", walletAddress),
+		fmt.Sprintf("store_type=%s", h.storeType),
+		fmt.Sprintf("database_path=%s", h.resolvedDatabasePath()),
+	}
+	for i := 0; i+1 < len(extra); i += 2 {
+		parts = append(parts, fmt.Sprintf("%s=%s", extra[i], extra[i+1]))
+	}
+	log.Printf("wallet proof %s", strings.Join(parts, " "))
 }
 
 func (h *Handlers) ListCampaigns(w http.ResponseWriter, r *http.Request) {
