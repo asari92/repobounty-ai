@@ -1085,35 +1085,26 @@ func (h *Handlers) createCampaignIssue(ctx context.Context, campaign *models.Cam
 		log.Printf("createCampaignIssue: GitHub App not configured (app_id=%d, has_key=%v)", h.config.GitHubAppID, h.config.GitHubAppPrivateKey != "")
 	}
 
-	// Fallback to user's GitHub token
-	if user == nil {
-		log.Printf("createCampaignIssue: user is nil, cannot create issue")
-		return
-	}
-	
-	log.Printf("createCampaignIssue: attempting user token method for user=%s (token_length=%d)", user.GitHubUsername, len(user.GitHubToken))
-	
-	if user.GitHubToken == "" {
-		log.Printf("createCampaignIssue: user %s has no GitHub token", user.GitHubUsername)
-		log.Printf("campaign issue creation skipped for %s: no GitHub App or user token available", campaign.CampaignID)
-		return
+	// Fallback to GITHUB_TOKEN from .env
+	if h.config.GitHubToken != "" {
+		log.Printf("createCampaignIssue: attempting .env GITHUB_TOKEN fallback")
+		githubClient := github.NewClient(h.config.GitHubToken)
+		amountSOL := fmt.Sprintf("%.2f", float64(campaign.PoolAmount)/1e9)
+		err := githubClient.CreateCampaignIssue(ctx, campaign.Repo, &github.CreateIssueBody{
+			Campaign:    campaign.CampaignID,
+			PoolSOL:     amountSOL,
+			Deadline:    campaign.Deadline.Format("2006-01-02 15:04:05 UTC"),
+			CampaignURL: fmt.Sprintf("%s/campaign/%s", h.config.FrontendURL, campaign.CampaignID),
+			Repo:        campaign.Repo,
+		})
+		if err == nil {
+			log.Printf("createCampaignIssue: ✓ created campaign issue via .env GITHUB_TOKEN for repo %s", campaign.Repo)
+			return
+		}
+		log.Printf("createCampaignIssue: failed to create issue via .env GITHUB_TOKEN: %v", err)
 	}
 
-	githubClient := github.NewClient(user.GitHubToken)
-	amountSOL := fmt.Sprintf("%.2f", float64(campaign.PoolAmount)/1e9)
-	err := githubClient.CreateCampaignIssue(ctx, campaign.Repo, &github.CreateIssueBody{
-		Campaign:    campaign.CampaignID,
-		PoolSOL:     amountSOL,
-		Deadline:    campaign.Deadline.Format("2006-01-02 15:04:05 UTC"),
-		CampaignURL: fmt.Sprintf("%s/campaign/%s", h.config.FrontendURL, campaign.CampaignID),
-		Repo:        campaign.Repo,
-	})
-	if err == nil {
-		log.Printf("createCampaignIssue: ✓ successfully created campaign issue via user token for repo %s", campaign.Repo)
-		return
-	}
-	log.Printf("createCampaignIssue: failed to create issue via user token: %v", err)
-	log.Printf("campaign issue creation skipped for %s: no GitHub App or user token available", campaign.CampaignID)
+	log.Printf("createCampaignIssue: all methods failed for campaign=%s repo=%s", campaign.CampaignID, campaign.Repo)
 }
 
 func (h *Handlers) GetGitHubAuthURL(w http.ResponseWriter, r *http.Request) {
