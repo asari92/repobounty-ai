@@ -14,7 +14,7 @@ repobounty = "97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
