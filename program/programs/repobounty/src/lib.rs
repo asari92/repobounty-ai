@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy");
+declare_id!("97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo");
 
 /// Maximum repo identifier length (e.g. "owner/repo-name").
 const MAX_REPO_LEN: usize = 64;
@@ -14,6 +14,8 @@ const MAX_SPONSORS: usize = 5;
 const MAX_GOALS: usize = 10;
 /// 100 % expressed in basis points.
 const BPS_100: u16 = 10_000;
+/// Minimum time between campaign creation and deadline.
+const MIN_CAMPAIGN_LEAD_TIME: i64 = 24 * 60 * 60;
 
 // ---------------------------------------------------------------------------
 // Program
@@ -41,10 +43,7 @@ pub mod repobounty {
         );
 
         let clock = Clock::get()?;
-        require!(
-            deadline > clock.unix_timestamp,
-            RepoBountyError::DeadlineInPast
-        );
+        validate_campaign_deadline(&clock, deadline)?;
 
         let campaign = &mut ctx.accounts.campaign;
         campaign.authority = ctx.accounts.authority.key();
@@ -339,6 +338,22 @@ pub mod repobounty {
     }
 }
 
+fn validate_campaign_deadline(clock: &Clock, deadline: i64) -> Result<()> {
+    require!(
+        deadline > clock.unix_timestamp,
+        RepoBountyError::DeadlineInPast
+    );
+
+    let min_deadline = clock
+        .unix_timestamp
+        .checked_add(MIN_CAMPAIGN_LEAD_TIME)
+        .ok_or(RepoBountyError::ArithmeticOverflow)?;
+
+    require!(deadline >= min_deadline, RepoBountyError::DeadlineTooSoon);
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Accounts
 // ---------------------------------------------------------------------------
@@ -630,6 +645,8 @@ pub enum RepoBountyError {
     InvalidPoolAmount,
     #[msg("Deadline must be in the future")]
     DeadlineInPast,
+    #[msg("Deadline must be at least 24 hours in the future")]
+    DeadlineTooSoon,
     #[msg("Allocations must not be empty")]
     EmptyAllocations,
     #[msg("Maximum 10 allocations allowed")]
@@ -674,4 +691,51 @@ pub enum RepoBountyError {
     GoalNotFound,
     #[msg("Goal already completed")]
     GoalAlreadyCompleted,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn clock_at(unix_timestamp: i64) -> Clock {
+        Clock {
+            slot: 0,
+            epoch_start_timestamp: unix_timestamp,
+            epoch: 0,
+            leader_schedule_epoch: 0,
+            unix_timestamp,
+        }
+    }
+
+    #[test]
+    fn accepts_deadline_at_24_hour_boundary() {
+        let clock = clock_at(1_700_000_000);
+        let deadline = clock.unix_timestamp + MIN_CAMPAIGN_LEAD_TIME;
+
+        let result = validate_campaign_deadline(&clock, deadline);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn rejects_deadline_shorter_than_24_hours() {
+        let clock = clock_at(1_700_000_000);
+        let deadline = clock.unix_timestamp + MIN_CAMPAIGN_LEAD_TIME - 1;
+
+        let err = validate_campaign_deadline(&clock, deadline).unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("Deadline must be at least 24 hours in the future"));
+    }
+
+    #[test]
+    fn rejects_deadline_in_past() {
+        let clock = clock_at(1_700_000_000);
+        let deadline = clock.unix_timestamp;
+
+        let err = validate_campaign_deadline(&clock, deadline).unwrap_err();
+
+        assert!(err.to_string().contains("Deadline must be in the future"));
+    }
 }

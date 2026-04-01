@@ -14,7 +14,7 @@ services:
       - MODEL=${MODEL:-nvidia/nemotron-3-super-120b-a12b:free}
       - SOLANA_RPC_URL=${SOLANA_RPC_URL:-https://api.devnet.solana.com}
       - SOLANA_PRIVATE_KEY=${SOLANA_PRIVATE_KEY}
-      - PROGRAM_ID=${PROGRAM_ID:-GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy}
+      - PROGRAM_ID=${PROGRAM_ID:-97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
       - DATABASE_PATH=/data/repobounty.db
     volumes:

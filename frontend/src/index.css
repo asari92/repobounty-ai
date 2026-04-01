@@ -14,54 +14,110 @@ body {
     Roboto,
     sans-serif;
   -webkit-font-smoothing: antialiased;
+  background-color: #0B0B0F;
+  color: #fff;
+}
+
+/* Subtle radial vignette background */
+.bg-vignette {
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(153, 69, 255, 0.06), transparent),
+    radial-gradient(ellipse 60% 40% at 80% 100%, rgba(20, 241, 149, 0.03), transparent);
 }
 
 .gradient-text {
-  background: linear-gradient(90deg, #9945ff, #14f195);
+  background: linear-gradient(135deg, #9945ff 0%, #14f195 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
-.gradient-border {
-  border: 1px solid transparent;
-  background-clip: padding-box;
-  position: relative;
+.gradient-line {
+  height: 2px;
+  background: linear-gradient(90deg, #9945ff, #14f195, transparent);
 }
 
-.gradient-border::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(135deg, #9945ff, #14f195);
-  mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  -webkit-mask-composite: xor;
-  pointer-events: none;
-}
-
+/* Buttons — solid, sharp */
 .btn-primary {
-  @apply bg-gradient-to-r from-solana-purple to-solana-green px-6 py-3 rounded-lg font-semibold
-    transition-all duration-200 hover:opacity-90 hover:scale-[1.02] active:scale-[0.98]
-    disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100;
+  @apply bg-solana-purple px-5 py-2.5 rounded-lg font-semibold text-sm
+    transition-all duration-200 ease-out-expo hover:bg-solana-purple/85
+    active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed
+    text-white;
 }
 
 .btn-secondary {
-  @apply px-6 py-3 rounded-lg font-semibold border border-solana-border
-    transition-all duration-200 hover:border-solana-purple hover:bg-solana-card
-    disabled:opacity-50 disabled:cursor-not-allowed;
+  @apply px-5 py-2.5 rounded-lg font-semibold text-sm border border-solana-border
+    transition-all duration-200 ease-out-expo hover:border-solana-purple/50
+    hover:bg-solana-card disabled:opacity-40 disabled:cursor-not-allowed text-gray-300;
 }
 
+/* Cards — sharp corners, top accent */
 .card {
-  @apply bg-solana-card rounded-xl border border-solana-border p-6;
+  @apply bg-solana-card rounded-xl border border-solana-border p-5
+    transition-all duration-200 ease-out-expo relative overflow-hidden;
 }
 
-.input {
-  @apply w-full bg-solana-dark border border-solana-border rounded-lg px-4 py-3
-    text-white placeholder-gray-500 focus:outline-none focus:border-solana-purple
-    transition-colors;
+.card-accent::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #9945ff, #14f195);
 }
+
+.card-hover {
+  @apply hover:border-solana-border-light hover:bg-solana-card-hover;
+}
+
+/* Inputs — clean underline feel */
+.input {
+  @apply w-full bg-solana-dark border border-solana-border rounded-lg px-4 py-2.5
+    text-sm text-white placeholder-gray-600 focus:outline-none focus:border-solana-purple/60
+    transition-all duration-200 ease-out-expo;
+}
+
+.input-with-icon {
+  @apply pl-11;
+}
+
+/* Badges — squared off */
+.badge {
+  @apply text-[11px] font-semibold px-2.5 py-0.5 rounded-md tracking-wide uppercase;
+}
+
+.badge-funded {
+  @apply bg-solana-green/10 text-solana-green border border-solana-green/15;
+}
+
+.badge-created {
+  @apply bg-solana-purple/10 text-solana-purple border border-solana-purple/15;
+}
+
+.badge-finalized {
+  @apply bg-solana-green/10 text-solana-green border border-solana-green/15;
+}
+
+.badge-completed {
+  @apply bg-blue-500/10 text-blue-400 border border-blue-500/15;
+}
+
+/* Status accent colors for card left border */
+.accent-funded { border-left: 3px solid #14F195; }
+.accent-created { border-left: 3px solid #9945FF; }
+.accent-finalized { border-left: 3px solid #14F195; }
+.accent-completed { border-left: 3px solid #3b82f6; }
+
+/* Stat block */
+.stat-block {
+  @apply bg-solana-dark/60 rounded-lg px-4 py-3 border border-solana-border/50;
+}
+
+/* Stagger delays */
+.stagger-1 { animation-delay: 50ms; }
+.stagger-2 { animation-delay: 100ms; }
+.stagger-3 { animation-delay: 150ms; }
+.stagger-4 { animation-delay: 200ms; }
+.stagger-5 { animation-delay: 250ms; }
+.stagger-6 { animation-delay: 300ms; }

@@ -55,6 +55,7 @@ func migrate(db *sql.DB) error {
 		state TEXT NOT NULL DEFAULT 'created',
 		authority TEXT NOT NULL DEFAULT '',
 		sponsor TEXT NOT NULL DEFAULT '',
+		owner_github_username TEXT NOT NULL DEFAULT '',
 		allocations TEXT NOT NULL DEFAULT '[]',
 		created_at TEXT NOT NULL,
 		finalized_at TEXT,
@@ -69,9 +70,48 @@ func migrate(db *sql.DB) error {
 		wallet_address TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL
 	);
+
+	CREATE TABLE IF NOT EXISTS wallet_challenges (
+		challenge_id TEXT PRIMARY KEY,
+		action TEXT NOT NULL,
+		wallet_address TEXT NOT NULL,
+		message TEXT NOT NULL,
+		payload_json TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL,
+		expires_at TEXT NOT NULL,
+		used_at TEXT
+	);
+
+	CREATE TABLE IF NOT EXISTS finalize_snapshots (
+		campaign_id TEXT NOT NULL,
+		version INTEGER NOT NULL,
+		input_hash TEXT NOT NULL,
+		allocation_mode TEXT NOT NULL,
+		contributors_json TEXT NOT NULL DEFAULT '[]',
+		allocations_json TEXT NOT NULL DEFAULT '[]',
+		window_start TEXT NOT NULL,
+		window_end TEXT NOT NULL,
+		contributor_source TEXT NOT NULL DEFAULT '',
+		contributor_notes TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL,
+		approved_by_github_username TEXT NOT NULL DEFAULT '',
+		approved_at TEXT,
+		PRIMARY KEY (campaign_id, version)
+	);
 	`
-	_, err := db.Exec(schema)
-	return err
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+
+	for _, stmt := range []string{
+		`ALTER TABLE campaigns ADD COLUMN owner_github_username TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (s *SQLiteStore) Create(c *models.Campaign) error {
@@ -82,11 +122,11 @@ func (s *SQLiteStore) Create(c *models.Campaign) error {
 
 	_, err = s.db.Exec(`
 		INSERT INTO campaigns (campaign_id, campaign_pda, vault_address, repo, pool_amount, total_claimed,
-			deadline, state, authority, sponsor, allocations, created_at, finalized_at, tx_signature)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			deadline, state, authority, sponsor, owner_github_username, allocations, created_at, finalized_at, tx_signature)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.CampaignID, c.CampaignPDA, c.VaultAddress, c.Repo, c.PoolAmount, c.TotalClaimed,
-		c.Deadline.Format(time.RFC3339Nano), string(c.State), c.Authority, c.Sponsor,
-		string(allocs), c.CreatedAt.Format(time.RFC3339Nano), nilifyTime(c.FinalizedAt), c.TxSignature,
+		c.Deadline.Format(time.RFC3339Nano), string(c.State), c.Authority, c.Sponsor, c.OwnerGitHubUsername,
+		string(allocs), c.CreatedAt.Format(time.RFC3339Nano), nullableTime(c.FinalizedAt), c.TxSignature,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
@@ -97,10 +137,22 @@ func (s *SQLiteStore) Create(c *models.Campaign) error {
 	return nil
 }
 
+func (s *SQLiteStore) DeleteCampaign(id string) error {
+	res, err := s.db.Exec(`DELETE FROM campaigns WHERE campaign_id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete campaign: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *SQLiteStore) Get(id string) (*models.Campaign, error) {
 	c, err := s.scanCampaign(s.db.QueryRow(`
 		SELECT campaign_id, campaign_pda, vault_address, repo, pool_amount, total_claimed,
-			deadline, state, authority, sponsor, allocations, created_at, finalized_at, tx_signature
+			deadline, state, authority, sponsor, owner_github_username, allocations, created_at, finalized_at, tx_signature
 		FROM campaigns WHERE campaign_id = ?`, id))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -119,11 +171,11 @@ func (s *SQLiteStore) Update(c *models.Campaign) error {
 
 	res, err := s.db.Exec(`
 		UPDATE campaigns SET campaign_pda=?, vault_address=?, repo=?, pool_amount=?, total_claimed=?,
-			deadline=?, state=?, authority=?, sponsor=?, allocations=?, created_at=?, finalized_at=?, tx_signature=?
+			deadline=?, state=?, authority=?, sponsor=?, owner_github_username=?, allocations=?, created_at=?, finalized_at=?, tx_signature=?
 		WHERE campaign_id=?`,
 		c.CampaignPDA, c.VaultAddress, c.Repo, c.PoolAmount, c.TotalClaimed,
-		c.Deadline.Format(time.RFC3339Nano), string(c.State), c.Authority, c.Sponsor,
-		string(allocs), c.CreatedAt.Format(time.RFC3339Nano), nilifyTime(c.FinalizedAt),
+		c.Deadline.Format(time.RFC3339Nano), string(c.State), c.Authority, c.Sponsor, c.OwnerGitHubUsername,
+		string(allocs), c.CreatedAt.Format(time.RFC3339Nano), nullableTime(c.FinalizedAt),
 		c.TxSignature, c.CampaignID,
 	)
 	if err != nil {
@@ -139,7 +191,7 @@ func (s *SQLiteStore) Update(c *models.Campaign) error {
 func (s *SQLiteStore) List() []*models.Campaign {
 	rows, err := s.db.Query(`
 		SELECT campaign_id, campaign_pda, vault_address, repo, pool_amount, total_claimed,
-			deadline, state, authority, sponsor, allocations, created_at, finalized_at, tx_signature
+			deadline, state, authority, sponsor, owner_github_username, allocations, created_at, finalized_at, tx_signature
 		FROM campaigns ORDER BY created_at DESC`)
 	if err != nil {
 		log.Printf("sqlite: list campaigns query failed: %v", err)
@@ -239,6 +291,238 @@ func (s *SQLiteStore) GetWalletForGitHub(githubUsername string) (string, error) 
 	return wallet, nil
 }
 
+func (s *SQLiteStore) CreateWalletChallenge(challenge *models.WalletChallenge) error {
+	_, err := s.db.Exec(`
+		INSERT INTO wallet_challenges (challenge_id, action, wallet_address, message, payload_json, created_at, expires_at, used_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		challenge.ChallengeID,
+		string(challenge.Action),
+		challenge.WalletAddress,
+		challenge.Message,
+		challenge.PayloadJSON,
+		challenge.CreatedAt.Format(time.RFC3339Nano),
+		challenge.ExpiresAt.Format(time.RFC3339Nano),
+		nullableTime(challenge.UsedAt),
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint") {
+			return errors.New("challenge already exists")
+		}
+		return fmt.Errorf("insert wallet challenge: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) GetWalletChallenge(id string) (*models.WalletChallenge, error) {
+	var challenge models.WalletChallenge
+	var (
+		actionStr string
+		createdAt string
+		expiresAt string
+		usedAt    sql.NullString
+	)
+
+	err := s.db.QueryRow(`
+		SELECT challenge_id, action, wallet_address, message, payload_json, created_at, expires_at, used_at
+		FROM wallet_challenges WHERE challenge_id = ?`,
+		id,
+	).Scan(
+		&challenge.ChallengeID,
+		&actionStr,
+		&challenge.WalletAddress,
+		&challenge.Message,
+		&challenge.PayloadJSON,
+		&createdAt,
+		&expiresAt,
+		&usedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get wallet challenge: %w", err)
+	}
+
+	challenge.Action = models.WalletChallengeAction(actionStr)
+	challenge.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		challenge.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	}
+	challenge.ExpiresAt, err = time.Parse(time.RFC3339Nano, expiresAt)
+	if err != nil {
+		challenge.ExpiresAt, _ = time.Parse(time.RFC3339, expiresAt)
+	}
+	if usedAt.Valid && usedAt.String != "" {
+		t, parseErr := time.Parse(time.RFC3339Nano, usedAt.String)
+		if parseErr != nil {
+			t, _ = time.Parse(time.RFC3339, usedAt.String)
+		}
+		challenge.UsedAt = &t
+	}
+
+	return &challenge, nil
+}
+
+func (s *SQLiteStore) MarkWalletChallengeUsed(id string, usedAt time.Time) error {
+	res, err := s.db.Exec(`
+		UPDATE wallet_challenges
+		SET used_at = ?
+		WHERE challenge_id = ? AND used_at IS NULL`,
+		usedAt.Format(time.RFC3339Nano),
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("mark wallet challenge used: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		challenge, getErr := s.GetWalletChallenge(id)
+		if getErr != nil {
+			return getErr
+		}
+		if challenge.UsedAt != nil {
+			return ErrAlreadyUsed
+		}
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *SQLiteStore) SaveFinalizeSnapshot(snapshot *models.FinalizeSnapshot) error {
+	contributorsJSON, err := json.Marshal(snapshot.Contributors)
+	if err != nil {
+		return fmt.Errorf("marshal snapshot contributors: %w", err)
+	}
+	allocationsJSON, err := json.Marshal(snapshot.Allocations)
+	if err != nil {
+		return fmt.Errorf("marshal snapshot allocations: %w", err)
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin snapshot transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var version int
+	if err := tx.QueryRow(`
+		SELECT COALESCE(MAX(version), 0) + 1
+		FROM finalize_snapshots
+		WHERE campaign_id = ?`,
+		snapshot.CampaignID,
+	).Scan(&version); err != nil {
+		return fmt.Errorf("select next snapshot version: %w", err)
+	}
+	snapshot.Version = version
+
+	_, err = tx.Exec(`
+		INSERT INTO finalize_snapshots (
+			campaign_id, version, input_hash, allocation_mode, contributors_json, allocations_json,
+			window_start, window_end, contributor_source, contributor_notes, created_at,
+			approved_by_github_username, approved_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		snapshot.CampaignID,
+		snapshot.Version,
+		snapshot.InputHash,
+		string(snapshot.AllocationMode),
+		string(contributorsJSON),
+		string(allocationsJSON),
+		snapshot.WindowStart.Format(time.RFC3339Nano),
+		snapshot.WindowEnd.Format(time.RFC3339Nano),
+		snapshot.ContributorSource,
+		snapshot.ContributorNotes,
+		snapshot.CreatedAt.Format(time.RFC3339Nano),
+		snapshot.ApprovedByGitHubUsername,
+		nullableTime(snapshot.ApprovedAt),
+	)
+	if err != nil {
+		return fmt.Errorf("insert finalize snapshot: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit finalize snapshot: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) GetLatestFinalizeSnapshot(campaignID string) (*models.FinalizeSnapshot, error) {
+	var snapshot models.FinalizeSnapshot
+	var (
+		allocationMode   string
+		contributorsJSON string
+		allocationsJSON  string
+		windowStart      string
+		windowEnd        string
+		createdAt        string
+		approvedAt       sql.NullString
+	)
+
+	err := s.db.QueryRow(`
+		SELECT campaign_id, version, input_hash, allocation_mode, contributors_json, allocations_json,
+			window_start, window_end, contributor_source, contributor_notes, created_at,
+			approved_by_github_username, approved_at
+		FROM finalize_snapshots
+		WHERE campaign_id = ?
+		ORDER BY version DESC
+		LIMIT 1`,
+		campaignID,
+	).Scan(
+		&snapshot.CampaignID,
+		&snapshot.Version,
+		&snapshot.InputHash,
+		&allocationMode,
+		&contributorsJSON,
+		&allocationsJSON,
+		&windowStart,
+		&windowEnd,
+		&snapshot.ContributorSource,
+		&snapshot.ContributorNotes,
+		&createdAt,
+		&snapshot.ApprovedByGitHubUsername,
+		&approvedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get finalize snapshot: %w", err)
+	}
+
+	snapshot.AllocationMode = models.AllocationMode(allocationMode)
+	snapshot.WindowStart, err = time.Parse(time.RFC3339Nano, windowStart)
+	if err != nil {
+		snapshot.WindowStart, _ = time.Parse(time.RFC3339, windowStart)
+	}
+	snapshot.WindowEnd, err = time.Parse(time.RFC3339Nano, windowEnd)
+	if err != nil {
+		snapshot.WindowEnd, _ = time.Parse(time.RFC3339, windowEnd)
+	}
+	snapshot.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		snapshot.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	}
+	if approvedAt.Valid && approvedAt.String != "" {
+		t, parseErr := time.Parse(time.RFC3339Nano, approvedAt.String)
+		if parseErr != nil {
+			t, _ = time.Parse(time.RFC3339, approvedAt.String)
+		}
+		snapshot.ApprovedAt = &t
+	}
+	if contributorsJSON != "" && contributorsJSON != "[]" {
+		if err := json.Unmarshal([]byte(contributorsJSON), &snapshot.Contributors); err != nil {
+			return nil, fmt.Errorf("unmarshal snapshot contributors: %w", err)
+		}
+	}
+	if allocationsJSON != "" && allocationsJSON != "[]" {
+		if err := json.Unmarshal([]byte(allocationsJSON), &snapshot.Allocations); err != nil {
+			return nil, fmt.Errorf("unmarshal snapshot allocations: %w", err)
+		}
+	}
+
+	return &snapshot, nil
+}
+
 func (s *SQLiteStore) scanCampaign(scanner interface{ Scan(...interface{}) error }) (*models.Campaign, error) {
 	var (
 		c              models.Campaign
@@ -252,7 +536,7 @@ func (s *SQLiteStore) scanCampaign(scanner interface{ Scan(...interface{}) error
 	err := scanner.Scan(
 		&c.CampaignID, &c.CampaignPDA, &c.VaultAddress, &c.Repo,
 		&c.PoolAmount, &c.TotalClaimed, &deadlineStr, &c.State,
-		&c.Authority, &c.Sponsor, &allocJSON, &createdAtStr,
+		&c.Authority, &c.Sponsor, &c.OwnerGitHubUsername, &allocJSON, &createdAtStr,
 		&finalizedAtStr, &txSigStr,
 	)
 	if err != nil {
@@ -290,9 +574,9 @@ func (s *SQLiteStore) scanCampaign(scanner interface{ Scan(...interface{}) error
 	return &c, nil
 }
 
-func nilifyTime(t *time.Time) string {
+func nullableTime(t *time.Time) any {
 	if t == nil {
-		return ""
+		return nil
 	}
 	return t.Format(time.RFC3339Nano)
 }

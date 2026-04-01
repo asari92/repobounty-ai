@@ -5,10 +5,10 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-repobounty = "GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy"
+repobounty = "97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo"
 
 [programs.localnet]
-repobounty = "GRfG4X51Uy6Jwunh93dXdFDMk5nN2ZVRAxBFr5sbegKy"
+repobounty = "97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo"
 
 [registry]
 url = "https://api.apr.dev"

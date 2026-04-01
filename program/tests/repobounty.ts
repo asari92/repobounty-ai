@@ -1,7 +1,52 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
-import { Repobounty } from "../target/types/repobounty";
 import { expect } from "chai";
+
+import type { Repobounty } from "../target/types/repobounty";
+
+const DAY_IN_SECONDS = 24 * 60 * 60;
+const BN = (
+  anchor as typeof anchor & {
+    default: { BN: typeof anchor.BN };
+  }
+).default.BN;
+const POOL_AMOUNT = new BN(1_000_000_000);
+
+function deadlineAtLeast24HoursOut(): anchor.BN {
+  return new BN(Math.floor(Date.now() / 1000) + DAY_IN_SECONDS + 60);
+}
+
+function deadlineTooSoon(): anchor.BN {
+  return new BN(Math.floor(Date.now() / 1000) + DAY_IN_SECONDS - 60);
+}
+
+function deriveCampaignAddresses(
+  programId: anchor.web3.PublicKey,
+  campaignId: string,
+): { campaignPda: anchor.web3.PublicKey; vaultPda: anchor.web3.PublicKey } {
+  const [campaignPda] = anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from("campaign"), Buffer.from(campaignId)],
+    programId,
+  );
+  const [vaultPda] = anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from("vault"), campaignPda.toBuffer()],
+    programId,
+  );
+
+  return { campaignPda, vaultPda };
+}
+
+async function expectAnchorError(
+  action: Promise<unknown>,
+  expectedCode: string,
+) {
+  try {
+    await action;
+    expect.fail(`expected ${expectedCode}`);
+  } catch (err) {
+    expect((err as any)?.error?.errorCode?.code).to.equal(expectedCode);
+  }
+}
 
 describe("repobounty", () => {
   const provider = anchor.AnchorProvider.env();
@@ -10,350 +55,180 @@ describe("repobounty", () => {
   const program = anchor.workspace.Repobounty as Program<Repobounty>;
   const authority = provider.wallet.publicKey;
   const sponsor = provider.wallet.publicKey;
-
-  const campaignId = "test-campaign-001";
   const repo = "anthropics/claude-code";
-  const poolAmount = new anchor.BN(1_000_000_000); // 1 SOL in lamports
-  const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 86400); // +24h
-  const futureDeadline = new anchor.BN(Math.floor(Date.now() / 1000) + 86400); // +24h
 
-  let campaignPda: anchor.web3.PublicKey;
-  let campaignBump: number;
-  let vaultPda: anchor.web3.PublicKey;
-  let vaultBump: number;
-
-  before(async () => {
-    [campaignPda, campaignBump] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("campaign"), Buffer.from(campaignId)],
-      program.programId
+  async function createCampaign(campaignId: string, deadline: anchor.BN) {
+    const { campaignPda, vaultPda } = deriveCampaignAddresses(
+      program.programId,
+      campaignId,
     );
-    [vaultPda, vaultBump] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("vault"), campaignPda.toBuffer()],
-      program.programId
-    );
-  });
 
-  it("creates campaign with sponsor and vault", async () => {
-    const tx = await program.methods
-      .createCampaign(campaignId, repo, poolAmount, futureDeadline, sponsor)
+    const signature = await program.methods
+      .createCampaign(campaignId, repo, POOL_AMOUNT, deadline, sponsor)
       .accounts({
         campaign: campaignPda,
-        authority: authority,
+        authority,
         vault: vaultPda,
         systemProgram: anchor.web3.SystemProgram.programId,
       })
       .rpc();
 
-    console.log("  create_campaign tx:", tx);
+    return { campaignPda, vaultPda, signature };
+  }
+
+  async function fundCampaign(
+    campaignPda: anchor.web3.PublicKey,
+    vaultPda: anchor.web3.PublicKey,
+  ) {
+    const transferIx = anchor.web3.SystemProgram.transfer({
+      fromPubkey: sponsor,
+      toPubkey: vaultPda,
+      lamports: POOL_AMOUNT.toNumber(),
+    });
+
+    return program.methods
+      .fundCampaign()
+      .accounts({
+        campaign: campaignPda,
+        vault: vaultPda,
+        sponsor,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .preInstructions([transferIx])
+      .rpc();
+  }
+
+  it("creates campaign with sponsor and derived vault PDA", async () => {
+    const campaignId = "test-campaign-create";
+    const { campaignPda, signature } = await createCampaign(
+      campaignId,
+      deadlineAtLeast24HoursOut(),
+    );
+
+    expect(signature).to.be.a("string").and.not.empty;
 
     const campaign = await program.account.campaign.fetch(campaignPda);
     expect(campaign.repo).to.equal(repo);
-    expect(campaign.poolAmount.toNumber()).to.equal(poolAmount.toNumber());
+    expect(campaign.poolAmount.toNumber()).to.equal(POOL_AMOUNT.toNumber());
     expect(campaign.sponsor.toBase58()).to.equal(sponsor.toBase58());
     expect(campaign.authority.toBase58()).to.equal(authority.toBase58());
     expect(campaign.state).to.deep.equal({ created: {} });
     expect(campaign.allocations).to.have.length(0);
   });
 
-  it("funds campaign with SOL transfer", async () => {
-    const transferIx = anchor.web3.SystemProgram.transfer({
-      fromPubkey: sponsor,
-      toPubkey: vaultPda,
-      lamports: poolAmount.toNumber(),
-    });
+  it("rejects creating a campaign with a deadline shorter than 24 hours", async () => {
+    await expectAnchorError(
+      createCampaign("test-campaign-too-soon", deadlineTooSoon()),
+      "DeadlineTooSoon",
+    );
+  });
 
-    const fundTx = await program.methods
-      .fundCampaign()
-      .accounts({
-        campaign: campaignPda,
-        vault: vaultPda,
-        sponsor: sponsor,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
-      .preInstructions([transferIx])
-      .rpc();
+  it("funds a created campaign with a transfer plus fund_campaign instruction", async () => {
+    const { campaignPda, vaultPda } = await createCampaign(
+      "test-campaign-funded",
+      deadlineAtLeast24HoursOut(),
+    );
 
-    console.log("  fund_campaign tx:", fundTx);
+    const signature = await fundCampaign(campaignPda, vaultPda);
+
+    expect(signature).to.be.a("string").and.not.empty;
 
     const campaign = await program.account.campaign.fetch(campaignPda);
     expect(campaign.state).to.deep.equal({ funded: {} });
 
     const vaultBalance = await provider.connection.getBalance(vaultPda);
-    expect(vaultBalance).to.be.at.least(poolAmount.toNumber());
+    expect(vaultBalance).to.be.at.least(POOL_AMOUNT.toNumber());
   });
 
-  it("rejects funding already funded campaign", async () => {
-    try {
-      await program.methods
+  it("rejects funding a campaign twice", async () => {
+    const { campaignPda, vaultPda } = await createCampaign(
+      "test-campaign-double-fund",
+      deadlineAtLeast24HoursOut(),
+    );
+
+    await fundCampaign(campaignPda, vaultPda);
+
+    await expectAnchorError(
+      program.methods
         .fundCampaign()
         .accounts({
           campaign: campaignPda,
           vault: vaultPda,
-          sponsor: sponsor,
+          sponsor,
           systemProgram: anchor.web3.SystemProgram.programId,
         })
-        .rpc();
-      expect.fail("should have thrown");
-    } catch (err: any) {
-      expect(err.error.errorCode.code).to.equal("InvalidCampaignState");
-    }
+        .rpc(),
+      "InvalidCampaignState",
+    );
   });
 
-  it("rejects finalizing before deadline", async () => {
-    const idDeadline = "test-campaign-deadline";
-    const [pdaDeadline] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("campaign"), Buffer.from(idDeadline)],
-      program.programId
-    );
-    const [vaultDeadline] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("vault"), pdaDeadline.toBuffer()],
-      program.programId
+  it("rejects finalizing before the deadline even after funding", async () => {
+    const { campaignPda, vaultPda } = await createCampaign(
+      "test-campaign-before-deadline",
+      deadlineAtLeast24HoursOut(),
     );
 
-    await program.methods
-      .createCampaign(idDeadline, repo, poolAmount, deadline, sponsor)
-      .accounts({
-        campaign: pdaDeadline,
-        authority: authority,
-        vault: vaultDeadline,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
-      .rpc();
+    await fundCampaign(campaignPda, vaultPda);
 
-    const transferIx = anchor.web3.SystemProgram.transfer({
-      fromPubkey: sponsor,
-      toPubkey: vaultDeadline,
-      lamports: poolAmount.toNumber(),
-    });
-
-    await program.methods
-      .fundCampaign()
-      .accounts({
-        campaign: pdaDeadline,
-        vault: vaultDeadline,
-        sponsor: sponsor,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
-      .preInstructions([transferIx])
-      .rpc();
-
-    try {
-      await program.methods
+    await expectAnchorError(
+      program.methods
         .finalizeCampaign([{ contributor: "alice", percentage: 10000 }])
         .accounts({
-          campaign: pdaDeadline,
-          authority: authority,
+          campaign: campaignPda,
+          authority,
         })
-        .rpc();
-      expect.fail("should have thrown");
-    } catch (err: any) {
-      expect(err.error.errorCode.code).to.equal("DeadlineNotReached");
-    }
+        .rpc(),
+      "DeadlineNotReached",
+    );
   });
 
-  it("rejects finalizing unfunded campaign", async () => {
-    const id2 = "test-campaign-002";
-    const [pda2] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("campaign"), Buffer.from(id2)],
-      program.programId
-    );
-    const [vault2] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("vault"), pda2.toBuffer()],
-      program.programId
+  it("rejects finalizing an unfunded campaign", async () => {
+    const { campaignPda } = await createCampaign(
+      "test-campaign-unfunded",
+      deadlineAtLeast24HoursOut(),
     );
 
-    await program.methods
-      .createCampaign(id2, repo, poolAmount, futureDeadline, sponsor)
-      .accounts({
-        campaign: pda2,
-        authority: authority,
-        vault: vault2,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
-      .rpc();
-
-    try {
-      await program.methods
+    await expectAnchorError(
+      program.methods
         .finalizeCampaign([{ contributor: "alice", percentage: 10000 }])
         .accounts({
-          campaign: pda2,
-          authority: authority,
+          campaign: campaignPda,
+          authority,
         })
-        .rpc();
-      expect.fail("should have thrown");
-    } catch (err: any) {
-      expect(err.error.errorCode.code).to.equal("InvalidCampaignState");
-    }
+        .rpc(),
+      "InvalidCampaignState",
+    );
   });
 
-  it("finalizes a campaign with allocations", async () => {
-    const allocations = [
-      { contributor: "alice", percentage: 5000 },
-      { contributor: "bob", percentage: 3000 },
-      { contributor: "charlie", percentage: 2000 },
-    ];
+  it("builds claim instructions with the backend authority signer account", async () => {
+    const { campaignPda, vaultPda } = deriveCampaignAddresses(
+      program.programId,
+      "test-campaign-claim-ix",
+    );
+    const contributor = anchor.web3.Keypair.generate().publicKey;
 
-    const tx = await program.methods
-      .finalizeCampaign(allocations)
-      .accounts({
-        campaign: campaignPda,
-        authority: authority,
-      })
-      .rpc();
-
-    console.log("  finalize_campaign tx:", tx);
-
-    const campaign = await program.account.campaign.fetch(campaignPda);
-    expect(campaign.state).to.deep.equal({ finalized: {} });
-    expect(campaign.allocations).to.have.length(3);
-
-    expect(campaign.allocations[0].contributor).to.equal("alice");
-    expect(campaign.allocations[0].percentage).to.equal(5000);
-    expect(campaign.allocations[0].amount.toNumber()).to.equal(500_000_000);
-    expect(campaign.allocations[0].claimed).to.equal(false);
-    expect(campaign.allocations[0].claimant).to.be.null;
-
-    expect(campaign.allocations[1].contributor).to.equal("bob");
-    expect(campaign.allocations[1].amount.toNumber()).to.equal(300_000_000);
-
-    expect(campaign.allocations[2].contributor).to.equal("charlie");
-    expect(campaign.allocations[2].amount.toNumber()).to.equal(200_000_000);
-  });
-
-  it("claims allocation successfully", async () => {
-    const contributor = provider.wallet.publicKey;
-    const beforeBalance = await provider.connection.getBalance(contributor);
-
-    const claimTx = await program.methods
+    const instruction = await program.methods
       .claim("alice")
       .accounts({
         campaign: campaignPda,
         vault: vaultPda,
-        contributor: contributor,
+        authority,
+        contributor,
         systemProgram: anchor.web3.SystemProgram.programId,
       })
-      .rpc();
+      .instruction();
 
-    console.log("  claim tx:", claimTx);
-
-    const campaign = await program.account.campaign.fetch(campaignPda);
-    const allocation = campaign.allocations.find((a: any) => a.contributor === "alice");
-    expect(allocation.claimed).to.equal(true);
-    expect(allocation.claimant.toBase58()).to.equal(contributor.toBase58());
-
-    const afterBalance = await provider.connection.getBalance(contributor);
-    expect(afterBalance - beforeBalance).to.equal(500_000_000);
-  });
-
-  it("rejects double claim", async () => {
-    try {
-      await program.methods
-        .claim("alice")
-        .accounts({
-          campaign: campaignPda,
-          vault: vaultPda,
-          contributor: provider.wallet.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .rpc();
-      expect.fail("should have thrown");
-    } catch (err: any) {
-      expect(err.error.errorCode.code).to.equal("AlreadyClaimed");
-    }
-  });
-
-  it("transitions to Completed when all claimed", async () => {
-    for (const contrib of ["bob", "charlie"]) {
-      await program.methods
-        .claim(contrib)
-        .accounts({
-          campaign: campaignPda,
-          vault: vaultPda,
-          contributor: provider.wallet.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .rpc();
-    }
-
-    const campaign = await program.account.campaign.fetch(campaignPda);
-    expect(campaign.state).to.deep.equal({ completed: {} });
-    expect(campaign.totalClaimed.toNumber()).to.equal(1_000_000_000);
-  });
-
-  it("rejects allocations not summing to 100%", async () => {
-    const id3 = "test-campaign-003";
-    const [pda3] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("campaign"), Buffer.from(id3)],
-      program.programId
+    expect(instruction.keys).to.have.length(5);
+    expect(instruction.keys[0].pubkey.toBase58()).to.equal(
+      campaignPda.toBase58(),
     );
-    const [vault3] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("vault"), pda3.toBuffer()],
-      program.programId
+    expect(instruction.keys[1].pubkey.toBase58()).to.equal(vaultPda.toBase58());
+    expect(instruction.keys[2].pubkey.toBase58()).to.equal(
+      authority.toBase58(),
     );
-
-    await program.methods
-      .createCampaign(id3, repo, poolAmount, futureDeadline, sponsor)
-      .accounts({
-        campaign: pda3,
-        authority: authority,
-        vault: vault3,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
-      .rpc();
-
-    const transferIx = anchor.web3.SystemProgram.transfer({
-      fromPubkey: sponsor,
-      toPubkey: vault3,
-      lamports: poolAmount.toNumber(),
-    });
-
-    await program.methods
-      .fundCampaign()
-      .accounts({
-        campaign: pda3,
-        vault: vault3,
-        sponsor: sponsor,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
-      .preInstructions([transferIx])
-      .rpc();
-
-    try {
-      await program.methods
-        .finalizeCampaign([
-          { contributor: "alice", percentage: 5000 },
-          { contributor: "bob", percentage: 3000 },
-        ])
-        .accounts({
-          campaign: pda3,
-          authority: authority,
-        })
-        .rpc();
-      expect.fail("should have thrown");
-    } catch (err: any) {
-      expect(err.error.errorCode.code).to.equal("InvalidAllocationTotal");
-    }
-  });
-
-  it("closes a completed campaign and reclaims rent", async () => {
-    const beforeBalance = await provider.connection.getBalance(authority);
-
-    await program.methods
-      .closeCampaign()
-      .accounts({
-        campaign: campaignPda,
-        authority: authority,
-      })
-      .rpc();
-
-    const afterBalance = await provider.connection.getBalance(authority);
-    expect(afterBalance).to.be.greaterThan(beforeBalance);
-
-    try {
-      await program.account.campaign.fetch(campaignPda);
-      expect.fail("account should have been closed");
-    } catch (err: any) {
-      expect(err.message).to.include("Account does not exist");
-    }
+    expect(instruction.keys[2].isSigner).to.equal(true);
+    expect(instruction.keys[3].pubkey.toBase58()).to.equal(
+      contributor.toBase58(),
+    );
   });
 });

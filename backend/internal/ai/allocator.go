@@ -60,13 +60,13 @@ func (a *Allocator) EvaluateCodeImpact(ctx context.Context, repo string, contrib
 		allocs, err := a.evaluateByDiffWithAI(ctx, repo, contributorPRs, poolAmount)
 		if err != nil {
 			log.Printf("ai: LLM evaluation failed (%v), using deterministic fallback", err)
-			return deterministicEvaluate(contributorPRs, poolAmount), nil
+			return deterministicEvaluate(contributorPRs, poolAmount)
 		}
 		return allocs, nil
 	}
 
 	log.Printf("ai: no API key configured, using deterministic fallback")
-	return deterministicEvaluate(contributorPRs, poolAmount), nil
+	return deterministicEvaluate(contributorPRs, poolAmount)
 }
 
 type PRSummary struct {
@@ -78,10 +78,12 @@ type PRSummary struct {
 func (a *Allocator) evaluateByDiffWithAI(ctx context.Context, repo string, contributorPRs map[string][]string, poolAmount uint64) ([]models.Allocation, error) {
 	contributors := make([]string, 0, len(contributorPRs))
 	prData := make(map[string][]PRSummary)
+	allowedContributors := make([]models.Contributor, 0, len(contributorPRs))
 
 	for contributor, diffs := range contributorPRs {
 		contributors = append(contributors, contributor)
 		prData[contributor] = parseDiffSummaries(diffs)
+		allowedContributors = append(allowedContributors, models.Contributor{Username: contributor})
 	}
 
 	limitPRs := 5
@@ -141,36 +143,15 @@ Return ONLY this JSON format:
 		return nil, fmt.Errorf("parse AI response: %w (raw: %s)", err, string(content))
 	}
 
-	var totalBps int
-	seen := make(map[string]bool)
-	for _, a := range aiAllocs {
-		if a.Percentage <= 0 || a.Percentage > 10000 {
-			return nil, fmt.Errorf("invalid allocation percentage %d for %s, must be > 0 and <= 10000", a.Percentage, a.Contributor)
-		}
-		if seen[a.Contributor] {
-			return nil, fmt.Errorf("duplicate contributor %s in allocations", a.Contributor)
-		}
-		seen[a.Contributor] = true
-		totalBps += a.Percentage
-	}
-	if totalBps != 10000 {
-		return nil, fmt.Errorf("AI allocation sums to %d bps, expected 10000", totalBps)
-	}
-
-	if len(aiAllocs) > 10 {
-		return nil, fmt.Errorf("max 10 allocations allowed")
-	}
-
 	allocs := make([]models.Allocation, len(aiAllocs))
 	for i, a := range aiAllocs {
 		allocs[i] = models.Allocation{
 			Contributor: a.Contributor,
 			Percentage:  uint16(a.Percentage),
-			Amount:      poolAmount * uint64(a.Percentage) / 10000,
 			Reasoning:   a.Reasoning,
 		}
 	}
-	return allocs, nil
+	return NormalizeAllocations(allocs, allowedContributors, poolAmount)
 }
 
 func parseDiffSummaries(diffs []string) []PRSummary {
@@ -202,7 +183,7 @@ func parseDiffSummaries(diffs []string) []PRSummary {
 	return summaries
 }
 
-func deterministicEvaluate(contributorPRs map[string][]string, poolAmount uint64) []models.Allocation {
+func deterministicEvaluate(contributorPRs map[string][]string, poolAmount uint64) ([]models.Allocation, error) {
 	type weighted struct {
 		contributor string
 		weight      int
@@ -212,7 +193,6 @@ func deterministicEvaluate(contributorPRs map[string][]string, poolAmount uint64
 	}
 
 	entries := make([]weighted, 0, len(contributorPRs))
-	totalWeight := 0
 
 	for contributor, diffs := range contributorPRs {
 		linesTotal := 0
@@ -241,34 +221,54 @@ func deterministicEvaluate(contributorPRs map[string][]string, poolAmount uint64
 			linesTotal:  linesTotal,
 			filesTotal:  filesTotal,
 		})
-		totalWeight += weight
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].weight == entries[j].weight {
+			return entries[i].contributor < entries[j].contributor
+		}
 		return entries[i].weight > entries[j].weight
 	})
 
-	allocs := make([]models.Allocation, len(entries))
-	var assignedBps uint16
+	contributors := make([]models.Contributor, 0, len(entries))
+	for _, entry := range entries {
+		contributors = append(contributors, models.Contributor{Username: entry.contributor})
+	}
 
-	for i, e := range entries {
-		bps := uint16(uint32(e.weight) * 10000 / uint32(totalWeight))
-		if i == len(entries)-1 {
-			bps = 10000 - assignedBps
+	for limit := min(len(entries), maxContractAllocations); limit >= 1; limit-- {
+		allocs := make([]models.Allocation, limit)
+		subsetTotalWeight := 0
+		for _, entry := range entries[:limit] {
+			subsetTotalWeight += entry.weight
 		}
-		assignedBps += bps
+		var assignedBPS uint16
 
-		reasoning := fmt.Sprintf("Deterministic allocation: %d PRs, %d lines of code, %d files changed",
-			e.prCount, e.linesTotal, e.filesTotal)
+		for i, entry := range entries[:limit] {
+			bps := uint16(uint32(entry.weight) * 10000 / uint32(subsetTotalWeight))
+			if i == limit-1 {
+				bps = 10000 - assignedBPS
+			}
+			assignedBPS += bps
 
-		allocs[i] = models.Allocation{
-			Contributor: e.contributor,
-			Percentage:  bps,
-			Amount:      poolAmount * uint64(bps) / 10000,
-			Reasoning:   reasoning,
+			allocs[i] = models.Allocation{
+				Contributor: entry.contributor,
+				Percentage:  bps,
+				Reasoning: fmt.Sprintf(
+					"Deterministic allocation: %d PRs, %d lines of code, %d files changed",
+					entry.prCount,
+					entry.linesTotal,
+					entry.filesTotal,
+				),
+			}
+		}
+
+		normalized, err := NormalizeAllocations(allocs, contributors, poolAmount)
+		if err == nil {
+			return normalized, nil
 		}
 	}
-	return allocs
+
+	return nil, fmt.Errorf("deterministic code-impact allocation could not produce a contract-safe result")
 }
 
 func (a *Allocator) Allocate(ctx context.Context, repo string, contributors []models.Contributor, poolAmount uint64) ([]models.Allocation, error) {
@@ -280,13 +280,21 @@ func (a *Allocator) Allocate(ctx context.Context, repo string, contributors []mo
 		allocs, err := a.allocateWithAI(ctx, repo, contributors, poolAmount)
 		if err != nil {
 			log.Printf("ai: LLM allocation failed (%v), using deterministic fallback", err)
-			return deterministicAllocate(contributors, poolAmount), nil
+			return deterministicAllocate(contributors, poolAmount)
 		}
 		return allocs, nil
 	}
 
 	log.Printf("ai: no API key configured, using deterministic fallback")
-	return deterministicAllocate(contributors, poolAmount), nil
+	return deterministicAllocate(contributors, poolAmount)
+}
+
+func (a *Allocator) AllocateDeterministic(contributors []models.Contributor, poolAmount uint64) ([]models.Allocation, error) {
+	return deterministicAllocate(contributors, poolAmount)
+}
+
+func (a *Allocator) EvaluateCodeImpactDeterministic(contributorPRs map[string][]string, poolAmount uint64) ([]models.Allocation, error) {
+	return deterministicEvaluate(contributorPRs, poolAmount)
 }
 
 type aiAllocation struct {
@@ -336,75 +344,73 @@ Return ONLY this JSON format:
 		return nil, fmt.Errorf("parse AI response: %w (raw: %s)", err, content)
 	}
 
-	var totalBps int
-	seen := make(map[string]bool)
-	for _, a := range aiAllocs {
-		if a.Percentage <= 0 || a.Percentage > 10000 {
-			return nil, fmt.Errorf("invalid allocation percentage %d for %s, must be > 0 and <= 10000", a.Percentage, a.Contributor)
-		}
-		if seen[a.Contributor] {
-			return nil, fmt.Errorf("duplicate contributor %s in allocations", a.Contributor)
-		}
-		seen[a.Contributor] = true
-		totalBps += a.Percentage
-	}
-	if totalBps != 10000 {
-		return nil, fmt.Errorf("AI allocation sums to %d bps, expected 10000", totalBps)
-	}
-
-	if len(aiAllocs) > 10 {
-		return nil, fmt.Errorf("max 10 allocations allowed")
-	}
-
 	allocs := make([]models.Allocation, len(aiAllocs))
 	for i, a := range aiAllocs {
 		allocs[i] = models.Allocation{
 			Contributor: a.Contributor,
 			Percentage:  uint16(a.Percentage),
-			Amount:      poolAmount * uint64(a.Percentage) / 10000,
 			Reasoning:   a.Reasoning,
 		}
 	}
-	return allocs, nil
+	return NormalizeAllocations(allocs, contributors, poolAmount)
 }
 
-func deterministicAllocate(contributors []models.Contributor, poolAmount uint64) []models.Allocation {
+func deterministicAllocate(contributors []models.Contributor, poolAmount uint64) ([]models.Allocation, error) {
 	type weighted struct {
 		index  int
 		weight int
 	}
 
 	entries := make([]weighted, len(contributors))
-	totalWeight := 0
 	for i, c := range contributors {
 		w := c.Commits*3 + c.PullRequests*5 + c.Reviews*2
 		if w < 1 {
 			w = 1
 		}
 		entries[i] = weighted{index: i, weight: w}
-		totalWeight += w
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].weight == entries[j].weight {
+			return contributors[entries[i].index].Username < contributors[entries[j].index].Username
+		}
 		return entries[i].weight > entries[j].weight
 	})
 
-	allocs := make([]models.Allocation, len(contributors))
-	var assignedBps uint16
-
-	for i, e := range entries {
-		bps := uint16(uint32(e.weight) * 10000 / uint32(totalWeight))
-		if i == len(entries)-1 {
-			bps = 10000 - assignedBps
+	for limit := min(len(entries), maxContractAllocations); limit >= 1; limit-- {
+		allocs := make([]models.Allocation, limit)
+		subsetTotalWeight := 0
+		for _, entry := range entries[:limit] {
+			subsetTotalWeight += entry.weight
 		}
-		assignedBps += bps
+		var assignedBPS uint16
 
-		allocs[i] = models.Allocation{
-			Contributor: contributors[e.index].Username,
-			Percentage:  bps,
-			Amount:      poolAmount * uint64(bps) / 10000,
-			Reasoning:   "Deterministic allocation based on contribution metrics",
+		for i, entry := range entries[:limit] {
+			bps := uint16(uint32(entry.weight) * 10000 / uint32(subsetTotalWeight))
+			if i == limit-1 {
+				bps = 10000 - assignedBPS
+			}
+			assignedBPS += bps
+
+			allocs[i] = models.Allocation{
+				Contributor: contributors[entry.index].Username,
+				Percentage:  bps,
+				Reasoning:   "Deterministic allocation based on campaign-window contribution metrics",
+			}
+		}
+
+		normalized, err := NormalizeAllocations(allocs, contributors, poolAmount)
+		if err == nil {
+			return normalized, nil
 		}
 	}
-	return allocs
+
+	return nil, fmt.Errorf("deterministic metric allocation could not produce a contract-safe result")
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

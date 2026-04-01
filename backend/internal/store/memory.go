@@ -10,9 +10,11 @@ import (
 )
 
 var ErrNotFound = errors.New("campaign not found")
+var ErrAlreadyUsed = errors.New("resource already used")
 
 type CampaignStore interface {
 	Create(c *models.Campaign) error
+	DeleteCampaign(id string) error
 	Get(id string) (*models.Campaign, error)
 	Update(c *models.Campaign) error
 	List() []*models.Campaign
@@ -20,12 +22,19 @@ type CampaignStore interface {
 	CreateUser(u *User) error
 	UpdateUser(u *User) error
 	GetWalletForGitHub(githubUsername string) (string, error)
+	CreateWalletChallenge(challenge *models.WalletChallenge) error
+	GetWalletChallenge(id string) (*models.WalletChallenge, error)
+	MarkWalletChallengeUsed(id string, usedAt time.Time) error
+	SaveFinalizeSnapshot(snapshot *models.FinalizeSnapshot) error
+	GetLatestFinalizeSnapshot(campaignID string) (*models.FinalizeSnapshot, error)
 }
 
 type Store struct {
-	mu        sync.RWMutex
-	campaigns map[string]*models.Campaign
-	users     map[string]*User
+	mu               sync.RWMutex
+	campaigns        map[string]*models.Campaign
+	users            map[string]*User
+	walletChallenges map[string]*models.WalletChallenge
+	snapshots        map[string][]*models.FinalizeSnapshot
 }
 
 type User struct {
@@ -39,8 +48,10 @@ type User struct {
 
 func New() *Store {
 	return &Store{
-		campaigns: make(map[string]*models.Campaign),
-		users:     make(map[string]*User),
+		campaigns:        make(map[string]*models.Campaign),
+		users:            make(map[string]*User),
+		walletChallenges: make(map[string]*models.WalletChallenge),
+		snapshots:        make(map[string][]*models.FinalizeSnapshot),
 	}
 }
 
@@ -63,6 +74,16 @@ func (s *Store) Get(id string) (*models.Campaign, error) {
 		return nil, ErrNotFound
 	}
 	return copycamp(c), nil
+}
+
+func (s *Store) DeleteCampaign(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.campaigns[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.campaigns, id)
+	return nil
 }
 
 func (s *Store) Update(c *models.Campaign) error {
@@ -98,6 +119,32 @@ func copycamp(c *models.Campaign) *models.Campaign {
 	if c.FinalizedAt != nil {
 		t := *c.FinalizedAt
 		cp.FinalizedAt = &t
+	}
+	return &cp
+}
+
+func copyChallenge(challenge *models.WalletChallenge) *models.WalletChallenge {
+	cp := *challenge
+	if challenge.UsedAt != nil {
+		usedAt := *challenge.UsedAt
+		cp.UsedAt = &usedAt
+	}
+	return &cp
+}
+
+func copySnapshot(snapshot *models.FinalizeSnapshot) *models.FinalizeSnapshot {
+	cp := *snapshot
+	if len(snapshot.Contributors) > 0 {
+		cp.Contributors = make([]models.Contributor, len(snapshot.Contributors))
+		copy(cp.Contributors, snapshot.Contributors)
+	}
+	if len(snapshot.Allocations) > 0 {
+		cp.Allocations = make([]models.Allocation, len(snapshot.Allocations))
+		copy(cp.Allocations, snapshot.Allocations)
+	}
+	if snapshot.ApprovedAt != nil {
+		approvedAt := *snapshot.ApprovedAt
+		cp.ApprovedAt = &approvedAt
 	}
 	return &cp
 }
@@ -146,4 +193,57 @@ func (s *Store) GetWalletForGitHub(githubUsername string) (string, error) {
 		return "", ErrNotFound
 	}
 	return u.WalletAddress, nil
+}
+
+func (s *Store) CreateWalletChallenge(challenge *models.WalletChallenge) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.walletChallenges[challenge.ChallengeID]; exists {
+		return errors.New("challenge already exists")
+	}
+	s.walletChallenges[challenge.ChallengeID] = copyChallenge(challenge)
+	return nil
+}
+
+func (s *Store) GetWalletChallenge(id string) (*models.WalletChallenge, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	challenge, ok := s.walletChallenges[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return copyChallenge(challenge), nil
+}
+
+func (s *Store) MarkWalletChallengeUsed(id string, usedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	challenge, ok := s.walletChallenges[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if challenge.UsedAt != nil {
+		return ErrAlreadyUsed
+	}
+	challenge.UsedAt = &usedAt
+	return nil
+}
+
+func (s *Store) SaveFinalizeSnapshot(snapshot *models.FinalizeSnapshot) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current := s.snapshots[snapshot.CampaignID]
+	snapshot.Version = len(current) + 1
+	s.snapshots[snapshot.CampaignID] = append(current, copySnapshot(snapshot))
+	return nil
+}
+
+func (s *Store) GetLatestFinalizeSnapshot(campaignID string) (*models.FinalizeSnapshot, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	snapshots := s.snapshots[campaignID]
+	if len(snapshots) == 0 {
+		return nil, ErrNotFound
+	}
+	return copySnapshot(snapshots[len(snapshots)-1]), nil
 }

@@ -6,9 +6,10 @@ export interface Campaign {
   pool_amount: number;
   total_claimed: number;
   deadline: string;
-  state: "created" | "funded" | "finalized" | "completed";
+  state: 'created' | 'funded' | 'finalized' | 'completed';
   authority: string;
   sponsor: string;
+  owner_github_username?: string;
   allocations: Allocation[];
   created_at: string;
   finalized_at?: string;
@@ -38,14 +39,18 @@ export interface CreateCampaignRequest {
   pool_amount: number;
   deadline: string;
   sponsor_wallet: string;
+  challenge_id: string;
+  signature: string;
 }
 
 export interface CreateCampaignResponse {
   campaign_id: string;
+  campaign_pda: string;
+  vault_address: string;
   repo: string;
   pool_amount: number;
   deadline: string;
-  state: "created";
+  state: 'created';
   tx_signature: string;
 }
 
@@ -55,14 +60,18 @@ export interface FinalizePreviewResponse {
   contributors: Contributor[];
   allocations: Allocation[];
   ai_model: string;
+  allocation_mode: 'code_impact' | 'metrics';
+  snapshot: SnapshotSummary;
 }
 
 export interface FinalizeResponse {
   campaign_id: string;
-  state: "finalized";
+  state: 'finalized' | 'completed';
   allocations: Allocation[];
   tx_signature: string;
   solana_explorer_url: string;
+  allocation_mode?: 'code_impact' | 'metrics';
+  snapshot?: SnapshotSummary;
 }
 
 export interface ApiError {
@@ -92,6 +101,38 @@ export interface LinkWalletRequest {
   wallet_address: string;
 }
 
+export interface WalletChallengeRequest {
+  repo: string;
+  pool_amount: number;
+  deadline: string;
+  sponsor_wallet: string;
+}
+
+export interface ClaimChallengeRequest {
+  contributor_github: string;
+  wallet_address: string;
+}
+
+export interface WalletChallengeResponse {
+  challenge_id: string;
+  action: 'create_campaign' | 'claim';
+  wallet_address: string;
+  message: string;
+  expires_at: string;
+}
+
+export interface SnapshotSummary {
+  version: number;
+  allocation_mode: 'code_impact' | 'metrics';
+  window_start: string;
+  window_end: string;
+  contributor_source: string;
+  contributor_notes?: string;
+  created_at: string;
+  approved_by_github_username?: string;
+  approved_at?: string;
+}
+
 export interface ClaimItem {
   campaign_id: string;
   repo: string;
@@ -108,4 +149,12 @@ export interface FundTransactionResponse {
   transaction: string;
   campaign_pda: string;
   vault_address: string;
+}
+
+export interface HealthResponse {
+  status: string;
+  solana: boolean;
+  github: boolean;
+  ai_model: string;
+  store: boolean;
 }
