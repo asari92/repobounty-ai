@@ -1,12 +1,52 @@
 # RepoBounty AI
 
-AI-powered reward allocation for open-source contributors, with SOL escrow and claims on Solana.
+[![License: MIT](https://img.shields.io/badge/License-MIT-14F195.svg)](LICENSE)
+[![Solana](https://img.shields.io/badge/Solana-devnet-9945FF)](https://solana.com)
+[![GitHub](https://img.shields.io/badge/GitHub-OAuth-181717)](https://github.com)
 
-## What is RepoBounty AI
+> AI-powered funding and reward allocation for public GitHub repositories on Solana.
 
-RepoBounty AI helps sponsors fund open-source repositories and distribute rewards to contributors based on their actual GitHub impact. The system uses GitHub data, AI allocation logic, and Solana on-chain state to make reward distribution transparent and verifiable.
+---
 
-## Features
+## Team
+
+| Name | Role | Contact |
+|------|------|---------|
+||||
+
+---
+
+## Problem and Solution
+
+### 1. Manual Reward Distribution
+- **Problem:** Open-source contributors do valuable work, but rewards are often distributed manually, subjectively, and slowly.
+- **RepoBounty AI:** Automatically analyzes GitHub activity and allocates rewards based on contributor impact.
+
+### 2. Lack of Transparency
+- **Problem:** Sponsors and contributors have limited visibility into how rewards are calculated.
+- **RepoBounty AI:** Uses deterministic allocation logic and on-chain state to make the reward flow auditable and verifiable.
+
+### 3. Fragmented Funding Flow
+- **Problem:** Funding, campaign management, and claims are usually disconnected from the actual contribution process.
+- **RepoBounty AI:** Combines GitHub auth, campaign funding, on-chain escrow, and contributor claims into one flow.
+
+### 4. High Friction for Small Rewards
+- **Problem:** Small contributor rewards are hard to manage efficiently when each payout requires manual handling.
+- **RepoBounty AI:** Uses Solana for fast, low-cost escrow, finalization, and claims.
+
+---
+
+## Why Solana
+
+- **Speed** — Low-latency transactions make campaign creation, funding, finalization, and claims practical.
+- **Cost** — Low fees are ideal for many small reward payouts.
+- **Escrow** — On-chain campaign state and SOL escrow keep funds transparent and verifiable.
+- **Wallet UX** — Phantom and `@solana/wallet-adapter` make sponsor funding and contributor claims simple.
+- **Determinism** — PDAs help model campaigns and claim records cleanly without deploying a new contract per campaign.
+
+---
+
+## Summary of Features
 
 - Sponsor-funded campaigns for open-source repositories
 - GitHub OAuth login for campaign owners and contributors
@@ -16,25 +56,43 @@ RepoBounty AI helps sponsors fund open-source repositories and distribute reward
 - Deterministic fallback when external services are unavailable
 - Preview and finalize flows aligned with the same allocation logic
 
-## Why Solana
+---
 
-We chose Solana because this project needs fast, low-cost, and verifiable on-chain reward distribution. RepoBounty AI creates many small blockchain actions — campaign creation, funding, finalization, and multiple claims — so transaction fees and confirmation time matter a lot. On Solana, these operations stay cheap and fast, which makes the UX practical even when the backend or contributors trigger several on-chain actions.
+## Tech Stack
 
-Solana also fits our architecture well. Program Derived Addresses (PDAs) let us model campaigns, escrow vaults, and claim records in a clean deterministic way, without deploying a new contract per campaign. That makes the on-chain state easier to organize and reason about. In addition, Solana wallet support is smooth: Phantom and `@solana/wallet-adapter` make sponsor funding and contributor claims straightforward.
+| Layer | Technology |
+|-------|-----------|
+| On-chain program | Rust · Anchor Framework |
+| Backend API | Go |
+| Frontend | TypeScript · React |
+| Wallet Integration | `@solana/wallet-adapter` |
+| AI / Allocation | OpenRouter / deterministic fallback |
+| Storage | SQLite |
+| Auth | GitHub OAuth |
 
-For RepoBounty AI, Solana is not just a blockchain choice — it is a strong technical fit for escrow, transparent rewards, and high-frequency reward flows.
+---
 
-## Why this matters
+## Architecture
 
-Open-source contributors often do valuable work without a clear, fair, or transparent reward mechanism. Manual distribution is subjective, slow, and hard to verify. RepoBounty AI addresses that problem by turning GitHub activity into a reward flow that is automated, auditable, and backed by real blockchain state.
+```text
+┌───────────────┐     ┌────────────────────┐     ┌──────────────────────┐
+│ GitHub User   │────▶│   Backend (Go)    │────▶│  Solana Program      │
+│ Sponsor/Claim │     │ GitHub OAuth/JWT   │     │  (Escrow + State)    │
+└───────────���───┘     │ GitHub Fetches     │     └──────────────────────┘
+                      │ AI Allocation      │
+                      │ SQLite Storage     │
+                      └─────────┬──────────┘
+                                │
+                                ▼
+                      ┌────────────────────┐
+                      │ Frontend (React)   │
+                      │ Wallet Connection  │
+                      └────────────────────┘
+```
 
-This matters because it makes sponsor funding more trustworthy, contributor rewards more transparent, and the overall process easier to scale across repositories and communities.
+See the project docs for more details on campaign lifecycle, claims, and allocation logic.
 
-## The Problem We Solve
-
-RepoBounty AI helps sponsors and open-source projects automatically distribute rewards to contributors. Instead of manual and often subjective selection, the system analyzes contributor activity, creates allocations, and records the result on-chain.
-
-This solves a common open-source problem: it is hard to reward contributors fairly, consistently, and transparently. RepoBounty AI turns GitHub activity into a reward flow that is automated, auditable, and backed by real blockchain state.
+---
 
 ## What Ships Today
 
@@ -49,6 +107,8 @@ RepoBounty AI is a deadline-based MVP:
 
 The backend is the trust anchor for GitHub auth, repo validation, allocation logic, and claim authorization. The on-chain program enforces campaign state, deadline, escrow, percentages, and claim bookkeeping.
 
+---
+
 ## Current Permission Model
 
 - `POST /api/campaigns/` requires GitHub auth.
@@ -59,6 +119,8 @@ The backend is the trust anchor for GitHub auth, repo validation, allocation log
 
 Saved profile wallets are not authoritative in this MVP. They are informational only unless a stricter wallet-linking flow is implemented end to end.
 
+---
+
 ## Finalize Preview Behavior
 
 Finalize preview is intentionally aligned with real finalization:
@@ -68,71 +130,56 @@ Finalize preview is intentionally aligned with real finalization:
 - When PR diffs are available, preview and finalize both use PR-diff impact scoring.
 - When PR diffs are unavailable, both fall back to contributor-metric allocation.
 
-## Mock And Fallback Behavior
+---
+
+## Mock and Fallback Behavior
 
 Two different fallback modes exist:
 
-- GitHub / AI fallback:
-  Without `GITHUB_TOKEN` or `OPENROUTER_API_KEY`, the backend can still use public GitHub access, mock contributor data, and deterministic allocation.
-- Solana fallback:
-  If the backend is missing a real Solana authority key or program ID, the API still boots, but on-chain create, fund, finalize, and claim actions are disabled instead of returning fake transactions.
+- **GitHub / AI fallback:** Without `GITHUB_TOKEN` or `OPENROUTER_API_KEY`, the backend can still use public GitHub access, mock contributor data, and deterministic allocation.
+- **Solana fallback:** If the backend is missing a real Solana authority key or program ID, the API still boots, but on-chain create, fund, finalize, and claim actions are disabled instead of returning fake transactions.
 
 Check `GET /api/health` to see whether Solana is currently configured.
 
-## Architecture
+---
 
-```text
-Frontend (React + Wallet)
-        |
-        v
-Backend (Go API, GitHub OAuth/JWT, GitHub fetches, AI allocation, SQLite)
-        |
-        v
-Solana Program (Anchor)
+## Quick Start
+
+**Prerequisites:** Go 1.22+, Node.js 20+, Docker, Docker Compose, Solana CLI, Anchor CLI
+
+```bash
+# Clone the repository
+git clone https://github.com/asari92/repobounty-ai
+cd repobounty-ai
+
+# Install dependencies
+# Frontend
+cd frontend && npm install
+
+# Backend
+cd ../backend && go mod tidy
+
+# Copy environment variables
+cp .env.example .env
+
+# Build Solana program
+cd ../program && anchor build
+
+# Run tests
+anchor test
+
+# Start backend
+cd ../backend && go run ./cmd/api
+
+# Start frontend
+cd ../frontend && npm run dev
 ```
+
+---
 
 ## How To Run
 
-### Prerequisites
-
-Before running RepoBounty AI locally, make sure you have:
-
-- Go 1.22+ installed
-- Node.js 20+ installed
-- Docker and Docker Compose installed
-- A Solana wallet such as Phantom
-- `anchor` and `solana-cli` if you want to run the program locally
-
-### Environment Variables
-
-Create `.env` files for the backend and frontend if needed.
-
-#### Backend example
-```bash
-GITHUB_CLIENT_ID=your_github_client_id
-GITHUB_CLIENT_SECRET=your_github_client_secret
-JWT_SECRET=your_jwt_secret
-DATABASE_URL=./data/app.db
-
-# Optional
-GITHUB_TOKEN=your_github_token
-OPENROUTER_API_KEY=your_openrouter_api_key
-
-# Solana
-SOLANA_RPC_URL=https://api.devnet.solana.com
-SOLANA_PROGRAM_ID=your_program_id
-SOLANA_AUTHORITY_KEYPAIR=./keys/authority.json
-```
-
-#### Frontend example
-```bash
-VITE_API_BASE_URL=http://localhost:8080
-VITE_SOLANA_CLUSTER=devnet
-```
-
 ### Run with Docker
-
-The easiest way to start the full stack is with Docker:
 
 ```bash
 docker compose up --build
@@ -145,23 +192,13 @@ Then open:
 
 ### Run Backend Locally
 
-If you want to run only the backend:
-
 ```bash
 cd backend
 go mod tidy
 go run ./cmd/api
 ```
 
-The backend will be available at:
-
-```bash
-http://localhost:8080
-```
-
 ### Run Frontend Locally
-
-If you want to run only the frontend:
 
 ```bash
 cd frontend
@@ -169,29 +206,7 @@ npm install
 npm run dev
 ```
 
-The frontend will be available at:
-
-```bash
-http://localhost:5173
-```
-
-### Build Frontend for Production
-
-```bash
-cd frontend
-npm run build
-```
-
-### Build Backend
-
-```bash
-cd backend
-go build -o repobounty-api ./cmd/api
-```
-
 ### Run Solana Program Locally
-
-If you want to work with the on-chain program:
 
 ```bash
 cd program
@@ -202,15 +217,36 @@ anchor test
 
 ### Health Check
 
-After starting the backend, you can verify the system state with:
-
 ```bash
 GET /api/health
 ```
 
 This will show whether GitHub, AI, and Solana components are configured correctly.
 
-### Notes
+---
 
-- If `GITHUB_TOKEN` or `OPENROUTER_API_KEY` is missing, the backend can still run with public GitHub access and deterministic fallback allocation.
-- If Solana authority or program settings are missing, the backend will still boot, but on-chain actions such as create, fund, finalize, and claim will be disabled.
+## Roadmap
+
+- [x] GitHub OAuth campaign creation
+- [x] On-chain SOL escrow and campaign state
+- [x] Funding and claim flows
+- [x] AI-assisted allocation
+- [x] Deterministic fallback behavior
+- [ ] More advanced contribution scoring
+- [ ] Multi-campaign sponsor dashboards
+- [ ] Better wallet-linking and claimant identity checks
+- [ ] Expanded analytics and reward history
+
+---
+
+## Resources
+
+- [Live Demo](#)
+- [Docs](docs/)
+- [GitHub Repository](https://github.com/asari92/repobounty-ai)
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE)
