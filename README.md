@@ -1,6 +1,5 @@
 # RepoBounty AI
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-14F195.svg)](LICENSE)
 [![Solana](https://img.shields.io/badge/Solana-devnet-9945FF)](https://solana.com)
 [![GitHub](https://img.shields.io/badge/GitHub-OAuth-181717)](https://github.com)
 
