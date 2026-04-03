@@ -19,6 +19,7 @@ services:
       - PROGRAM_ID=${PROGRAM_ID:-97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
       - DATABASE_PATH=/data/repobounty.db
+      - MIRROR_STORAGE_PATH=/data/mirrors
     volumes:
       - backend-data:/data
     healthcheck:
@@ -78,6 +79,7 @@ services:
 
 volumes:
   backend-data:
+  # mirror data is stored inside backend-data volume under /data/mirrors
 
 networks:
   repobounty:

@@ -22,6 +22,7 @@ import (
 	"github.com/repobounty/repobounty-ai/internal/ai"
 	"github.com/repobounty/repobounty-ai/internal/auth"
 	"github.com/repobounty/repobounty-ai/internal/config"
+	"github.com/repobounty/repobounty-ai/internal/extractor"
 	"github.com/repobounty/repobounty-ai/internal/github"
 	"github.com/repobounty/repobounty-ai/internal/githubapp"
 	"github.com/repobounty/repobounty-ai/internal/models"
@@ -305,6 +306,8 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.store.Update(campaign); err != nil {
 		log.Printf("WARNING: store update failed after on-chain campaign creation (campaign=%s, tx=%s): %v", campaign.CampaignID, txSig, err)
+		// Campaign exists in store (created before on-chain call) — still start mirror.
+		h.startMirrorByCampaign(campaign.CampaignID, campaign.Repo)
 		writeJSON(w, http.StatusAccepted, models.CreateCampaignResponse{
 			CampaignID:   campaign.CampaignID,
 			CampaignPDA:  campaign.CampaignPDA,
@@ -326,6 +329,9 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 	} else {
 		go h.createCampaignIssue(context.Background(), campaign, freshUser)
 	}
+
+	// Start async mirror clone for the repo.
+	h.startMirrorByCampaign(campaign.CampaignID, campaign.Repo)
 
 	writeJSON(w, http.StatusCreated, models.CreateCampaignResponse{
 		CampaignID:   campaign.CampaignID,
@@ -999,6 +1005,34 @@ func (h *Handlers) calculateAllocations(
 	options allocationOptions,
 ) (*allocationResult, error) {
 	windowStart, windowEnd := campaignContributionWindow(campaign)
+
+	// Prefer mirror data over GitHub API when available.
+	if mirrorContributors, source := h.contributorsFromMirror(campaign.CampaignID); mirrorContributors != nil {
+		var allocations []models.Allocation
+		var err error
+		if options.forceDeterministic {
+			allocations, err = h.ai.AllocateDeterministic(mirrorContributors, campaign.PoolAmount)
+		} else {
+			allocations, err = h.ai.Allocate(ctx, campaign.Repo, mirrorContributors, campaign.PoolAmount)
+		}
+		if err != nil {
+			return nil, err
+		}
+		allocations, err = ai.NormalizeAllocations(allocations, mirrorContributors, campaign.PoolAmount)
+		if err != nil {
+			return nil, err
+		}
+		return &allocationResult{
+			contributors:      mirrorContributors,
+			allocations:       allocations,
+			allocationMode:    models.AllocationModeMetrics,
+			windowStart:       windowStart,
+			windowEnd:         windowEnd,
+			contributorSource: source,
+			contributorNotes:  "contributor data sourced from local git mirror",
+		}, nil
+	}
+
 	windowData, err := h.github.FetchContributionWindowData(ctx, campaign.Repo, windowStart, windowEnd)
 	if err != nil {
 		return nil, fmt.Errorf("fetch contribution window: %w", err)
@@ -1046,6 +1080,23 @@ func (h *Handlers) calculateAllocations(
 		contributorSource: windowData.ContributorSource,
 		contributorNotes:  windowData.ContributorNotes,
 	}, nil
+}
+
+// contributorsFromMirror returns contributors built from the campaign's local git mirror, if one
+// exists with status "done".  Returns nil when the mirror is unavailable or incomplete.
+func (h *Handlers) contributorsFromMirror(campaignID string) ([]models.Contributor, string) {
+	m, err := h.store.GetRepositoryMirrorByCampaign(campaignID)
+	if err != nil || m.SyncStatus != models.MirrorStatusDone {
+		return nil, ""
+	}
+
+	stats, err := h.store.GetMirrorCommitStats(m.ID)
+	if err != nil || len(stats) == 0 {
+		return nil, ""
+	}
+
+	a := extractor.NewAnalyzer()
+	return a.ContributorsFromStats(stats), "mirror"
 }
 
 func (h *Handlers) createCampaignIssue(ctx context.Context, campaign *models.Campaign, user *store.User) {
