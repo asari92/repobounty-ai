@@ -230,3 +230,87 @@ func mergeAutoFinalizeCampaigns(storedCampaigns, onChainCampaigns []*models.Camp
 
 	return merged
 }
+
+// StartMirrorSyncWorker starts a background goroutine that periodically re-syncs
+// mirrors for all campaigns that need an update.
+func StartMirrorSyncWorker(
+	ctx context.Context,
+	handlers *Handlers,
+	logger *zap.Logger,
+	interval time.Duration,
+) {
+	if handlers == nil || !handlers.config.MirrorEnabled {
+		return
+	}
+	if interval == 0 {
+		interval = 24 * time.Hour
+	}
+
+	maxConcurrent := handlers.config.MirrorMaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = 3
+	}
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("mirror sync worker panic", zap.Any("recover", r))
+			}
+		}()
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		logger.Info("mirror sync worker started", zap.Duration("interval", interval))
+
+		for {
+			select {
+			case <-ticker.C:
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							logger.Error("mirror sync tick panic", zap.Any("recover", r))
+						}
+					}()
+					runMirrorSyncTick(ctx, handlers, logger, maxConcurrent)
+				}()
+			case <-ctx.Done():
+				logger.Info("mirror sync worker stopping")
+				return
+			}
+		}
+	}()
+}
+
+func runMirrorSyncTick(
+	ctx context.Context,
+	handlers *Handlers,
+	logger *zap.Logger,
+	maxConcurrent int,
+) {
+	mirrors, err := handlers.store.ListMirrorsNeedingSync()
+	if err != nil {
+		logger.Error("mirror sync tick: list mirrors failed", zap.Error(err))
+		return
+	}
+	if len(mirrors) == 0 {
+		return
+	}
+
+	semaphore := make(chan struct{}, maxConcurrent)
+	for _, m := range mirrors {
+		campaignID := m.CampaignID
+		semaphore <- struct{}{}
+		go func() {
+			defer func() { <-semaphore }()
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("mirror sync goroutine panic",
+						zap.String("campaign_id", campaignID),
+						zap.Any("recover", r),
+					)
+				}
+			}()
+			handlers.runMirrorSync(ctx, campaignID)
+		}()
+	}
+}

@@ -63,6 +63,14 @@ func NewRouter(h *Handlers, env string) http.Handler {
 			r.With(requireAuth).Post("/{id}/claim", h.ClaimPermit)
 			r.With(requireAuth).Post("/{id}/fund-tx", h.FundTx)
 		})
+
+		r.Route("/mirror/{owner}/{repo}", func(r chi.Router) {
+			r.Get("/", h.GetMirrorStatus)
+			r.Get("/metadata", h.GetMirrorMetadata)
+			r.Get("/commits", h.GetMirrorCommits)
+			r.Get("/contributors", h.GetMirrorContributors)
+			r.With(requireAuth).Post("/sync", h.SyncMirror)
+		})
 	})
 
 	return r

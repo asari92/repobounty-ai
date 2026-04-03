@@ -22,6 +22,7 @@ import (
 	"github.com/repobounty/repobounty-ai/internal/ai"
 	"github.com/repobounty/repobounty-ai/internal/auth"
 	"github.com/repobounty/repobounty-ai/internal/config"
+	"github.com/repobounty/repobounty-ai/internal/extractor"
 	"github.com/repobounty/repobounty-ai/internal/github"
 	"github.com/repobounty/repobounty-ai/internal/githubapp"
 	"github.com/repobounty/repobounty-ai/internal/models"
@@ -305,6 +306,8 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.store.Update(campaign); err != nil {
 		log.Printf("WARNING: store update failed after on-chain campaign creation (campaign=%s, tx=%s): %v", campaign.CampaignID, txSig, err)
+		// Campaign exists in store (created before on-chain call) — still start mirror.
+		h.startMirrorByCampaign(campaign.CampaignID, campaign.Repo)
 		writeJSON(w, http.StatusAccepted, models.CreateCampaignResponse{
 			CampaignID:   campaign.CampaignID,
 			CampaignPDA:  campaign.CampaignPDA,
@@ -317,6 +320,18 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
+	// Try to create campaign issue in GitHub repository
+	// Fetch fresh user from DB to ensure we have the latest GitHub token
+	freshUser, err := h.store.GetUser(user.GitHubUsername)
+	if err != nil {
+		log.Printf("failed to fetch fresh user for issue creation: %v", err)
+	} else {
+		go h.createCampaignIssue(context.Background(), campaign, freshUser)
+	}
+
+	// Start async mirror clone for the repo.
+	h.startMirrorByCampaign(campaign.CampaignID, campaign.Repo)
 
 	writeJSON(w, http.StatusCreated, models.CreateCampaignResponse{
 		CampaignID:   campaign.CampaignID,
@@ -990,6 +1005,34 @@ func (h *Handlers) calculateAllocations(
 	options allocationOptions,
 ) (*allocationResult, error) {
 	windowStart, windowEnd := campaignContributionWindow(campaign)
+
+	// Prefer mirror data over GitHub API when available.
+	if mirrorContributors, source := h.contributorsFromMirror(campaign.CampaignID); mirrorContributors != nil {
+		var allocations []models.Allocation
+		var err error
+		if options.forceDeterministic {
+			allocations, err = h.ai.AllocateDeterministic(mirrorContributors, campaign.PoolAmount)
+		} else {
+			allocations, err = h.ai.Allocate(ctx, campaign.Repo, mirrorContributors, campaign.PoolAmount)
+		}
+		if err != nil {
+			return nil, err
+		}
+		allocations, err = ai.NormalizeAllocations(allocations, mirrorContributors, campaign.PoolAmount)
+		if err != nil {
+			return nil, err
+		}
+		return &allocationResult{
+			contributors:      mirrorContributors,
+			allocations:       allocations,
+			allocationMode:    models.AllocationModeMetrics,
+			windowStart:       windowStart,
+			windowEnd:         windowEnd,
+			contributorSource: source,
+			contributorNotes:  "contributor data sourced from local git mirror",
+		}, nil
+	}
+
 	windowData, err := h.github.FetchContributionWindowData(ctx, campaign.Repo, windowStart, windowEnd)
 	if err != nil {
 		return nil, fmt.Errorf("fetch contribution window: %w", err)
@@ -1037,6 +1080,82 @@ func (h *Handlers) calculateAllocations(
 		contributorSource: windowData.ContributorSource,
 		contributorNotes:  windowData.ContributorNotes,
 	}, nil
+}
+
+// contributorsFromMirror returns contributors built from the campaign's local git mirror, if one
+// exists with status "done".  Returns nil when the mirror is unavailable or incomplete.
+func (h *Handlers) contributorsFromMirror(campaignID string) ([]models.Contributor, string) {
+	m, err := h.store.GetRepositoryMirrorByCampaign(campaignID)
+	if err != nil || m.SyncStatus != models.MirrorStatusDone {
+		return nil, ""
+	}
+
+	stats, err := h.store.GetMirrorCommitStats(m.ID)
+	if err != nil || len(stats) == 0 {
+		return nil, ""
+	}
+
+	a := extractor.NewAnalyzer()
+	return a.ContributorsFromStats(stats), "mirror"
+}
+
+func (h *Handlers) createCampaignIssue(ctx context.Context, campaign *models.Campaign, user *store.User) {
+	log.Printf("createCampaignIssue: started for campaign=%s repo=%s user=%s", campaign.CampaignID, campaign.Repo, user.GitHubUsername)
+	
+	// Try GitHub App first
+	if h.config.GitHubAppID != 0 && h.config.GitHubAppPrivateKey != "" {
+		log.Printf("createCampaignIssue: attempting GitHub App method (app_id=%d)", h.config.GitHubAppID)
+		appClient := githubapp.NewClient(h.config.GitHubAppID, h.config.GitHubAppPrivateKey)
+		installation, err := appClient.GetAppInstallation(ctx, campaign.Repo)
+		if err != nil {
+			log.Printf("createCampaignIssue: failed to find app installation: %v", err)
+		} else if installation == nil {
+			log.Printf("createCampaignIssue: app not installed on repo %s", campaign.Repo)
+		} else {
+			log.Printf("createCampaignIssue: found app installation (inst_id=%d)", installation.ID)
+			installToken, err := appClient.GetInstallationToken(ctx, installation.ID)
+			if err != nil {
+				log.Printf("createCampaignIssue: failed to get installation token: %v", err)
+			} else {
+				amountSOL := fmt.Sprintf("%.2f", float64(campaign.PoolAmount)/1e9)
+				err = appClient.CreateCampaignIssue(ctx, installToken, campaign.Repo, &githubapp.CreateIssueBody{
+					Campaign:    campaign.CampaignID,
+					PoolSOL:     amountSOL,
+					Deadline:    campaign.Deadline.Format("2006-01-02 15:04:05 UTC"),
+					CampaignURL: fmt.Sprintf("%s/campaign/%s", h.config.FrontendURL, campaign.CampaignID),
+					Repo:        campaign.Repo,
+				})
+				if err == nil {
+					log.Printf("createCampaignIssue: ✓ successfully created campaign issue via GitHub App for repo %s", campaign.Repo)
+					return
+				}
+				log.Printf("createCampaignIssue: failed to create issue via GitHub App: %v", err)
+			}
+		}
+	} else {
+		log.Printf("createCampaignIssue: GitHub App not configured (app_id=%d, has_key=%v)", h.config.GitHubAppID, h.config.GitHubAppPrivateKey != "")
+	}
+
+	// Fallback to GITHUB_TOKEN from .env
+	if h.config.GitHubToken != "" {
+		log.Printf("createCampaignIssue: attempting .env GITHUB_TOKEN fallback")
+		githubClient := github.NewClient(h.config.GitHubToken)
+		amountSOL := fmt.Sprintf("%.2f", float64(campaign.PoolAmount)/1e9)
+		err := githubClient.CreateCampaignIssue(ctx, campaign.Repo, &github.CreateIssueBody{
+			Campaign:    campaign.CampaignID,
+			PoolSOL:     amountSOL,
+			Deadline:    campaign.Deadline.Format("2006-01-02 15:04:05 UTC"),
+			CampaignURL: fmt.Sprintf("%s/campaign/%s", h.config.FrontendURL, campaign.CampaignID),
+			Repo:        campaign.Repo,
+		})
+		if err == nil {
+			log.Printf("createCampaignIssue: ✓ created campaign issue via .env GITHUB_TOKEN for repo %s", campaign.Repo)
+			return
+		}
+		log.Printf("createCampaignIssue: failed to create issue via .env GITHUB_TOKEN: %v", err)
+	}
+
+	log.Printf("createCampaignIssue: all methods failed for campaign=%s repo=%s", campaign.CampaignID, campaign.Repo)
 }
 
 func (h *Handlers) GetGitHubAuthURL(w http.ResponseWriter, r *http.Request) {
@@ -1097,12 +1216,14 @@ func (h *Handlers) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	user, _, err := h.githubOAuth.ExchangeCode(ctx, code)
+	user, githubToken, err := h.githubOAuth.ExchangeCode(ctx, code)
 	if err != nil {
 		log.Printf("github oauth: exchange code failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to exchange authorization code")
 		return
 	}
+	
+	log.Printf("github oauth: exchanged code for user=%s with token length=%d", user.Login, len(githubToken))
 
 	existingUser, _ := h.store.GetUser(user.Login)
 	if existingUser == nil {
@@ -1112,13 +1233,24 @@ func (h *Handlers) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 			GitHubID:       user.ID,
 			Email:          user.Email,
 			AvatarURL:      user.AvatarURL,
+			GitHubToken:    githubToken,
 		}
 		if err := h.store.CreateUser(newUser); err != nil {
 			log.Printf("github oauth: create user failed: %v", err)
 			writeError(w, http.StatusInternalServerError, "failed to create user account")
 			return
 		}
+		log.Printf("github oauth: created new user=%s with GitHub token", newUser.GitHubUsername)
 		existingUser = newUser
+	} else {
+		// Update the token for existing user
+		existingUser.GitHubToken = githubToken
+		if err := h.store.UpdateUser(existingUser); err != nil {
+			log.Printf("github oauth: update user failed: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to update user account")
+			return
+		}
+		log.Printf("github oauth: updated existing user=%s with GitHub token", existingUser.GitHubUsername)
 	}
 
 	token, err := h.jwt.GenerateToken(existingUser.GitHubUsername)

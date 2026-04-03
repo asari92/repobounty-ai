@@ -1,11 +1,13 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -27,6 +29,25 @@ type Config struct {
 	GitHubAppID         int64
 	GitHubAppPrivateKey string
 	DatabasePath        string
+
+	// Mirror service
+	MirrorStoragePath   string
+	MirrorSyncInterval  time.Duration
+	MirrorCloneTimeout  time.Duration
+	MirrorMaxConcurrent int
+	MirrorEnabled       bool
+}
+
+func decodeBase64PrivateKey(encoded string) string {
+	if encoded == "" {
+		return ""
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		// If it's not Base64, return as-is (already PEM)
+		return encoded
+	}
+	return string(decoded)
 }
 
 func Load() (*Config, error) {
@@ -52,10 +73,16 @@ func Load() (*Config, error) {
 		SolanaPrivateKey:    os.Getenv("SOLANA_PRIVATE_KEY"),
 		ProgramID:           os.Getenv("PROGRAM_ID"),
 		Env:                 envOrDefault("ENV", "development"),
-		AllowedOrigins:      os.Getenv("ALLOWED_ORIGINS"),
+			AllowedOrigins:      os.Getenv("ALLOWED_ORIGINS"),
 		GitHubAppID:         envOrDefaultInt64("GITHUB_APP_ID", 0),
-		GitHubAppPrivateKey: os.Getenv("GITHUB_APP_PRIVATE_KEY"),
+		GitHubAppPrivateKey: decodeBase64PrivateKey(os.Getenv("GITHUB_APP_PRIVATE_KEY")),
 		DatabasePath:        databasePath,
+
+		MirrorStoragePath:   envOrDefault("MIRROR_STORAGE_PATH", "./data/mirrors"),
+		MirrorSyncInterval:  parseDuration(os.Getenv("MIRROR_SYNC_INTERVAL"), 24*time.Hour),
+		MirrorCloneTimeout:  parseDuration(os.Getenv("MIRROR_CLONE_TIMEOUT"), 5*time.Minute),
+		MirrorMaxConcurrent: envOrDefaultInt("MIRROR_MAX_CONCURRENT", 3),
+		MirrorEnabled:       os.Getenv("MIRROR_ENABLED") != "false",
 	}
 	if cfg.Env == "production" && cfg.JWTSecret == "" {
 		return nil, fmt.Errorf("JWT_SECRET is required in production")
@@ -184,4 +211,31 @@ func envOrDefaultInt64(key string, fallback int64) int64 {
 		return fallback
 	}
 	return n
+}
+
+func envOrDefaultInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+func parseDuration(s string, fallback time.Duration) time.Duration {
+	if s == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		// Support plain seconds integer for MIRROR_CLONE_TIMEOUT
+		if n, err2 := strconv.Atoi(s); err2 == nil {
+			return time.Duration(n) * time.Second
+		}
+		return fallback
+	}
+	return d
 }

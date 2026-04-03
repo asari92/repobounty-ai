@@ -27,6 +27,15 @@ type CampaignStore interface {
 	MarkWalletChallengeUsed(id string, usedAt time.Time) error
 	SaveFinalizeSnapshot(snapshot *models.FinalizeSnapshot) error
 	GetLatestFinalizeSnapshot(campaignID string) (*models.FinalizeSnapshot, error)
+
+	// Mirror methods
+	CreateRepositoryMirror(m *models.RepositoryMirror) error
+	GetRepositoryMirrorByCampaign(campaignID string) (*models.RepositoryMirror, error)
+	GetRepositoryMirrorByRepo(ownerLogin, repoName string) (*models.RepositoryMirror, error)
+	UpdateRepositoryMirror(m *models.RepositoryMirror) error
+	ListMirrorsNeedingSync() ([]*models.RepositoryMirror, error)
+	SaveMirrorCommitStats(mirrorID int64, stats map[string]*models.CommitStats) error
+	GetMirrorCommitStats(mirrorID int64) (map[string]*models.CommitStats, error)
 }
 
 type Store struct {
@@ -35,6 +44,9 @@ type Store struct {
 	users            map[string]*User
 	walletChallenges map[string]*models.WalletChallenge
 	snapshots        map[string][]*models.FinalizeSnapshot
+	mirrors          map[string]*models.RepositoryMirror // campaign_id -> mirror
+	mirrorStats      map[int64]map[string]*models.CommitStats
+	mirrorIDSeq      int64
 }
 
 type User struct {
@@ -43,6 +55,7 @@ type User struct {
 	GitHubID       int       `json:"github_id"`
 	Email          string    `json:"email,omitempty"`
 	AvatarURL      string    `json:"avatar_url"`
+	GitHubToken    string    `json:"github_token,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 
@@ -52,6 +65,8 @@ func New() *Store {
 		users:            make(map[string]*User),
 		walletChallenges: make(map[string]*models.WalletChallenge),
 		snapshots:        make(map[string][]*models.FinalizeSnapshot),
+		mirrors:          make(map[string]*models.RepositoryMirror),
+		mirrorStats:      make(map[int64]map[string]*models.CommitStats),
 	}
 }
 
@@ -246,4 +261,94 @@ func (s *Store) GetLatestFinalizeSnapshot(campaignID string) (*models.FinalizeSn
 		return nil, ErrNotFound
 	}
 	return copySnapshot(snapshots[len(snapshots)-1]), nil
+}
+
+func (s *Store) CreateRepositoryMirror(m *models.RepositoryMirror) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.mirrors[m.CampaignID]; exists {
+		return errors.New("mirror already exists for campaign")
+	}
+	s.mirrorIDSeq++
+	m.ID = s.mirrorIDSeq
+	cp := *m
+	s.mirrors[m.CampaignID] = &cp
+	return nil
+}
+
+func (s *Store) GetRepositoryMirrorByCampaign(campaignID string) (*models.RepositoryMirror, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	m, ok := s.mirrors[campaignID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	cp := *m
+	return &cp, nil
+}
+
+func (s *Store) GetRepositoryMirrorByRepo(ownerLogin, repoName string) (*models.RepositoryMirror, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, m := range s.mirrors {
+		if m.OwnerLogin == ownerLogin && m.RepoName == repoName {
+			cp := *m
+			return &cp, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (s *Store) UpdateRepositoryMirror(m *models.RepositoryMirror) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.mirrors[m.CampaignID]; !ok {
+		return ErrNotFound
+	}
+	cp := *m
+	s.mirrors[m.CampaignID] = &cp
+	return nil
+}
+
+func (s *Store) ListMirrorsNeedingSync() ([]*models.RepositoryMirror, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var result []*models.RepositoryMirror
+	cutoff := time.Now().Add(-24 * time.Hour)
+	for _, m := range s.mirrors {
+		if m.SyncStatus == models.MirrorStatusPending ||
+			(m.SyncStatus == models.MirrorStatusDone && m.LastSyncedAt.Before(cutoff)) ||
+			m.SyncStatus == models.MirrorStatusFailed {
+			cp := *m
+			result = append(result, &cp)
+		}
+	}
+	return result, nil
+}
+
+func (s *Store) SaveMirrorCommitStats(mirrorID int64, stats map[string]*models.CommitStats) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := make(map[string]*models.CommitStats, len(stats))
+	for k, v := range stats {
+		stat := *v
+		cp[k] = &stat
+	}
+	s.mirrorStats[mirrorID] = cp
+	return nil
+}
+
+func (s *Store) GetMirrorCommitStats(mirrorID int64) (map[string]*models.CommitStats, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	stats, ok := s.mirrorStats[mirrorID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	cp := make(map[string]*models.CommitStats, len(stats))
+	for k, v := range stats {
+		stat := *v
+		cp[k] = &stat
+	}
+	return cp, nil
 }

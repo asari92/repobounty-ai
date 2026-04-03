@@ -68,6 +68,7 @@ func migrate(db *sql.DB) error {
 		email TEXT NOT NULL DEFAULT '',
 		avatar_url TEXT NOT NULL DEFAULT '',
 		wallet_address TEXT NOT NULL DEFAULT '',
+		github_token TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL
 	);
 
@@ -98,6 +99,40 @@ func migrate(db *sql.DB) error {
 		approved_at TEXT,
 		PRIMARY KEY (campaign_id, version)
 	);
+
+	CREATE TABLE IF NOT EXISTS repository_mirrors (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		campaign_id TEXT NOT NULL UNIQUE,
+		github_repo_id INTEGER NOT NULL DEFAULT 0,
+		owner_login TEXT NOT NULL,
+		repo_name TEXT NOT NULL,
+		mirror_path TEXT NOT NULL UNIQUE,
+		last_synced_at TEXT,
+		sync_status TEXT NOT NULL DEFAULT 'pending',
+		last_error_msg TEXT NOT NULL DEFAULT '',
+		commit_count INTEGER NOT NULL DEFAULT 0,
+		default_branch TEXT NOT NULL DEFAULT 'main',
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		FOREIGN KEY(campaign_id) REFERENCES campaigns(campaign_id)
+	);
+
+	CREATE TABLE IF NOT EXISTS mirror_commit_stats (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		mirror_id INTEGER NOT NULL,
+		username TEXT NOT NULL,
+		github_user_id INTEGER NOT NULL DEFAULT 0,
+		commit_count INTEGER NOT NULL DEFAULT 0,
+		lines_added INTEGER NOT NULL DEFAULT 0,
+		lines_deleted INTEGER NOT NULL DEFAULT 0,
+		files_touched INTEGER NOT NULL DEFAULT 0,
+		first_commit_at TEXT,
+		last_commit_at TEXT,
+		FOREIGN KEY(mirror_id) REFERENCES repository_mirrors(id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_mirror_campaign ON repository_mirrors(campaign_id);
+	CREATE INDEX IF NOT EXISTS idx_mirror_sync_status ON repository_mirrors(sync_status);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		return err
@@ -105,6 +140,7 @@ func migrate(db *sql.DB) error {
 
 	for _, stmt := range []string{
 		`ALTER TABLE campaigns ADD COLUMN owner_github_username TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN github_token TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return err
@@ -218,9 +254,9 @@ func (s *SQLiteStore) GetUser(username string) (*User, error) {
 	var u User
 	var createdAt string
 	err := s.db.QueryRow(`
-		SELECT github_username, github_id, email, avatar_url, wallet_address, created_at
+		SELECT github_username, github_id, email, avatar_url, wallet_address, github_token, created_at
 		FROM users WHERE github_username = ?`, username,
-	).Scan(&u.GitHubUsername, &u.GitHubID, &u.Email, &u.AvatarURL, &u.WalletAddress, &createdAt)
+	).Scan(&u.GitHubUsername, &u.GitHubID, &u.Email, &u.AvatarURL, &u.WalletAddress, &u.GitHubToken, &createdAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -242,13 +278,14 @@ func (s *SQLiteStore) CreateUser(u *User) error {
 			GitHubID:       u.GitHubID,
 			Email:          u.Email,
 			AvatarURL:      u.AvatarURL,
+			GitHubToken:    u.GitHubToken,
 			CreatedAt:      time.Now(),
 		}
 	}
 	_, err := s.db.Exec(`
-		INSERT INTO users (github_username, github_id, email, avatar_url, wallet_address, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		u.GitHubUsername, u.GitHubID, u.Email, u.AvatarURL, u.WalletAddress,
+		INSERT INTO users (github_username, github_id, email, avatar_url, wallet_address, github_token, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		u.GitHubUsername, u.GitHubID, u.Email, u.AvatarURL, u.WalletAddress, u.GitHubToken,
 		u.CreatedAt.Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -262,9 +299,9 @@ func (s *SQLiteStore) CreateUser(u *User) error {
 
 func (s *SQLiteStore) UpdateUser(u *User) error {
 	res, err := s.db.Exec(`
-		UPDATE users SET github_id=?, email=?, avatar_url=?, wallet_address=?, created_at=?
+		UPDATE users SET github_id=?, email=?, avatar_url=?, wallet_address=?, github_token=?, created_at=?
 		WHERE github_username=?`,
-		u.GitHubID, u.Email, u.AvatarURL, u.WalletAddress,
+		u.GitHubID, u.Email, u.AvatarURL, u.WalletAddress, u.GitHubToken,
 		u.CreatedAt.Format(time.RFC3339Nano), u.GitHubUsername,
 	)
 	if err != nil {
@@ -576,6 +613,244 @@ func (s *SQLiteStore) scanCampaign(scanner interface{ Scan(...interface{}) error
 
 func nullableTime(t *time.Time) any {
 	if t == nil {
+		return nil
+	}
+	return t.Format(time.RFC3339Nano)
+}
+
+func (s *SQLiteStore) CreateRepositoryMirror(m *models.RepositoryMirror) error {
+	now := time.Now().UTC()
+	m.CreatedAt = now
+	m.UpdatedAt = now
+	result, err := s.db.Exec(`
+		INSERT INTO repository_mirrors
+			(campaign_id, github_repo_id, owner_login, repo_name, mirror_path,
+			 last_synced_at, sync_status, last_error_msg, commit_count, default_branch,
+			 created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.CampaignID, m.GitHubRepoID, m.OwnerLogin, m.RepoName, m.MirrorPath,
+		nullableTime2(m.LastSyncedAt), m.SyncStatus, m.LastErrorMsg, m.CommitCount, m.DefaultBranch,
+		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint") {
+			return errors.New("mirror already exists for this campaign")
+		}
+		return fmt.Errorf("insert mirror: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("last insert id: %w", err)
+	}
+	m.ID = id
+	return nil
+}
+
+func (s *SQLiteStore) GetRepositoryMirrorByCampaign(campaignID string) (*models.RepositoryMirror, error) {
+	return s.scanMirror(s.db.QueryRow(`
+		SELECT id, campaign_id, github_repo_id, owner_login, repo_name, mirror_path,
+		       last_synced_at, sync_status, last_error_msg, commit_count, default_branch, created_at, updated_at
+		FROM repository_mirrors WHERE campaign_id = ?`, campaignID))
+}
+
+func (s *SQLiteStore) GetRepositoryMirrorByRepo(ownerLogin, repoName string) (*models.RepositoryMirror, error) {
+	return s.scanMirror(s.db.QueryRow(`
+		SELECT id, campaign_id, github_repo_id, owner_login, repo_name, mirror_path,
+		       last_synced_at, sync_status, last_error_msg, commit_count, default_branch, created_at, updated_at
+		FROM repository_mirrors WHERE owner_login = ? AND repo_name = ?
+		ORDER BY created_at DESC LIMIT 1`, ownerLogin, repoName))
+}
+
+func (s *SQLiteStore) UpdateRepositoryMirror(m *models.RepositoryMirror) error {
+	m.UpdatedAt = time.Now().UTC()
+	res, err := s.db.Exec(`
+		UPDATE repository_mirrors
+		SET github_repo_id=?, owner_login=?, repo_name=?, mirror_path=?,
+		    last_synced_at=?, sync_status=?, last_error_msg=?, commit_count=?,
+		    default_branch=?, updated_at=?
+		WHERE campaign_id=?`,
+		m.GitHubRepoID, m.OwnerLogin, m.RepoName, m.MirrorPath,
+		nullableTime2(m.LastSyncedAt), m.SyncStatus, m.LastErrorMsg, m.CommitCount,
+		m.DefaultBranch, m.UpdatedAt.Format(time.RFC3339Nano),
+		m.CampaignID,
+	)
+	if err != nil {
+		return fmt.Errorf("update mirror: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ListMirrorsNeedingSync() ([]*models.RepositoryMirror, error) {
+	cutoff := time.Now().Add(-24 * time.Hour).Format(time.RFC3339Nano)
+	rows, err := s.db.Query(`
+		SELECT id, campaign_id, github_repo_id, owner_login, repo_name, mirror_path,
+		       last_synced_at, sync_status, last_error_msg, commit_count, default_branch, created_at, updated_at
+		FROM repository_mirrors
+		WHERE sync_status = 'pending'
+		   OR sync_status = 'failed'
+		   OR (sync_status = 'done' AND (last_synced_at IS NULL OR last_synced_at < ?))`,
+		cutoff,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list mirrors needing sync: %w", err)
+	}
+	defer rows.Close()
+
+	var result []*models.RepositoryMirror
+	for rows.Next() {
+		m, err := s.scanMirrorRow(rows)
+		if err != nil {
+			log.Printf("sqlite: scan mirror row failed: %v", err)
+			continue
+		}
+		result = append(result, m)
+	}
+	return result, rows.Err()
+}
+
+func (s *SQLiteStore) SaveMirrorCommitStats(mirrorID int64, stats map[string]*models.CommitStats) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM mirror_commit_stats WHERE mirror_id = ?`, mirrorID); err != nil {
+		return fmt.Errorf("delete old stats: %w", err)
+	}
+
+	for _, stat := range stats {
+		var firstCommit, lastCommit any
+		if !stat.FirstCommitAt.IsZero() {
+			firstCommit = stat.FirstCommitAt.Format(time.RFC3339Nano)
+		}
+		if !stat.LastCommitAt.IsZero() {
+			lastCommit = stat.LastCommitAt.Format(time.RFC3339Nano)
+		}
+		_, err := tx.Exec(`
+			INSERT INTO mirror_commit_stats
+				(mirror_id, username, commit_count, lines_added, lines_deleted, files_touched, first_commit_at, last_commit_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			mirrorID, stat.Username, stat.CommitCount, stat.LinesAdded, stat.LinesDeleted,
+			stat.FilesTouched, firstCommit, lastCommit,
+		)
+		if err != nil {
+			return fmt.Errorf("insert stat for %s: %w", stat.Username, err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (s *SQLiteStore) GetMirrorCommitStats(mirrorID int64) (map[string]*models.CommitStats, error) {
+	rows, err := s.db.Query(`
+		SELECT username, commit_count, lines_added, lines_deleted, files_touched, first_commit_at, last_commit_at
+		FROM mirror_commit_stats WHERE mirror_id = ?`, mirrorID)
+	if err != nil {
+		return nil, fmt.Errorf("get mirror stats: %w", err)
+	}
+	defer rows.Close()
+
+	stats := make(map[string]*models.CommitStats)
+	for rows.Next() {
+		var stat models.CommitStats
+		var firstAt, lastAt sql.NullString
+		if err := rows.Scan(&stat.Username, &stat.CommitCount, &stat.LinesAdded,
+			&stat.LinesDeleted, &stat.FilesTouched, &firstAt, &lastAt); err != nil {
+			return nil, fmt.Errorf("scan stat row: %w", err)
+		}
+		if firstAt.Valid && firstAt.String != "" {
+			t, _ := time.Parse(time.RFC3339Nano, firstAt.String)
+			if t.IsZero() {
+				t, _ = time.Parse(time.RFC3339, firstAt.String)
+			}
+			stat.FirstCommitAt = t
+		}
+		if lastAt.Valid && lastAt.String != "" {
+			t, _ := time.Parse(time.RFC3339Nano, lastAt.String)
+			if t.IsZero() {
+				t, _ = time.Parse(time.RFC3339, lastAt.String)
+			}
+			stat.LastCommitAt = t
+		}
+		stats[stat.Username] = &stat
+	}
+	if len(stats) == 0 {
+		return nil, ErrNotFound
+	}
+	return stats, rows.Err()
+}
+
+func (s *SQLiteStore) scanMirror(row *sql.Row) (*models.RepositoryMirror, error) {
+	var m models.RepositoryMirror
+	var lastSyncedAt sql.NullString
+	var createdAt, updatedAt string
+	err := row.Scan(
+		&m.ID, &m.CampaignID, &m.GitHubRepoID, &m.OwnerLogin, &m.RepoName, &m.MirrorPath,
+		&lastSyncedAt, &m.SyncStatus, &m.LastErrorMsg, &m.CommitCount, &m.DefaultBranch,
+		&createdAt, &updatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("scan mirror: %w", err)
+	}
+	if lastSyncedAt.Valid && lastSyncedAt.String != "" {
+		t, _ := time.Parse(time.RFC3339Nano, lastSyncedAt.String)
+		if t.IsZero() {
+			t, _ = time.Parse(time.RFC3339, lastSyncedAt.String)
+		}
+		m.LastSyncedAt = t
+	}
+	m.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	if m.CreatedAt.IsZero() {
+		m.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	}
+	m.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+	if m.UpdatedAt.IsZero() {
+		m.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+	}
+	return &m, nil
+}
+
+func (s *SQLiteStore) scanMirrorRow(rows *sql.Rows) (*models.RepositoryMirror, error) {
+	var m models.RepositoryMirror
+	var lastSyncedAt sql.NullString
+	var createdAt, updatedAt string
+	err := rows.Scan(
+		&m.ID, &m.CampaignID, &m.GitHubRepoID, &m.OwnerLogin, &m.RepoName, &m.MirrorPath,
+		&lastSyncedAt, &m.SyncStatus, &m.LastErrorMsg, &m.CommitCount, &m.DefaultBranch,
+		&createdAt, &updatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("scan mirror row: %w", err)
+	}
+	if lastSyncedAt.Valid && lastSyncedAt.String != "" {
+		t, _ := time.Parse(time.RFC3339Nano, lastSyncedAt.String)
+		if t.IsZero() {
+			t, _ = time.Parse(time.RFC3339, lastSyncedAt.String)
+		}
+		m.LastSyncedAt = t
+	}
+	m.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	if m.CreatedAt.IsZero() {
+		m.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	}
+	m.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+	if m.UpdatedAt.IsZero() {
+		m.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+	}
+	return &m, nil
+}
+
+// nullableTime2 returns nil for zero time.Time, otherwise formats as RFC3339Nano string.
+func nullableTime2(t time.Time) any {
+	if t.IsZero() {
 		return nil
 	}
 	return t.Format(time.RFC3339Nano)

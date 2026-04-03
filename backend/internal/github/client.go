@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -662,4 +663,74 @@ func mockReviews(prNumber int) []Review {
 			SubmittedAt: "2024-03-16T15:30:00Z",
 		},
 	}
+}
+
+type CreateIssueBody struct {
+	Campaign string
+	PoolSOL  string
+	Deadline string
+	CampaignURL string
+	Repo string
+}
+
+func (c *Client) CreateCampaignIssue(ctx context.Context, repo string, body *CreateIssueBody) error {
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid repo format: %s", repo)
+	}
+	owner, name := parts[0], parts[1]
+
+	title := fmt.Sprintf("🎉 RepoBounty Campaign: %s SOL Rewards Available", body.PoolSOL)
+	
+	issueBody := fmt.Sprintf(
+		"# 🚀 RepoBounty AI Campaign\n\n"+
+			"A sponsor is rewarding **%s SOL** for contributions to this repository!\n\n"+
+			"**Campaign:** %s\n"+
+			"**Total Reward Pool:** %s SOL\n"+
+			"**Deadline:** %s\n\n"+
+			"## About RepoBounty AI\n"+
+			"RepoBounty AI uses artificial intelligence to analyze code contributions and automatically allocate rewards based on impact.\n\n"+
+			"→ [View Campaign Details](%s)\n\n"+
+			"*This issue was created automatically by RepoBounty AI.*",
+		body.PoolSOL,
+		body.Campaign,
+		body.PoolSOL,
+		body.Deadline,
+		body.CampaignURL,
+	)
+
+	issuePayload := struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}{
+		Title: title,
+		Body:  issueBody,
+	}
+
+	payload, err := json.Marshal(issuePayload)
+	if err != nil {
+		return fmt.Errorf("marshal issue: %w", err)
+	}
+
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues", owner, name)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("create issue: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("create issue: %d %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
 }

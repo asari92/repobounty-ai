@@ -92,6 +92,7 @@ func main() {
 	defer cancel()
 
 	handler.StartAutoFinalizeWorker(ctx, campaignStore, ghClient, aiAllocator, solClient, logger, 5*time.Minute)
+	handler.StartMirrorSyncWorker(ctx, handlers, logger, cfg.MirrorSyncInterval)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),
