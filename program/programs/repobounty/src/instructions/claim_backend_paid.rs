@@ -16,13 +16,13 @@ pub struct ClaimBackendPaid<'info> {
         constraint = !config.paused @ RepoBountyError::ProgramPaused,
         has_one = claim_authority @ RepoBountyError::Unauthorized,
     )]
-    pub config: Account<'info, Config>,
+    pub config: Box<Account<'info, Config>>,
 
     #[account(
         mut,
         constraint = campaign.status == CampaignStatus::Finalized @ RepoBountyError::CampaignNotFinalized,
     )]
-    pub campaign: Account<'info, Campaign>,
+    pub campaign: Box<Account<'info, Campaign>>,
 
     #[account(
         mut,
@@ -31,7 +31,7 @@ pub struct ClaimBackendPaid<'info> {
         constraint = claim_record.campaign == campaign.key() @ RepoBountyError::InvalidClaimRecord,
         constraint = !claim_record.claimed @ RepoBountyError::ClaimAlreadyClaimed,
     )]
-    pub claim_record: Account<'info, ClaimRecord>,
+    pub claim_record: Box<Account<'info, ClaimRecord>>,
 
     /// CHECK: PDA escrow authority for token transfers.
     #[account(
@@ -44,7 +44,7 @@ pub struct ClaimBackendPaid<'info> {
         mut,
         constraint = escrow_token_account.key() == campaign.escrow_token_account,
     )]
-    pub escrow_token_account: Account<'info, TokenAccount>,
+    pub escrow_token_account: Box<Account<'info, TokenAccount>>,
 
     #[account(
         init_if_needed,
@@ -52,13 +52,13 @@ pub struct ClaimBackendPaid<'info> {
         associated_token::mint = token_mint,
         associated_token::authority = recipient,
     )]
-    pub recipient_token_account: Account<'info, TokenAccount>,
+    pub recipient_token_account: Box<Account<'info, TokenAccount>>,
 
     /// CHECK: Wallet that receives the claimed tokens.
     pub recipient: UncheckedAccount<'info>,
 
     #[account(constraint = token_mint.key() == campaign.token_mint)]
-    pub token_mint: Account<'info, Mint>,
+    pub token_mint: Box<Account<'info, Mint>>,
 
     #[account(mut)]
     pub claim_authority: Signer<'info>,

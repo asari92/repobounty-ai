@@ -1,4 +1,67 @@
 services:
+  solana-check:
+    profiles:
+      - deploy
+    image: repobounty-ai-solana-program:latest
+    build: ./program
+    working_dir: /app
+    environment:
+      - SOLANA_RPC_URL=${SOLANA_RPC_URL:-https://api.devnet.solana.com}
+      - ANCHOR_PROVIDER_URL=${SOLANA_RPC_URL:-https://api.devnet.solana.com}
+      - ANCHOR_WALLET=/wallet/id.json
+      - PROGRAM_ARTIFACTS_DIR=/artifacts
+    volumes:
+      - ./program:/app
+      - ./program/.artifacts:/artifacts
+      - program-node-modules:/app/node_modules
+      - program-target:/app/target
+      - ${SOLANA_DEPLOY_WALLET:-./program/.wallet}:/wallet:ro
+    command: ["/app/scripts/check-program.sh"]
+    restart: "no"
+    networks:
+      - repobounty
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  solana-deployer:
+    profiles:
+      - deploy
+    image: repobounty-ai-solana-program:latest
+    build: ./program
+    working_dir: /app
+    environment:
+      - SOLANA_RPC_URL=${SOLANA_RPC_URL:-https://api.devnet.solana.com}
+      - ANCHOR_PROVIDER_URL=${SOLANA_RPC_URL:-https://api.devnet.solana.com}
+      - ANCHOR_WALLET=/wallet/id.json
+      - PROGRAM_ARTIFACTS_DIR=/artifacts
+      - SERVICE_PRIVATE_KEY=${SERVICE_PRIVATE_KEY:-}
+    volumes:
+      - ./program:/app
+      - ./program/.artifacts:/artifacts
+      - program-node-modules:/app/node_modules
+      - program-target:/app/target
+      - ${SOLANA_DEPLOY_WALLET:-./program/.wallet}:/wallet:ro
+    command: ["/app/scripts/deploy-devnet.sh"]
+    restart: "no"
+    networks:
+      - repobounty
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   backend:
     build: ./backend
     expose:
@@ -13,8 +76,8 @@ services:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - MODEL=${MODEL:-nvidia/nemotron-3-super-120b-a12b:free}
       - SOLANA_RPC_URL=${SOLANA_RPC_URL:-https://api.devnet.solana.com}
-      - SOLANA_PRIVATE_KEY=${SOLANA_PRIVATE_KEY}
-      - PROGRAM_ID=${PROGRAM_ID:-97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo}
+      - SERVICE_PRIVATE_KEY=${SERVICE_PRIVATE_KEY:-}
+      - PROGRAM_ID=${PROGRAM_ID:-}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
       - DATABASE_PATH=/data/repobounty.db
     volumes:
@@ -76,6 +139,8 @@ services:
 
 volumes:
   backend-data:
+  program-node-modules:
+  program-target:
 
 networks:
   repobounty:

@@ -44,17 +44,10 @@ pub fn handler<'info>(
 ) -> Result<()> {
     // Extract values before mutable borrows
     let campaign_key = ctx.accounts.campaign.key();
-    let deadline_at = ctx.accounts.campaign.deadline_at;
     let total_amount = ctx.accounts.campaign.total_amount;
     let current_allocated = ctx.accounts.campaign.allocated_amount;
     let current_count = ctx.accounts.campaign.allocations_count;
     let program_id = ctx.program_id;
-
-    let clock = Clock::get()?;
-    require!(
-        clock.unix_timestamp >= deadline_at,
-        RepoBountyError::DeadlineNotReached
-    );
 
     // Validate batch
     require!(!allocations.is_empty(), RepoBountyError::EmptyAllocations);
@@ -82,6 +75,12 @@ pub fn handler<'info>(
         );
         seen_ids.push(alloc.github_user_id);
     }
+
+    let clock = Clock::get()?;
+    require!(
+        clock.unix_timestamp >= ctx.accounts.campaign.deadline_at,
+        RepoBountyError::DeadlineNotReached
+    );
 
     // Create ClaimRecord accounts via remaining_accounts
     let rent = Rent::get()?;

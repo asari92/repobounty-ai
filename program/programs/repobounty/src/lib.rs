@@ -7,7 +7,7 @@ pub mod state;
 
 use instructions::*;
 
-declare_id!("8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ");
+declare_id!("5VdatUgJ6AsZ7RbC8TBz6AxUdBNtQ6MckLsKbxgZQdS6");
 
 #[program]
 pub mod repobounty {

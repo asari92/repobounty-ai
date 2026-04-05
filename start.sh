@@ -43,8 +43,8 @@ fi
 if [ -z "${GITHUB_CLIENT_SECRET:-}" ]; then
   warnings+=("GITHUB_CLIENT_SECRET")
 fi
-if [ -z "${SOLANA_PRIVATE_KEY:-}" ]; then
-  warnings+=("SOLANA_PRIVATE_KEY")
+if [ -z "${SERVICE_PRIVATE_KEY:-}" ]; then
+  warnings+=("SERVICE_PRIVATE_KEY")
 fi
 if [ -z "${OPENROUTER_API_KEY:-}" ]; then
   warnings+=("OPENROUTER_API_KEY")
@@ -93,9 +93,9 @@ if [ ${#warnings[@]} -gt 0 ]; then
         echo -e "    ${YELLOW}○${NC} GITHUB_CLIENT_SECRET"
         echo -e "      ${DIM}GitHub OAuth App client secret (same app as GITHUB_CLIENT_ID)${NC}"
         ;;
-      SOLANA_PRIVATE_KEY)
-        echo -e "    ${YELLOW}○${NC} SOLANA_PRIVATE_KEY"
-        echo -e "      ${DIM}Backend authority keypair for on-chain transactions${NC}"
+      SERVICE_PRIVATE_KEY)
+        echo -e "    ${YELLOW}○${NC} SERVICE_PRIVATE_KEY"
+        echo -e "      ${DIM}Backend service keypair for on-chain transactions${NC}"
         echo -e "      ${DIM}Generate: solana-keygen new -o authority.json${NC}"
         echo -e "      ${DIM}Then paste contents (JSON array) or base58 private key${NC}"
         ;;
@@ -122,6 +122,12 @@ echo ""
 echo -e "  Frontend : ${CYAN}http://localhost:5173${NC}"
 echo -e "  Backend  : ${CYAN}http://localhost:8080${NC}"
 echo -e "  Health   : ${CYAN}http://localhost:8080/api/health${NC}"
+echo -e "  Compose  : ${DIM}frontend + backend only${NC}"
+echo ""
+echo -e "  ${DIM}If you need to build/test/deploy the Solana program in Docker, run:${NC}"
+echo -e "  ${CYAN}docker compose --profile deploy run --rm solana-check${NC}"
+echo -e "  ${CYAN}docker compose --profile deploy run --rm solana-deployer${NC}"
+echo -e "  ${DIM}deploy uses SOLANA_DEPLOY_WALLET as admin wallet and SERVICE_PRIVATE_KEY as service wallet${NC}"
 echo ""
 
 docker compose up --build "$@"

@@ -83,8 +83,8 @@ GITHUB_CLIENT_SECRET=...               # OAuth App → Client Secret
 
 # === Solana ===
 SOLANA_RPC_URL=https://api.devnet.solana.com
-SOLANA_PRIVATE_KEY=<base58-или-json>   # Keypair backend-authority (см. раздел 5)
-PROGRAM_ID=97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo
+SERVICE_PRIVATE_KEY=<base58-или-json>  # service_wallet (см. раздел 5)
+PROGRAM_ID=<вставь после deploy из program/.artifacts/program-id>
 
 # === AI (опционально) ===
 OPENROUTER_API_KEY=sk-or-...           # Без ключа работает deterministic fallback
@@ -134,10 +134,43 @@ docker compose up --build
 # Backend:  http://localhost:8080
 ```
 
-Docker Compose поднимает 3 сервиса:
-- `solana-program` — собирает Anchor-программу (build-only контейнер)
+Docker Compose по умолчанию поднимает 2 сервиса:
 - `backend` — Go API сервер
 - `frontend` — nginx + собранный React SPA, проксирует `/api` на backend
+
+Для Solana-контракта есть отдельный одноразовый сервис под профилем `deploy`:
+
+```bash
+docker compose --profile deploy run --rm solana-check
+```
+
+Он выполняет:
+- `anchor build`
+- `anchor test`
+- не отправляет контракт в `devnet`
+
+Когда проверка прошла и нужен реальный деплой, запусти:
+
+```bash
+docker compose --profile deploy run --rm solana-deployer
+```
+
+Он выполняет:
+- `anchor build`
+- `anchor test`
+- `anchor deploy --provider.cluster devnet`
+- инициализацию/обновление on-chain config:
+  `admin = SOLANA_DEPLOY_WALLET`,
+  `finalize_authority = SERVICE_PRIVATE_KEY`,
+  `claim_authority = SERVICE_PRIVATE_KEY`
+- запись итогового `Program ID` в `program/.artifacts/program-id`
+
+Для этого заранее укажи в корневом `.env` две роли:
+
+```env
+SOLANA_DEPLOY_WALLET=/home/<user>/.config/solana
+SERVICE_PRIVATE_KEY=<base58-или-json>
+```
 
 Переменные окружения берутся из `.env` в корне или из `backend/.env`.
 
@@ -175,14 +208,16 @@ Docker Compose поднимает 3 сервиса:
 ### 5.1. Генерация keypair (если нет)
 
 ```bash
-# Keypair для backend authority (финализирует кампании)
+# Keypair для admin wallet (deploy, initialize/update config, pause/unpause)
+solana-keygen new -o ~/.config/solana/id.json
+
+# Keypair для service wallet (финализирует кампании и отправляет рабочие транзакции)
 solana-keygen new -o ~/.config/solana/authority.json
 
 # Посмотреть публичный ключ
+solana-keygen pubkey ~/.config/solana/id.json
 solana-keygen pubkey ~/.config/solana/authority.json
 
-# Keypair для деплоя программы (если нужен новый program ID)
-solana-keygen new -o program/target/deploy/repobounty-keypair.json
 ```
 
 ### 5.2. Настройка Solana CLI
@@ -191,8 +226,8 @@ solana-keygen new -o program/target/deploy/repobounty-keypair.json
 # Для devnet
 solana config set --url https://api.devnet.solana.com
 
-# Указать кошелек по умолчанию
-solana config set --keypair ~/.config/solana/authority.json
+# Указать admin wallet по умолчанию для deploy/admin-команд
+solana config set --keypair ~/.config/solana/id.json
 
 # Проверка
 solana config get
@@ -211,10 +246,25 @@ solana balance
 cd program
 yarn install
 anchor build
-# Артефакты: target/deploy/repobounty.so + repobounty-keypair.json
+# Артефакт: target/deploy/repobounty.so
 ```
 
-> В Docker используется `anchor build --no-idl` (IDL генерация отключена для совместимости).
+Или без локальной установки Anchor/Solana:
+
+```bash
+docker compose --profile deploy run --rm solana-check
+```
+
+Это безопасная проверка `build + test` без деплоя в сеть.
+
+Для реального деплоя:
+
+```bash
+docker compose --profile deploy run --rm solana-deployer
+```
+
+В этом режиме контейнер сам делает `build -> test -> deploy` и сохраняет новый
+`Program ID` в `program/.artifacts/program-id`.
 
 ### 5.5. Деплой на devnet
 
@@ -222,9 +272,10 @@ anchor build
 anchor deploy --provider.cluster devnet
 ```
 
-Anchor выведет Program ID. Если используешь существующий keypair — ID останется прежним:
+Anchor выведет Program ID. Для приложения используй значение из
+`program/.artifacts/program-id` после успешного deploy:
 ```
-Program Id: 97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo
+Program Id: 5VdatUgJ6AsZ7RbC8TBz6AxUdBNtQ6MckLsKbxgZQdS6
 ```
 
 ### 5.6. Деплой на mainnet-beta
@@ -267,16 +318,16 @@ anchor test
 # Запускает localnet validator, деплоит программу, запускает ts-mocha тесты
 ```
 
-### 5.9. Использование своего keypair для backend authority
+### 5.9. Использование своего keypair для service wallet
 
 Приватный ключ в `.env` принимает два формата:
 
 ```env
 # Формат 1: Base58
-SOLANA_PRIVATE_KEY=4wBqpZM9...длинная_строка_base58
+SERVICE_PRIVATE_KEY=4wBqpZM9...длинная_строка_base58
 
 # Формат 2: JSON массив байтов
-SOLANA_PRIVATE_KEY=[174,23,45,...]
+SERVICE_PRIVATE_KEY=[174,23,45,...]
 ```
 
 Чтобы получить Base58 из JSON keypair:
@@ -466,7 +517,7 @@ solana balance <contributor_wallet>
 ### Backend не стартует
 
 ```
-Error: failed to parse SOLANA_PRIVATE_KEY
+Error: failed to parse SERVICE_PRIVATE_KEY
 ```
 → Проверь формат ключа. Должен быть Base58 строка или JSON массив `[u8,u8,...]`.
 
@@ -475,7 +526,7 @@ Error: failed to parse SOLANA_PRIVATE_KEY
 ```
 Using mock Solana client
 ```
-→ `SOLANA_PRIVATE_KEY` или `PROGRAM_ID` не заданы. Задай для реальных транзакций.
+→ `SERVICE_PRIVATE_KEY` или `PROGRAM_ID` не заданы. Задай для реальных транзакций.
 
 ### anchor build fails
 

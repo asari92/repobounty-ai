@@ -8,7 +8,7 @@ claims on Solana.
 RepoBounty AI is a deadline-based MVP:
 
 1. A sponsor logs in with GitHub and connects a Solana wallet.
-2. The backend authority creates a campaign on-chain and stores the GitHub
+2. The service wallet creates a campaign on-chain and stores the GitHub
    creator off-chain.
 3. The sponsor signs a funding transaction from the connected wallet.
 4. After the deadline, the backend fetches GitHub contributor data and PR diffs
@@ -111,6 +111,84 @@ After startup:
 - Backend API: `http://localhost:8080`
 - Health check: `http://localhost:8080/api/health`
 
+`./start.sh` only starts the app containers (`frontend` + `backend`). It does not
+build or deploy the Solana program.
+
+## Docker Workflows
+
+### 1. Contract already deployed
+
+If you already have a live program on Solana, put its public key into
+`PROGRAM_ID` in the root `.env`, then start the app:
+
+```bash
+./start.sh
+```
+
+or:
+
+```bash
+docker compose up --build
+```
+
+### 2. Build, test, and deploy the contract from Docker
+
+If you do not want to install Anchor or Solana locally, use the dedicated deploy
+profile:
+
+```bash
+docker compose --profile deploy run --rm solana-check
+```
+
+This safe check container will:
+
+- run `anchor build`
+- start a local `solana-test-validator`
+- run `anchor deploy --provider.cluster localnet`
+- run the TypeScript integration tests from `tests/**/*.ts`
+- never deploy to `devnet`
+
+When you are ready to publish, run:
+
+```bash
+docker compose --profile deploy run --rm solana-deployer
+```
+
+This one-shot container will:
+
+- run `anchor build`
+- start a local `solana-test-validator`
+- run `anchor deploy --provider.cluster localnet`
+- run the TypeScript integration tests from `tests/**/*.ts`
+- run `anchor deploy --provider.cluster devnet`
+- initialize or update on-chain config so:
+  `admin = SOLANA_DEPLOY_WALLET`, `finalize_authority = SERVICE_PRIVATE_KEY`,
+  `claim_authority = SERVICE_PRIVATE_KEY`
+- write the resulting Program ID to `program/.artifacts/program-id`
+
+Useful paths:
+
+- deployed Program ID output:
+  `program/.artifacts/program-id`
+
+The app should read the value only after successful deploy from
+`program/.artifacts/program-id`.
+
+Before running it, set the two Solana roles in the root `.env`:
+
+- `SOLANA_DEPLOY_WALLET` → admin wallet directory containing `id.json`
+- `SERVICE_PRIVATE_KEY` → service wallet private key used by backend and on-chain service actions
+
+Example:
+
+```env
+SOLANA_DEPLOY_WALLET=/home/your-user/.config/solana
+SERVICE_PRIVATE_KEY=<base58-or-json-keypair>
+```
+
+After deploy, copy the value from `program/.artifacts/program-id` into
+`PROGRAM_ID` in `.env`, then start the app containers normally.
+
 ## Local Development
 
 ### Backend
@@ -136,8 +214,8 @@ OPENROUTER_API_KEY=<optional>
 MODEL=nvidia/nemotron-3-super-120b-a12b:free
 
 SOLANA_RPC_URL=https://api.devnet.solana.com
-SOLANA_PRIVATE_KEY=<backend authority keypair>
-PROGRAM_ID=97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo
+SERVICE_PRIVATE_KEY=<service_wallet keypair>
+PROGRAM_ID=<set this after deploy from program/.artifacts/program-id>
 
 FRONTEND_URL=http://localhost:3000
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
@@ -163,10 +241,13 @@ anchor build
 anchor test
 ```
 
+If you prefer not to install Solana/Anchor locally, the Docker deploy profile
+above can handle build, test, and devnet deploy for you.
+
 ## On-Chain Notes
 
-- Program ID:
-  `97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo`
+- Current Program ID configured in source:
+  `5VdatUgJ6AsZ7RbC8TBz6AxUdBNtQ6MckLsKbxgZQdS6`
 - Campaign PDA seeds:
   `["campaign", campaign_id]`
 - Vault PDA seeds:

@@ -16,7 +16,7 @@ pub struct CreateCampaignWithDeposit<'info> {
         bump = config.bump,
         constraint = !config.paused @ RepoBountyError::ProgramPaused,
     )]
-    pub config: Account<'info, Config>,
+    pub config: Box<Account<'info, Config>>,
 
     #[account(
         init,
@@ -25,7 +25,7 @@ pub struct CreateCampaignWithDeposit<'info> {
         seeds = [SEED_CAMPAIGN, sponsor.key().as_ref(), &campaign_id.to_le_bytes()],
         bump,
     )]
-    pub campaign: Account<'info, Campaign>,
+    pub campaign: Box<Account<'info, Campaign>>,
 
     /// CHECK: PDA used as authority for the escrow token account.
     #[account(
@@ -40,7 +40,7 @@ pub struct CreateCampaignWithDeposit<'info> {
         associated_token::mint = token_mint,
         associated_token::authority = escrow_authority,
     )]
-    pub escrow_token_account: Account<'info, TokenAccount>,
+    pub escrow_token_account: Box<Account<'info, TokenAccount>>,
 
     #[account(mut)]
     pub sponsor: Signer<'info>,
@@ -50,9 +50,9 @@ pub struct CreateCampaignWithDeposit<'info> {
         constraint = sponsor_token_account.owner == sponsor.key(),
         constraint = sponsor_token_account.mint == token_mint.key(),
     )]
-    pub sponsor_token_account: Account<'info, TokenAccount>,
+    pub sponsor_token_account: Box<Account<'info, TokenAccount>>,
 
-    pub token_mint: Account<'info, Mint>,
+    pub token_mint: Box<Account<'info, Mint>>,
 
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,

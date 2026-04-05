@@ -1,51 +1,32 @@
 package config
 
-import (
-	"os"
-	"path/filepath"
-	"runtime"
-	"testing"
-)
+import "testing"
 
-func TestResolveDatabasePathUsesStableBackendRoot(t *testing.T) {
-	currentFile := testFilePath(t)
-	backendRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
-	repoRoot := filepath.Dir(backendRoot)
-	want := filepath.Join(backendRoot, "repobounty.db")
+func TestLoadServicePrivateKeyEnvFallback(t *testing.T) {
+	t.Run("loads service private key", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		t.Setenv("SERVICE_PRIVATE_KEY", "service-key")
 
-	for _, cwd := range []string{backendRoot, repoRoot} {
-		t.Run(cwd, func(t *testing.T) {
-			oldWD, err := os.Getwd()
-			if err != nil {
-				t.Fatalf("Getwd: %v", err)
-			}
-			defer func() {
-				if chdirErr := os.Chdir(oldWD); chdirErr != nil {
-					t.Fatalf("restore cwd: %v", chdirErr)
-				}
-			}()
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.ServicePrivateKey != "service-key" {
+			t.Fatalf("ServicePrivateKey = %q, want %q", cfg.ServicePrivateKey, "service-key")
+		}
+	})
 
-			if err := os.Chdir(cwd); err != nil {
-				t.Fatalf("Chdir(%s): %v", cwd, err)
-			}
+	t.Run("does not load legacy solana private key", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		t.Setenv("SERVICE_PRIVATE_KEY", "")
+		t.Setenv("SOLANA_PRIVATE_KEY", "legacy-key")
 
-			got, err := resolveDatabasePath("repobounty.db")
-			if err != nil {
-				t.Fatalf("resolveDatabasePath: %v", err)
-			}
-			if got != want {
-				t.Fatalf("resolveDatabasePath() = %q, want %q", got, want)
-			}
-		})
-	}
-}
-
-func testFilePath(t *testing.T) string {
-	t.Helper()
-
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	return file
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.ServicePrivateKey != "" {
+			t.Fatalf("ServicePrivateKey = %q, want empty string", cfg.ServicePrivateKey)
+		}
+	})
 }

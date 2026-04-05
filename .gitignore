@@ -165,6 +165,9 @@ target/
 .anchor/
 test-ledger/
 **/*.rs.bk
+program/.artifacts/
+.artifacts
+program-id
 
 # Logs
 *.log
