@@ -7,6 +7,19 @@ import (
 	"testing"
 )
 
+func TestLoadUsesServicePrivateKey(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("SERVICE_PRIVATE_KEY", "service-key")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ServicePrivateKey != "service-key" {
+		t.Fatalf("ServicePrivateKey = %q, want %q", cfg.ServicePrivateKey, "service-key")
+	}
+}
+
 func TestResolveDatabasePathUsesStableBackendRoot(t *testing.T) {
 	currentFile := testFilePath(t)
 	backendRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))

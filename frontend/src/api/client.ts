@@ -12,7 +12,7 @@ import type {
   LinkWalletRequest,
   ClaimChallengeRequest,
   ClaimItem,
-  FundTransactionResponse,
+  BuildClaimTxResponse,
   HealthResponse,
 } from '../types';
 
@@ -63,6 +63,22 @@ export const api = {
     });
   },
 
+  createCampaignConfirm(
+    campaignId: string,
+    data: {
+      repo: string;
+      pool_amount: number;
+      deadline: string;
+      sponsor_wallet: string;
+      tx_signature: string;
+    }
+  ): Promise<CreateCampaignResponse> {
+    return request(`/campaigns/${campaignId}/create-confirm`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
   getCampaign(id: string): Promise<Campaign> {
     return request(`/campaigns/${id}`);
   },
@@ -95,7 +111,7 @@ export const api = {
     walletAddress: string,
     challengeId: string,
     signature: string
-  ): Promise<FinalizeResponse> {
+  ): Promise<BuildClaimTxResponse> {
     return request(`/campaigns/${campaignId}/claim`, {
       method: 'POST',
       body: JSON.stringify({
@@ -103,6 +119,22 @@ export const api = {
         wallet_address: walletAddress,
         challenge_id: challengeId,
         signature,
+      }),
+    });
+  },
+
+  claimConfirm(
+    campaignId: string,
+    contributorGithub: string,
+    walletAddress: string,
+    txSignature: string
+  ): Promise<FinalizeResponse> {
+    return request(`/campaigns/${campaignId}/claim-confirm`, {
+      method: 'POST',
+      body: JSON.stringify({
+        contributor_github: contributorGithub,
+        wallet_address: walletAddress,
+        tx_signature: txSignature,
       }),
     });
   },
@@ -132,14 +164,6 @@ export const api = {
   getClaims(): Promise<ClaimItem[]> {
     return request('/auth/claims');
   },
-
-  fundTx(campaignId: string, sponsorWallet: string): Promise<FundTransactionResponse> {
-    return request(`/campaigns/${campaignId}/fund-tx`, {
-      method: 'POST',
-      body: JSON.stringify({ sponsor_wallet: sponsorWallet }),
-    });
-  },
-
   getHealth(): Promise<HealthResponse> {
     return request('/health');
   },

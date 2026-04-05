@@ -4,12 +4,19 @@ use anchor_lang::system_program::{transfer, Transfer};
 use crate::constants::*;
 use crate::errors::RepoBountyError;
 use crate::events::{CampaignClosed, RefundProcessed};
-use crate::state::Campaign;
+use crate::state::{Campaign, Config};
 
 #[derive(Accounts)]
 pub struct RefundUnclaimed<'info> {
     #[account(mut)]
     pub sponsor: Signer<'info>,
+
+    #[account(
+        seeds = [b"config"],
+        bump = config.bump,
+        constraint = !config.paused @ RepoBountyError::ProgramPaused,
+    )]
+    pub config: Account<'info, Config>,
 
     #[account(
         mut,
@@ -22,6 +29,7 @@ pub struct RefundUnclaimed<'info> {
         seeds = [b"escrow", campaign.key().as_ref()],
         bump,
     )]
+    /// CHECK: Escrow PDA only holds SOL for this campaign and is constrained by PDA seeds.
     pub escrow: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,

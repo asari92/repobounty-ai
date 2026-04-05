@@ -19,13 +19,13 @@ func NormalizeAllocations(
 		return nil, fmt.Errorf("no allocations to normalize")
 	}
 
-	allowedContributors := make(map[string]string, len(contributors))
+	allowedContributors := make(map[string]models.Contributor, len(contributors))
 	for _, contributor := range contributors {
 		key := strings.ToLower(strings.TrimSpace(contributor.Username))
 		if key == "" {
 			continue
 		}
-		allowedContributors[key] = contributor.Username
+		allowedContributors[key] = contributor
 	}
 	if len(allowedContributors) == 0 {
 		return nil, fmt.Errorf("no eligible contributors available")
@@ -52,15 +52,17 @@ func NormalizeAllocations(
 			return nil, fmt.Errorf("duplicate contributor %q in allocations", allocation.Contributor)
 		}
 		if allocation.Percentage == 0 {
-			return nil, fmt.Errorf("allocation percentage for %s must be greater than zero", canonicalContributor)
+			return nil, fmt.Errorf("allocation percentage for %s must be greater than zero", canonicalContributor.Username)
 		}
 
 		seen[key] = struct{}{}
 		totalBPS += uint32(allocation.Percentage)
-		allocation.Contributor = canonicalContributor
+		allocation.Contributor = canonicalContributor.Username
+		allocation.GithubUsername = canonicalContributor.Username
+		allocation.GithubUserID = canonicalContributor.GithubUserID
 		allocation.Amount = poolAmount * uint64(allocation.Percentage) / 10000
 		if allocation.Amount == 0 {
-			return nil, fmt.Errorf("allocation for %s rounds down to zero lamports", canonicalContributor)
+			return nil, fmt.Errorf("allocation for %s rounds down to zero lamports", canonicalContributor.Username)
 		}
 		normalized = append(normalized, allocation)
 	}

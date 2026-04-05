@@ -156,13 +156,25 @@ func autoFinalize(
 
 		solanaInputs := make([]solana.AllocationInput, len(result.allocations))
 		for i, a := range result.allocations {
+			if a.GithubUserID == 0 {
+				retries[c.CampaignID]++
+				logger.Error("auto-finalize: allocation missing github user id",
+					zap.String("campaign_id", c.CampaignID),
+					zap.String("contributor", a.Contributor),
+				)
+				solanaInputs = nil
+				break
+			}
 			solanaInputs[i] = solana.AllocationInput{
-				Contributor: a.Contributor,
-				Percentage:  a.Percentage,
+				GithubUserID: a.GithubUserID,
+				Amount:       a.Amount,
 			}
 		}
+		if solanaInputs == nil {
+			continue
+		}
 
-		txSig, err := solClient.FinalizeCampaign(ctx, c.CampaignID, solanaInputs)
+		txSig, err := solClient.FinalizeCampaign(ctx, c.CampaignID, c.Sponsor, solanaInputs)
 		if err != nil {
 			retries[c.CampaignID]++
 			logger.Error("auto-finalize: solana finalize failed",

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useWallet } from '@solana/wallet-adapter-react';
+import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
+import { Transaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { api } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
@@ -22,7 +23,8 @@ function AllocationBar({ percentage }: { percentage: number }) {
 
 export default function CampaignDetails() {
   const { id } = useParams<{ id: string }>();
-  const { publicKey, signMessage } = useWallet();
+  const { connection } = useConnection();
+  const { publicKey, signMessage, sendTransaction } = useWallet();
   const { setVisible } = useWalletModal();
   const { user } = useAuth();
   const [campaign, setCampaign] = useState<Campaign | null>(null);
@@ -108,6 +110,10 @@ export default function CampaignDetails() {
       setError('This wallet does not support message signing.');
       return;
     }
+    if (!sendTransaction) {
+      setError('This wallet does not support transaction sending.');
+      return;
+    }
     if (!solanaReady) {
       setError('Claims are unavailable until the backend is connected to Solana.');
       return;
@@ -120,13 +126,18 @@ export default function CampaignDetails() {
         wallet_address: publicKey.toBase58(),
       });
       const signatureBytes = await signMessage(new TextEncoder().encode(challenge.message));
-      await api.claimAllocation(
+      const claimTx = await api.claimAllocation(
         id,
         contributor,
         publicKey.toBase58(),
         challenge.challenge_id,
         bs58.encode(signatureBytes)
       );
+      const txBytes = bs58.decode(claimTx.partial_tx);
+      const transaction = Transaction.from(txBytes);
+      const txSignature = await sendTransaction(transaction, connection);
+      await connection.confirmTransaction(txSignature, 'confirmed');
+      await api.claimConfirm(id, contributor, publicKey.toBase58(), txSignature);
       const updated = await api.getCampaign(id);
       setCampaign(updated);
     } catch (e: unknown) {
@@ -186,7 +197,9 @@ export default function CampaignDetails() {
       : 'Contributor metrics fallback';
   const previewWindowLabel =
     preview &&
-    `${formatDate(preview.snapshot.window_start)} to ${formatDate(preview.snapshot.window_end)}`;
+    (preview.snapshot.contributor_source === 'repository_history_mvp'
+      ? 'Full repository history'
+      : `${formatDate(preview.snapshot.window_start)} to ${formatDate(preview.snapshot.window_end)}`);
 
   return (
     <div className="max-w-2xl mx-auto">

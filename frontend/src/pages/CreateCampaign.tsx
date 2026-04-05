@@ -6,7 +6,6 @@ import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { Transaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { api } from '../api/client';
-import { useAuth } from '../hooks/useAuth';
 
 function pad(value: number): string {
   return value.toString().padStart(2, '0');
@@ -26,11 +25,14 @@ function toStableRFC3339(value: string): string | null {
   return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 export default function CreateCampaign() {
   const { publicKey, sendTransaction, signMessage } = useWallet();
   const { connection } = useConnection();
   const { setVisible } = useWalletModal();
-  const { user, isLoading: authLoading, login } = useAuth();
   const navigate = useNavigate();
 
   const [step, setStep] = useState<1 | 2>(1);
@@ -40,6 +42,8 @@ export default function CreateCampaign() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdId, setCreatedId] = useState<string | null>(null);
+  const [preparedTx, setPreparedTx] = useState<string | null>(null);
+  const [preparedSponsorWallet, setPreparedSponsorWallet] = useState<string | null>(null);
   const [solanaReady, setSolanaReady] = useState(true);
 
   const minDeadline = toDateTimeLocalValue(new Date(Date.now() + 24 * 60 * 60 * 1000));
@@ -60,20 +64,95 @@ export default function CreateCampaign() {
     };
   }, []);
 
+  async function confirmCreatedCampaign(
+    campaignId: string,
+    sponsorWallet: string,
+    poolLamports: number,
+    deadlineRFC3339: string,
+    txSignature: string
+  ) {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      try {
+        await api.createCampaignConfirm(campaignId, {
+          repo,
+          pool_amount: poolLamports,
+          deadline: deadlineRFC3339,
+          sponsor_wallet: sponsorWallet,
+          tx_signature: txSignature,
+        });
+        return;
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Failed to confirm campaign creation';
+        lastError = err instanceof Error ? err : new Error(message);
+        if (
+          message.includes('campaign transaction is not confirmed on-chain yet') ||
+          message.includes('campaign not found')
+        ) {
+          await delay(1500);
+          continue;
+        }
+        throw lastError;
+      }
+    }
+
+    throw (
+      lastError ??
+      new Error('Campaign transaction was sent, but on-chain confirmation took too long.')
+    );
+  }
+
+  async function submitPreparedCampaign(
+    campaignId: string,
+    txBase58: string,
+    sponsorWallet: string,
+    poolLamports: number,
+    deadlineRFC3339: string
+  ) {
+    if (!publicKey) {
+      setVisible(true);
+      return;
+    }
+    if (!sendTransaction) {
+      throw new Error('This wallet does not support transaction sending.');
+    }
+    if (!solanaReady) {
+      throw new Error('Campaign creation is unavailable until the backend is connected to Solana.');
+    }
+    if (publicKey.toBase58() !== sponsorWallet) {
+      throw new Error('Reconnect the same sponsor wallet that prepared this campaign transaction.');
+    }
+
+    const txBytes = bs58.decode(txBase58);
+    const transaction = Transaction.from(txBytes);
+
+    const signature = await sendTransaction(transaction, connection);
+    await confirmCreatedCampaign(
+      campaignId,
+      sponsorWallet,
+      poolLamports,
+      deadlineRFC3339,
+      signature
+    );
+
+    navigate(`/campaign/${campaignId}`);
+  }
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
-    if (!user) {
-      setError('Log in with GitHub to create a campaign.');
-      return;
-    }
     if (!publicKey) {
       setVisible(true);
       return;
     }
     if (!signMessage) {
       setError('This wallet does not support message signing.');
+      return;
+    }
+    if (!sendTransaction) {
+      setError('This wallet does not support transaction sending.');
       return;
     }
     if (!solanaReady) {
@@ -124,8 +203,23 @@ export default function CreateCampaign() {
         challenge_id: challenge.challenge_id,
         signature: bs58.encode(signatureBytes),
       });
+      if (!result.campaign_id?.trim()) {
+        throw new Error('Campaign ID was not returned by the backend.');
+      }
+      if (!result.unsigned_tx?.trim()) {
+        throw new Error('Create transaction was not returned by the backend.');
+      }
       setCreatedId(result.campaign_id);
+      setPreparedTx(result.unsigned_tx);
+      setPreparedSponsorWallet(publicKey.toBase58());
       setStep(2);
+      await submitPreparedCampaign(
+        result.campaign_id,
+        result.unsigned_tx,
+        publicKey.toBase58(),
+        poolLamports,
+        deadlineRFC3339
+      );
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to create campaign');
     } finally {
@@ -134,25 +228,28 @@ export default function CreateCampaign() {
   }
 
   async function handleFund() {
-    if (!publicKey || !createdId) return;
+    if (!publicKey || !createdId || !preparedTx || !preparedSponsorWallet) return;
     setError(null);
 
     if (!solanaReady) {
-      setError('Funding is unavailable until the backend is connected to Solana.');
+      setError('Campaign creation is unavailable until the backend is connected to Solana.');
+      return;
+    }
+    if (publicKey.toBase58() !== preparedSponsorWallet) {
+      setError('Reconnect the same sponsor wallet that prepared this campaign transaction.');
       return;
     }
 
     setSubmitting(true);
 
     try {
-      const fundTx = await api.fundTx(createdId, publicKey.toBase58());
-      const txBytes = bs58.decode(fundTx.transaction);
-      const transaction = Transaction.from(txBytes);
-
-      const signature = await sendTransaction(transaction, connection);
-      await waitForSignature(signature);
-
-      navigate(`/campaign/${createdId}`);
+      await submitPreparedCampaign(
+        createdId,
+        preparedTx,
+        preparedSponsorWallet,
+        Math.round(parseFloat(poolSol) * 1e9),
+        toStableRFC3339(deadline) ?? deadline
+      );
     } catch (err: unknown) {
       if (err instanceof Error) {
         if (err.message.includes('User rejected')) {
@@ -168,13 +265,12 @@ export default function CreateCampaign() {
     }
   }
 
-  async function waitForSignature(signature: string) {
-    await connection.confirmTransaction(signature, 'confirmed');
-  }
-
   function handleBack() {
-    if (step === 2 && createdId) {
-      navigate(`/campaign/${createdId}`);
+    if (step === 2) {
+      setStep(1);
+      setPreparedTx(null);
+      setPreparedSponsorWallet(null);
+      setCreatedId(null);
       return;
     }
     navigate('/');
@@ -218,7 +314,7 @@ export default function CreateCampaign() {
           }`}>
             2
           </span>
-          Fund
+          Approve
         </div>
       </div>
 
@@ -292,16 +388,7 @@ export default function CreateCampaign() {
             )}
 
             <div className="flex gap-3 pt-1">
-              {!user ? (
-                <button
-                  type="button"
-                  onClick={() => void login()}
-                  className="btn-primary flex-1"
-                  disabled={authLoading}
-                >
-                  {authLoading ? 'Checking...' : 'Log in with GitHub'}
-                </button>
-              ) : !publicKey ? (
+              {!publicKey ? (
                 <button
                   type="button"
                   onClick={() => setVisible(true)}
@@ -323,7 +410,7 @@ export default function CreateCampaign() {
                   disabled={submitting}
                   className="btn-primary flex-1"
                 >
-                  {submitting ? 'Creating...' : 'Create Campaign →'}
+                  {submitting ? 'Preparing...' : 'Prepare Deposit →'}
                 </button>
               )}
               <button type="button" onClick={handleBack} className="btn-secondary">
@@ -331,17 +418,6 @@ export default function CreateCampaign() {
               </button>
             </div>
           </form>
-
-          {user && (
-            <div className="flex items-center gap-2 mt-4 text-xs text-gray-600">
-              <img
-                src={user.avatar_url}
-                alt={user.github_username}
-                className="w-5 h-5 rounded-full"
-              />
-              Creating as @{user.github_username}
-            </div>
-          )}
         </div>
       )}
 
@@ -364,23 +440,21 @@ export default function CreateCampaign() {
                 <span className="text-gray-500">Deadline</span>
                 <span className="text-white">{deadline}</span>
               </div>
-              {user && (
-                <div className="flex justify-between py-1.5">
-                  <span className="text-gray-500">Owner</span>
-                  <span className="text-white">@{user.github_username}</span>
-                </div>
-              )}
+              <div className="flex justify-between py-1.5">
+                <span className="text-gray-500">Sponsor wallet</span>
+                <span className="font-mono text-white text-xs">{preparedSponsorWallet ?? 'N/A'}</span>
+              </div>
             </div>
           </div>
 
           <div className="stat-block text-center py-6">
-            <p className="text-xs text-gray-500 mb-2">Sign a wallet transaction to fund the escrow</p>
+            <p className="text-xs text-gray-500 mb-2">Sign the sponsor transaction to create and fund the campaign</p>
             <p className="text-3xl font-bold text-solana-purple">{poolSol} SOL</p>
           </div>
 
           <p className="text-[10px] text-gray-600 text-center">
-            The connected wallet signs the funding transaction, but future management stays
-            limited to the GitHub account that created this campaign.
+            The campaign does not exist yet. It will appear only after this wallet signs and the
+            on-chain transaction is confirmed.
           </p>
 
           {error && (
@@ -393,13 +467,13 @@ export default function CreateCampaign() {
             <button
               type="button"
               onClick={handleFund}
-              disabled={submitting || !publicKey || !solanaReady}
+              disabled={submitting || !publicKey || !solanaReady || !preparedTx}
               className="btn-primary flex-1"
             >
               {submitting
                 ? 'Confirming...'
                 : solanaReady
-                  ? 'Fund Campaign →'
+                  ? 'Create Campaign →'
                   : 'Solana Required'}
             </button>
             <button
@@ -408,7 +482,7 @@ export default function CreateCampaign() {
               className="btn-secondary"
               disabled={submitting}
             >
-              Skip
+              Back
             </button>
           </div>
         </div>

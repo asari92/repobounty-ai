@@ -41,3 +41,7 @@ pub const MIN_SERVICE_FEE: u64 = 50_000_000;
 pub const STATUS_ACTIVE: u8 = 0;
 pub const STATUS_FINALIZED: u8 = 1;
 pub const STATUS_CLOSED: u8 = 2;
+
+/// Claim payer mode constants for emitted events.
+pub const PAYER_MODE_USER_PAID: u8 = 0;
+pub const PAYER_MODE_BACKEND_PAID: u8 = 1;

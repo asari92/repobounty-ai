@@ -111,6 +111,66 @@ After startup:
 - Backend API: `http://localhost:8080`
 - Health check: `http://localhost:8080/api/health`
 
+`./start.sh` starts only `frontend` + `backend`. It does not build or deploy the
+Solana program.
+
+## Docker Workflows
+
+### App only
+
+If the program is already deployed and `PROGRAM_ID` is set in the root `.env`:
+
+```bash
+./start.sh
+```
+
+or:
+
+```bash
+docker compose up --build
+```
+
+### Safe contract check
+
+```bash
+docker compose --profile deploy run --rm solana-check
+```
+
+This Docker-only flow will:
+
+- run `anchor build`
+- start `solana-test-validator`
+- run `anchor deploy --provider.cluster localnet`
+- run the TypeScript integration tests
+- never deploy to `devnet`
+
+### Real devnet deploy
+
+```bash
+docker compose --profile deploy run --rm solana-deployer
+```
+
+This flow will:
+
+- run the same local `build + deploy + test` validation first
+- deploy the program to `devnet`
+- initialize or update on-chain config so:
+  `admin_wallet = SOLANA_DEPLOY_WALLET`,
+  `finalize_authority = SERVICE_PRIVATE_KEY`,
+  `claim_authority = SERVICE_PRIVATE_KEY`,
+  `treasury_wallet = SERVICE_PRIVATE_KEY`
+- write the resulting program id to `program/.artifacts/program-id`
+
+Before running it, set the two Solana roles in the root `.env`:
+
+```env
+SOLANA_DEPLOY_WALLET=/home/your-user/.config/solana
+SERVICE_PRIVATE_KEY=<base58-or-json-keypair>
+```
+
+After deploy, copy the value from `program/.artifacts/program-id` into
+`PROGRAM_ID` in `.env`.
+
 ## Local Development
 
 ### Backend
@@ -136,8 +196,8 @@ OPENROUTER_API_KEY=<optional>
 MODEL=nvidia/nemotron-3-super-120b-a12b:free
 
 SOLANA_RPC_URL=https://api.devnet.solana.com
-SOLANA_PRIVATE_KEY=<backend authority keypair>
-PROGRAM_ID=97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo
+SERVICE_PRIVATE_KEY=<service_wallet keypair>
+PROGRAM_ID=<set after deploy from program/.artifacts/program-id>
 
 FRONTEND_URL=http://localhost:3000
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
@@ -158,27 +218,26 @@ Vite proxies `/api` to `http://localhost:8080`.
 
 ```bash
 cd program
-yarn install
+npm ci
 anchor build
 anchor test
 ```
 
 ## On-Chain Notes
 
-- Program ID:
-  `97t3t188wnRoogkD8SoZKWaWbP9qDdN9gUwS4Bdw7Qdo`
 - Campaign PDA seeds:
-  `["campaign", campaign_id]`
-- Vault PDA seeds:
-  `["vault", campaign_pda]`
-- Deadline must be at least 24 hours in the future.
-- Allocations must sum to `10000` basis points.
-- Max `10` allocations per campaign.
+  `["campaign", sponsor, campaign_id.to_le_bytes()]`
+- Escrow PDA seeds:
+  `["escrow", campaign_pda]`
+- Claim record PDA seeds:
+  `["claim", campaign_pda, github_user_id.to_le_bytes()]`
+- The deployed `PROGRAM_ID` is written to `program/.artifacts/program-id` by
+  `solana-deployer`.
 
 On-chain state machine for the deadline happy path:
 
 ```text
-Created -> Funded -> Finalized -> Completed
+Active -> Finalized -> Closed
 ```
 
 ## API Summary

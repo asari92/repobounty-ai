@@ -20,7 +20,7 @@ type Config struct {
 	OpenRouterAPIKey    string
 	Model               string
 	SolanaRPCURL        string
-	SolanaPrivateKey    string
+	ServicePrivateKey   string
 	ProgramID           string
 	Env                 string
 	AllowedOrigins      string
@@ -55,7 +55,7 @@ func Load() (*Config, error) {
 		OpenRouterAPIKey:    os.Getenv("OPENROUTER_API_KEY"),
 		Model:               envOrDefault("MODEL", "nvidia/nemotron-3-super-120b-a12b:free"),
 		SolanaRPCURL:        envOrDefault("SOLANA_RPC_URL", "https://api.devnet.solana.com"),
-		SolanaPrivateKey:    os.Getenv("SOLANA_PRIVATE_KEY"),
+		ServicePrivateKey:   os.Getenv("SERVICE_PRIVATE_KEY"),
 		ProgramID:           os.Getenv("PROGRAM_ID"),
 		Env:                 envOrDefault("ENV", "development"),
 		AllowedOrigins:      os.Getenv("ALLOWED_ORIGINS"),
