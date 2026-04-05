@@ -1,18 +1,19 @@
 use anchor_lang::prelude::*;
-use anchor_spl::{
-    associated_token::AssociatedToken,
-    token::{self, Mint, Token, TokenAccount, Transfer},
-};
+use anchor_lang::system_program::{transfer, Transfer};
 
 use crate::constants::*;
 use crate::errors::RepoBountyError;
-use crate::state::{Campaign, CampaignStatus, Config};
+use crate::events::CampaignCreated;
+use crate::state::{Campaign, Config};
 
 #[derive(Accounts)]
 #[instruction(campaign_id: u64)]
 pub struct CreateCampaignWithDeposit<'info> {
+    #[account(mut)]
+    pub sponsor: Signer<'info>,
+
     #[account(
-        seeds = [SEED_CONFIG],
+        seeds = [b"config"],
         bump = config.bump,
         constraint = !config.paused @ RepoBountyError::ProgramPaused,
     )]
@@ -22,40 +23,26 @@ pub struct CreateCampaignWithDeposit<'info> {
         init,
         payer = sponsor,
         space = Campaign::SPACE,
-        seeds = [SEED_CAMPAIGN, sponsor.key().as_ref(), &campaign_id.to_le_bytes()],
+        seeds = [b"campaign", sponsor.key().as_ref(), &campaign_id.to_le_bytes()],
         bump,
     )]
     pub campaign: Account<'info, Campaign>,
 
-    /// CHECK: PDA used as authority for the escrow token account.
-    #[account(
-        seeds = [SEED_ESCROW_AUTHORITY, campaign.key().as_ref()],
-        bump,
-    )]
-    pub escrow_authority: UncheckedAccount<'info>,
-
-    #[account(
-        init,
-        payer = sponsor,
-        associated_token::mint = token_mint,
-        associated_token::authority = escrow_authority,
-    )]
-    pub escrow_token_account: Account<'info, TokenAccount>,
-
-    #[account(mut)]
-    pub sponsor: Signer<'info>,
-
+    /// CHECK: Escrow PDA — system-owned, simply holds SOL
     #[account(
         mut,
-        constraint = sponsor_token_account.owner == sponsor.key(),
-        constraint = sponsor_token_account.mint == token_mint.key(),
+        seeds = [b"escrow", campaign.key().as_ref()],
+        bump,
     )]
-    pub sponsor_token_account: Account<'info, TokenAccount>,
+    pub escrow: UncheckedAccount<'info>,
 
-    pub token_mint: Account<'info, Mint>,
+    /// CHECK: treasury receives service fee
+    #[account(
+        mut,
+        constraint = treasury_wallet.key() == config.treasury_wallet @ RepoBountyError::Unauthorized,
+    )]
+    pub treasury_wallet: UncheckedAccount<'info>,
 
-    pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
 
@@ -63,72 +50,97 @@ pub fn handler(
     ctx: Context<CreateCampaignWithDeposit>,
     campaign_id: u64,
     github_repo_id: u64,
-    repo_owner: String,
-    repo_name: String,
     deadline_at: i64,
-    total_amount: u64,
+    reward_amount: u64,
 ) -> Result<()> {
     require!(
-        repo_owner.len() <= MAX_REPO_OWNER_LEN,
-        RepoBountyError::RepoOwnerTooLong
+        reward_amount >= MIN_CAMPAIGN_AMOUNT,
+        RepoBountyError::InvalidCampaignAmount
     );
-    require!(
-        repo_name.len() <= MAX_REPO_NAME_LEN,
-        RepoBountyError::RepoNameTooLong
-    );
-    require!(total_amount > 0, RepoBountyError::InvalidAmount);
 
     let clock = Clock::get()?;
     let now = clock.unix_timestamp;
 
     require!(
-        deadline_at >= now
-            .checked_add(MIN_DEADLINE_SECONDS)
-            .ok_or(RepoBountyError::ArithmeticOverflow)?,
-        RepoBountyError::DeadlineTooSoon
+        deadline_at
+            >= now
+                .checked_add(MIN_DEADLINE_SECONDS)
+                .ok_or(RepoBountyError::ArithmeticOverflow)?,
+        RepoBountyError::InvalidDeadline
     );
     require!(
-        deadline_at <= now
-            .checked_add(MAX_DEADLINE_SECONDS)
-            .ok_or(RepoBountyError::ArithmeticOverflow)?,
-        RepoBountyError::DeadlineTooFar
+        deadline_at
+            <= now
+                .checked_add(MAX_DEADLINE_SECONDS)
+                .ok_or(RepoBountyError::ArithmeticOverflow)?,
+        RepoBountyError::InvalidDeadline
     );
 
-    // Transfer tokens from sponsor to escrow
-    token::transfer(
-        CpiContext::new(
-            ctx.accounts.token_program.to_account_info(),
+    let service_fee = std::cmp::max(
+        reward_amount
+            .checked_mul(SERVICE_FEE_NUMERATOR)
+            .ok_or(RepoBountyError::ArithmeticOverflow)?
+            .checked_div(SERVICE_FEE_DENOMINATOR)
+            .ok_or(RepoBountyError::ArithmeticOverflow)?,
+        MIN_SERVICE_FEE,
+    );
+
+    let campaign_key = ctx.accounts.campaign.key();
+    let escrow_bump = ctx.bumps.escrow;
+
+    let signer_seeds: &[&[&[u8]]] = &[&[b"escrow", campaign_key.as_ref(), &[escrow_bump]]];
+
+    transfer(
+        CpiContext::new_with_signer(
+            ctx.accounts.system_program.to_account_info(),
             Transfer {
-                from: ctx.accounts.sponsor_token_account.to_account_info(),
-                to: ctx.accounts.escrow_token_account.to_account_info(),
-                authority: ctx.accounts.sponsor.to_account_info(),
+                from: ctx.accounts.sponsor.to_account_info(),
+                to: ctx.accounts.escrow.to_account_info(),
             },
+            signer_seeds,
         ),
-        total_amount,
+        reward_amount,
     )?;
 
-    // Initialize campaign state
+    transfer(
+        CpiContext::new(
+            ctx.accounts.system_program.to_account_info(),
+            Transfer {
+                from: ctx.accounts.sponsor.to_account_info(),
+                to: ctx.accounts.treasury_wallet.to_account_info(),
+            },
+        ),
+        service_fee,
+    )?;
+
     let campaign = &mut ctx.accounts.campaign;
+    campaign.version = VERSION;
     campaign.campaign_id = campaign_id;
     campaign.sponsor = ctx.accounts.sponsor.key();
-    campaign.token_mint = ctx.accounts.token_mint.key();
-    campaign.escrow_token_account = ctx.accounts.escrow_token_account.key();
     campaign.github_repo_id = github_repo_id;
-    campaign.repo_owner = repo_owner;
-    campaign.repo_name = repo_name;
     campaign.created_at = now;
     campaign.deadline_at = deadline_at;
     campaign.claim_deadline_at = deadline_at
         .checked_add(CLAIM_WINDOW_SECONDS)
         .ok_or(RepoBountyError::ArithmeticOverflow)?;
-    campaign.total_amount = total_amount;
+    campaign.total_reward_amount = reward_amount;
     campaign.allocated_amount = 0;
     campaign.claimed_amount = 0;
     campaign.allocations_count = 0;
     campaign.claimed_count = 0;
-    campaign.status = CampaignStatus::Active;
+    campaign.status = STATUS_ACTIVE;
     campaign.bump = ctx.bumps.campaign;
-    campaign.escrow_authority_bump = ctx.bumps.escrow_authority;
+    campaign._reserved = [0; 64];
+
+    emit!(CampaignCreated {
+        campaign_pubkey: campaign.key(),
+        campaign_id,
+        sponsor: ctx.accounts.sponsor.key(),
+        github_repo_id,
+        deadline_at,
+        total_reward_amount: reward_amount,
+        service_fee,
+    });
 
     Ok(())
 }

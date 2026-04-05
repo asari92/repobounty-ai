@@ -27,6 +27,12 @@ type Config struct {
 	GitHubAppID         int64
 	GitHubAppPrivateKey string
 	DatabasePath        string
+	TreasuryWallet      string
+	MinCampaignAmount   uint64
+	MinAllocationAmount uint64
+	MaxAllocations      int
+	MinDeadlineSeconds  int64
+	FinalizeBatchSize   int
 }
 
 func Load() (*Config, error) {
@@ -56,6 +62,12 @@ func Load() (*Config, error) {
 		GitHubAppID:         envOrDefaultInt64("GITHUB_APP_ID", 0),
 		GitHubAppPrivateKey: os.Getenv("GITHUB_APP_PRIVATE_KEY"),
 		DatabasePath:        databasePath,
+		TreasuryWallet:      envOrDefault("TREASURY_WALLET", ""),
+		MinCampaignAmount:   envOrDefaultUint64("MIN_CAMPAIGN_AMOUNT", 500_000_000),
+		MinAllocationAmount: envOrDefaultUint64("MIN_ALLOCATION_AMOUNT", 50_000_000),
+		MaxAllocations:      envOrDefaultInt("MAX_ALLOCATIONS", 200),
+		MinDeadlineSeconds:  envOrDefaultInt64("MIN_DEADLINE_SECONDS", 300),
+		FinalizeBatchSize:   envOrDefaultInt("FINALIZE_BATCH_SIZE", 5),
 	}
 	if cfg.Env == "production" && cfg.JWTSecret == "" {
 		return nil, fmt.Errorf("JWT_SECRET is required in production")
@@ -180,6 +192,30 @@ func envOrDefaultInt64(key string, fallback int64) int64 {
 		return fallback
 	}
 	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+func envOrDefaultUint64(key string, fallback uint64) uint64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+func envOrDefaultInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
 	if err != nil {
 		return fallback
 	}

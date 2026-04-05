@@ -1,85 +1,73 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+use anchor_lang::system_program::{transfer, Transfer};
 
-use crate::constants::SEED_ESCROW_AUTHORITY;
+use crate::constants::*;
 use crate::errors::RepoBountyError;
-use crate::state::{Campaign, CampaignStatus};
+use crate::events::{CampaignClosed, RefundProcessed};
+use crate::state::Campaign;
 
 #[derive(Accounts)]
 pub struct RefundUnclaimed<'info> {
+    #[account(mut)]
+    pub sponsor: Signer<'info>,
+
     #[account(
         mut,
-        has_one = sponsor @ RepoBountyError::InvalidSponsor,
-        constraint = campaign.status == CampaignStatus::Finalized
-            || campaign.status == CampaignStatus::Closed
-            @ RepoBountyError::CampaignNotFinalized,
+        constraint = campaign.sponsor == sponsor.key() @ RepoBountyError::InvalidSponsor,
     )]
     pub campaign: Account<'info, Campaign>,
 
-    /// CHECK: PDA escrow authority for token transfers.
-    #[account(
-        seeds = [SEED_ESCROW_AUTHORITY, campaign.key().as_ref()],
-        bump = campaign.escrow_authority_bump,
-    )]
-    pub escrow_authority: UncheckedAccount<'info>,
-
     #[account(
         mut,
-        constraint = escrow_token_account.key() == campaign.escrow_token_account,
+        seeds = [b"escrow", campaign.key().as_ref()],
+        bump,
     )]
-    pub escrow_token_account: Account<'info, TokenAccount>,
+    pub escrow: UncheckedAccount<'info>,
 
-    #[account(
-        mut,
-        constraint = sponsor_refund_account.mint == campaign.token_mint,
-        constraint = sponsor_refund_account.owner == sponsor.key(),
-    )]
-    pub sponsor_refund_account: Account<'info, TokenAccount>,
-
-    pub sponsor: Signer<'info>,
-
-    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
 }
 
 pub fn handler(ctx: Context<RefundUnclaimed>) -> Result<()> {
     let clock = Clock::get()?;
-
-    // Extract values before mutable borrow
-    let campaign_key = ctx.accounts.campaign.key();
     let claim_deadline_at = ctx.accounts.campaign.claim_deadline_at;
-    let escrow_authority_bump = ctx.accounts.campaign.escrow_authority_bump;
 
-    // Claim window must have expired (no paused check — refund always available)
     require!(
         clock.unix_timestamp > claim_deadline_at,
-        RepoBountyError::ClaimWindowNotExpired
+        RepoBountyError::ClaimDeadlineNotReached
     );
 
-    let escrow_balance = ctx.accounts.escrow_token_account.amount;
+    let escrow_balance = ctx.accounts.escrow.lamports();
     require!(escrow_balance > 0, RepoBountyError::EscrowEmpty);
 
-    // Transfer remaining escrow balance to sponsor
-    let seeds = &[
-        SEED_ESCROW_AUTHORITY,
-        campaign_key.as_ref(),
-        &[escrow_authority_bump],
-    ];
+    let campaign_key = ctx.accounts.campaign.key();
+    let escrow_bump = ctx.bumps.escrow;
 
-    token::transfer(
+    let signer_seeds: &[&[&[u8]]] = &[&[b"escrow", campaign_key.as_ref(), &[escrow_bump]]];
+
+    transfer(
         CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
             Transfer {
-                from: ctx.accounts.escrow_token_account.to_account_info(),
-                to: ctx.accounts.sponsor_refund_account.to_account_info(),
-                authority: ctx.accounts.escrow_authority.to_account_info(),
+                from: ctx.accounts.escrow.to_account_info(),
+                to: ctx.accounts.sponsor.to_account_info(),
             },
-            &[seeds],
+            signer_seeds,
         ),
         escrow_balance,
     )?;
 
-    let campaign = &mut ctx.accounts.campaign;
-    campaign.status = CampaignStatus::Closed;
+    ctx.accounts.campaign.status = STATUS_CLOSED;
+
+    emit!(RefundProcessed {
+        campaign_pubkey: ctx.accounts.campaign.key(),
+        sponsor: ctx.accounts.sponsor.key(),
+        refunded_amount: escrow_balance,
+    });
+
+    emit!(CampaignClosed {
+        campaign_pubkey: ctx.accounts.campaign.key(),
+        reason: "refund".to_string(),
+    });
 
     Ok(())
 }
