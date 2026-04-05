@@ -19,15 +19,15 @@ type FinalizeSnapshot struct {
 }
 
 type SnapshotSummary struct {
-	Version                  int            `json:"version"`
-	AllocationMode           AllocationMode `json:"allocation_mode"`
-	WindowStart              time.Time      `json:"window_start"`
-	WindowEnd                time.Time      `json:"window_end"`
-	ContributorSource        string         `json:"contributor_source"`
-	ContributorNotes         string         `json:"contributor_notes,omitempty"`
-	CreatedAt                time.Time      `json:"created_at"`
-	ApprovedByGitHubUsername string         `json:"approved_by_github_username,omitempty"`
-	ApprovedAt               *time.Time     `json:"approved_at,omitempty"`
+	Version                  int        `json:"version"`
+	AllocationMode           string     `json:"allocation_mode"`
+	WindowStart              time.Time  `json:"window_start"`
+	WindowEnd                time.Time  `json:"window_end"`
+	ContributorSource        string     `json:"contributor_source"`
+	ContributorNotes         string     `json:"contributor_notes,omitempty"`
+	CreatedAt                time.Time  `json:"created_at"`
+	ApprovedByGitHubUsername string     `json:"approved_by_github_username,omitempty"`
+	ApprovedAt               *time.Time `json:"approved_at,omitempty"`
 }
 
 func (s *FinalizeSnapshot) Summary() SnapshotSummary {

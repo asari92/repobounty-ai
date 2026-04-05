@@ -4,14 +4,23 @@ pub const SEED_CONFIG: &[u8] = b"config";
 /// PDA seed prefix for Campaign accounts.
 pub const SEED_CAMPAIGN: &[u8] = b"campaign";
 
-/// PDA seed prefix for the escrow authority PDA.
-pub const SEED_ESCROW_AUTHORITY: &[u8] = b"escrow_authority";
+/// PDA seed prefix for Escrow accounts.
+pub const SEED_ESCROW: &[u8] = b"escrow";
 
 /// PDA seed prefix for ClaimRecord accounts.
 pub const SEED_CLAIM: &[u8] = b"claim";
 
-/// Minimum deadline: 24 hours from campaign creation.
-pub const MIN_DEADLINE_SECONDS: i64 = 24 * 60 * 60;
+/// Protocol version.
+pub const VERSION: u8 = 1;
+
+/// Minimum campaign amount: 0.5 SOL in lamports.
+pub const MIN_CAMPAIGN_AMOUNT: u64 = 500_000_000;
+
+/// Minimum allocation amount: 0.05 SOL in lamports.
+pub const MIN_ALLOCATION_AMOUNT: u64 = 50_000_000;
+
+/// Minimum deadline from campaign creation for hackathon MVP: 5 minutes.
+pub const MIN_DEADLINE_SECONDS: i64 = 5 * 60;
 
 /// Maximum deadline: 365 days from campaign creation.
 pub const MAX_DEADLINE_SECONDS: i64 = 365 * 24 * 60 * 60;
@@ -19,14 +28,16 @@ pub const MAX_DEADLINE_SECONDS: i64 = 365 * 24 * 60 * 60;
 /// Claim window duration: 365 days after finalization deadline.
 pub const CLAIM_WINDOW_SECONDS: i64 = 365 * 24 * 60 * 60;
 
-/// Maximum length for GitHub repository owner (org or user name).
-pub const MAX_REPO_OWNER_LEN: usize = 39;
+/// Service fee percentage: 0.5% (5/1000).
+pub const SERVICE_FEE_DENOMINATOR: u64 = 1000;
 
-/// Maximum length for GitHub repository name.
-pub const MAX_REPO_NAME_LEN: usize = 100;
+/// Service fee percentage: 0.5% (5/1000).
+pub const SERVICE_FEE_NUMERATOR: u64 = 5;
 
-/// Maximum length for GitHub username (stored in ClaimRecord).
-pub const MAX_GITHUB_USERNAME_LEN: usize = 39;
+/// Minimum service fee: 0.05 SOL in lamports.
+pub const MIN_SERVICE_FEE: u64 = 50_000_000;
 
-/// Maximum allocations per finalize_campaign transaction (Solana tx size limit).
-pub const MAX_ALLOCATIONS_PER_BATCH: usize = 5;
+/// Campaign status constants.
+pub const STATUS_ACTIVE: u8 = 0;
+pub const STATUS_FINALIZED: u8 = 1;
+pub const STATUS_CLOSED: u8 = 2;

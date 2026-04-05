@@ -5,81 +5,78 @@ pub enum RepoBountyError {
     #[msg("Program is paused")]
     ProgramPaused,
 
-    #[msg("Deadline must be at least 24 hours from now")]
-    DeadlineTooSoon,
+    #[msg("Invalid deadline")]
+    InvalidDeadline,
 
-    #[msg("Deadline must be at most 365 days from now")]
-    DeadlineTooFar,
+    #[msg("Campaign amount below minimum (0.5 SOL)")]
+    InvalidCampaignAmount,
 
-    #[msg("Amount must be greater than zero")]
-    InvalidAmount,
+    #[msg("Campaign already exists")]
+    CampaignAlreadyExists,
 
-    #[msg("Campaign is not in Active state")]
+    #[msg("Campaign is not in Active status")]
     CampaignNotActive,
 
-    #[msg("Campaign is not in Active or Finalizing state")]
-    CampaignNotActiveOrFinalizing,
-
-    #[msg("Campaign is not in Finalized state")]
+    #[msg("Campaign is not in Finalized status")]
     CampaignNotFinalized,
 
-    #[msg("Campaign is already closed")]
+    #[msg("Campaign is closed")]
     CampaignClosed,
 
-    #[msg("Campaign deadline has not been reached yet")]
+    #[msg("Deadline not reached yet")]
     DeadlineNotReached,
 
     #[msg("Claim window has expired")]
     ClaimWindowExpired,
 
-    #[msg("Claim window has not expired yet — refund not available")]
-    ClaimWindowNotExpired,
+    #[msg("Claim deadline not reached yet (for refund)")]
+    ClaimDeadlineNotReached,
 
-    #[msg("Unauthorized signer")]
+    #[msg("Unauthorized")]
     Unauthorized,
 
-    #[msg("Duplicate github_user_id in allocations")]
+    #[msg("Allocations list must not be empty")]
+    EmptyAllocations,
+
+    #[msg("Duplicate allocation in batch")]
     DuplicateAllocation,
 
-    #[msg("Allocated total does not match campaign total_amount")]
+    #[msg("Allocation amount too small (min 0.05 SOL)")]
+    AllocationTooSmall,
+
+    #[msg("Allocated amount would exceed total reward")]
+    AllocationOverflow,
+
+    #[msg("Final batch: allocated != total_reward_amount")]
     AllocationTotalMismatch,
 
-    #[msg("Claim has already been claimed")]
+    #[msg("ClaimRecord already exists")]
+    ClaimRecordAlreadyExists,
+
+    #[msg("Claim record not found")]
+    ClaimNotFound,
+
+    #[msg("Reward already claimed")]
     ClaimAlreadyClaimed,
 
     #[msg("Escrow has insufficient funds")]
     EscrowInsufficientFunds,
 
-    #[msg("Signer does not match campaign sponsor")]
+    #[msg("Escrow is empty")]
+    EscrowEmpty,
+
+    #[msg("Invalid sponsor")]
     InvalidSponsor,
 
-    #[msg("ClaimRecord does not belong to this campaign")]
-    InvalidClaimRecord,
+    #[msg("Invalid recipient wallet")]
+    InvalidRecipientWallet,
 
-    #[msg("Repository owner name exceeds maximum length")]
-    RepoOwnerTooLong,
+    #[msg("Cannot close: partial finalization exists")]
+    PartialFinalizationExists,
 
-    #[msg("Repository name exceeds maximum length")]
-    RepoNameTooLong,
-
-    #[msg("Allocations list must not be empty")]
-    EmptyAllocations,
-
-    #[msg("Too many allocations in a single batch")]
-    TooManyAllocations,
-
-    #[msg("GitHub user ID must be greater than zero")]
+    #[msg("Invalid github user ID")]
     InvalidGithubUserId,
-
-    #[msg("GitHub username exceeds maximum length")]
-    GithubUsernameTooLong,
-
-    #[msg("Allocation amount must be greater than zero")]
-    ZeroAllocationAmount,
 
     #[msg("Arithmetic overflow")]
     ArithmeticOverflow,
-
-    #[msg("Escrow account has no remaining balance")]
-    EscrowEmpty,
 }

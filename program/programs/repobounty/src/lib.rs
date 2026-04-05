@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 
 pub mod constants;
 pub mod errors;
+pub mod events;
 pub mod instructions;
 pub mod state;
 
@@ -17,23 +18,22 @@ pub mod repobounty {
         ctx: Context<InitializeConfig>,
         finalize_authority: Pubkey,
         claim_authority: Pubkey,
+        treasury_wallet: Pubkey,
     ) -> Result<()> {
-        instructions::initialize_config::handler(ctx, finalize_authority, claim_authority)
+        instructions::initialize_config::handler(ctx, finalize_authority, claim_authority, treasury_wallet)
     }
 
     pub fn update_config(
         ctx: Context<UpdateConfig>,
-        new_admin: Option<Pubkey>,
-        new_finalize_authority: Option<Pubkey>,
-        new_claim_authority: Option<Pubkey>,
-        paused: Option<bool>,
+        finalize_authority: Option<Pubkey>,
+        claim_authority: Option<Pubkey>,
+        treasury_wallet: Option<Pubkey>,
     ) -> Result<()> {
         instructions::update_config::handler(
             ctx,
-            new_admin,
-            new_finalize_authority,
-            new_claim_authority,
-            paused,
+            finalize_authority,
+            claim_authority,
+            treasury_wallet,
         )
     }
 
@@ -41,39 +41,39 @@ pub mod repobounty {
         ctx: Context<CreateCampaignWithDeposit>,
         campaign_id: u64,
         github_repo_id: u64,
-        repo_owner: String,
-        repo_name: String,
         deadline_at: i64,
-        total_amount: u64,
+        reward_amount: u64,
     ) -> Result<()> {
         instructions::create_campaign::handler(
             ctx,
             campaign_id,
             github_repo_id,
-            repo_owner,
-            repo_name,
             deadline_at,
-            total_amount,
+            reward_amount,
         )
     }
 
-    pub fn finalize_campaign<'info>(
-        ctx: Context<'_, '_, 'info, 'info, FinalizeCampaign<'info>>,
-        allocations: Vec<AllocationInput>,
-        is_final_batch: bool,
+    pub fn finalize_campaign_batch<'info>(
+        ctx: Context<'_, '_, 'info, 'info, FinalizeCampaignBatch<'info>>,
+        allocations: Vec<AllocationEntry>,
+        has_more: bool,
     ) -> Result<()> {
-        instructions::finalize_campaign::handler(ctx, allocations, is_final_batch)
+        instructions::finalize_campaign::handler(ctx, allocations, has_more)
     }
 
-    pub fn claim_backend_paid(ctx: Context<ClaimBackendPaid>) -> Result<()> {
-        instructions::claim_backend_paid::handler(ctx)
+    pub fn claim(ctx: Context<Claim>, github_user_id: u64) -> Result<()> {
+        instructions::claim::handler(ctx, github_user_id)
     }
 
-    pub fn claim_user_paid(ctx: Context<ClaimUserPaid>) -> Result<()> {
-        instructions::claim_user_paid::handler(ctx)
+    pub fn close_unfinalizable_campaign(ctx: Context<CloseUnfinalizableCampaign>) -> Result<()> {
+        instructions::close_unfinalizable::handler(ctx)
     }
 
     pub fn refund_unclaimed(ctx: Context<RefundUnclaimed>) -> Result<()> {
         instructions::refund_unclaimed::handler(ctx)
+    }
+
+    pub fn set_paused(ctx: Context<SetPaused>, paused: bool) -> Result<()> {
+        instructions::set_paused::handler(ctx, paused)
     }
 }

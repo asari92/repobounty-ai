@@ -10,18 +10,33 @@ Key constraint: AI decisions must produce real on-chain state changes (not advis
 
 ## Build & Run Commands
 
+### Quick Start
+```bash
+./start.sh                # Starts both frontend and backend
+# Frontend: http://localhost:5173  Backend: http://localhost:8080
+```
+
 ### Full Stack (Docker)
 ```bash
 docker compose up --build
 # Frontend: http://localhost:5173  Backend: http://localhost:8080
 ```
 
-### Backend (Go 1.25)
+### Backend (Go 1.25, module: `github.com/repobounty/repobounty-ai`)
 ```bash
 cd backend
+cp .env.example .env      # First time setup
 go mod tidy
 go run ./cmd/api          # Starts on :8080
 go build -o main ./cmd/api
+```
+
+### Backend Tests
+```bash
+cd backend
+go test ./...                              # All tests
+go test ./internal/ai/...                  # Single package
+go test -run TestAllocateRewards ./internal/ai/...  # Single test
 ```
 
 ### Frontend (React 18 + Vite)
@@ -35,13 +50,14 @@ npm run lint:fix
 npm run format            # Prettier
 npm run format:check
 ```
+No frontend test framework is configured.
 
-### Solana Program (Anchor 0.30.1)
+### Solana Program (Anchor)
 ```bash
 cd program
 yarn install
 anchor build              # Use --no-idl for Docker builds
-anchor test               # Runs on localnet
+anchor test               # Runs on localnet via ts-mocha
 anchor deploy --provider.cluster devnet
 ```
 
@@ -112,7 +128,13 @@ See `backend/.env.example`. The backend works without external keys using mock d
 - `PORT` (default 8080), `GITHUB_TOKEN`, `OPENROUTER_API_KEY`, `MODEL` (default: nvidia/nemotron free tier)
 - `SOLANA_RPC_URL` (default devnet), `SOLANA_PRIVATE_KEY`, `PROGRAM_ID`
 - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `JWT_SECRET`, `FRONTEND_URL`
+- `ALLOWED_ORIGINS` (comma-separated, for CORS)
 - `DATABASE_PATH` (default: in-memory, set path for SQLite persistence)
+
+## Mock & Fallback Behavior
+
+- **GitHub / AI fallback:** Without `GITHUB_TOKEN` or `OPENROUTER_API_KEY`, the backend uses public GitHub access, mock contributor data, and deterministic allocation.
+- **Solana fallback:** Without a real Solana authority key or program ID, on-chain actions are disabled (no fake transactions). Check `GET /api/health` for Solana readiness.
 
 ## Scope
 
