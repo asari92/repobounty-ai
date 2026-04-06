@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	gosolana "github.com/gagliardetto/solana-go"
+	"github.com/go-chi/chi/v5"
 	"github.com/mr-tron/base58"
 
 	"github.com/repobounty/repobounty-ai/internal/ai"
@@ -25,6 +25,55 @@ import (
 	"github.com/repobounty/repobounty-ai/internal/solana"
 	"github.com/repobounty/repobounty-ai/internal/store"
 )
+
+func TestCreateCampaignChallengeAcceptsConfiguredMVPDeadline(t *testing.T) {
+	cfg := &config.Config{MinCampaignAmount: 500_000_000, MinDeadlineSeconds: 300}
+	handlers := NewHandlers(store.New(), stubGitHubService{}, &stubSolanaService{}, ai.NewAllocator("", "test"), nil, nil, cfg)
+
+	req := models.CreateCampaignChallengeRequest{
+		Repo:          "octocat/Hello-World",
+		PoolAmount:    500_000_000,
+		Deadline:      time.Now().UTC().Add(10 * time.Minute).Format(time.RFC3339),
+		SponsorWallet: testWalletAddress(t),
+	}
+
+	rec := httptest.NewRecorder()
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/campaigns/create-challenge", mustJSONBody(t, req))
+	handlers.CreateCampaignChallenge(rec, httpReq)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
+	}
+}
+
+func TestCreateCampaignChallengeRejectsDeadlineBelowConfiguredMinimum(t *testing.T) {
+	cfg := &config.Config{MinCampaignAmount: 500_000_000, MinDeadlineSeconds: 300}
+	handlers := NewHandlers(store.New(), stubGitHubService{}, &stubSolanaService{}, ai.NewAllocator("", "test"), nil, nil, cfg)
+
+	req := models.CreateCampaignChallengeRequest{
+		Repo:          "octocat/Hello-World",
+		PoolAmount:    500_000_000,
+		Deadline:      time.Now().UTC().Add(2 * time.Minute).Format(time.RFC3339),
+		SponsorWallet: testWalletAddress(t),
+	}
+
+	rec := httptest.NewRecorder()
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/campaigns/create-challenge", mustJSONBody(t, req))
+	handlers.CreateCampaignChallenge(rec, httpReq)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestFundTxReturnsGoneForAtomicCreateFlow(t *testing.T) {
+	router := NewRouter(newTestHandlersWithSolana(t), "test")
+	rec := performRequest(t, router, http.MethodPost, "/api/campaigns/123/fund-tx", nil, "")
+
+	if rec.Code != http.StatusGone {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusGone)
+	}
+}
 
 func TestListCampaignsHidesStoreOnlyCampaignsWhenSolanaConfigured(t *testing.T) {
 	memStore := store.New()
@@ -71,6 +120,71 @@ func TestListCampaignsHidesStoreOnlyCampaignsWhenSolanaConfigured(t *testing.T) 
 	if campaigns[0].CampaignID != "chain-1" {
 		t.Fatalf("campaign_id = %q, want %q", campaigns[0].CampaignID, "chain-1")
 	}
+}
+
+func mustJSONBody(t *testing.T, v any) *bytes.Reader {
+	t.Helper()
+
+	payload, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("Marshal request: %v", err)
+	}
+	return bytes.NewReader(payload)
+}
+
+func performRequest(t *testing.T, handler http.Handler, method, path string, body []byte, token string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	var reader *bytes.Reader
+	if body == nil {
+		reader = bytes.NewReader(nil)
+	} else {
+		reader = bytes.NewReader(body)
+	}
+
+	req, err := http.NewRequest(method, path, reader)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	return recorder
+}
+
+func newTestHandlersWithSolana(t *testing.T) *Handlers {
+	t.Helper()
+	InitLogger("development")
+
+	return NewHandlers(
+		store.New(),
+		stubGitHubService{},
+		&stubSolanaService{},
+		ai.NewAllocator("", "test-model"),
+		nil,
+		nil,
+		&config.Config{
+			Env:                "test",
+			MinCampaignAmount:  500_000_000,
+			MinDeadlineSeconds: 300,
+		},
+	)
+}
+
+func testWalletAddress(t *testing.T) string {
+	t.Helper()
+
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	return gosolana.PublicKeyFromBytes(publicKey).String()
 }
 
 func TestGetCampaignReturnsNotFoundForStoreOnlyCampaignWhenSolanaConfigured(t *testing.T) {
@@ -135,7 +249,7 @@ func TestGetCampaignMergesStoreEnrichmentIntoOnChainCampaign(t *testing.T) {
 		memStore,
 		nil,
 		&stubSolanaService{
-			campaigns:        []*models.Campaign{onChain},
+			campaigns:       []*models.Campaign{onChain},
 			onChainCampaign: onChain,
 		},
 		nil,

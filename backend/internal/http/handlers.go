@@ -33,8 +33,6 @@ import (
 var repoPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$`)
 var base58Pattern = regexp.MustCompile(`^[1-9A-HJ-NP-Za-km-z]{32,44}$`)
 
-const minCampaignLeadTime = 24 * time.Hour
-
 func isValidSolanaAddress(addr string) bool {
 	return base58Pattern.MatchString(addr)
 }
@@ -199,7 +197,7 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 		PoolAmount:    req.PoolAmount,
 		Deadline:      req.Deadline,
 		SponsorWallet: req.SponsorWallet,
-	}, h.minCampaignAmount())
+	}, h.minCampaignAmount(), h.minCampaignLeadTime())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -347,7 +345,7 @@ func (h *Handlers) CreateCampaignConfirm(w http.ResponseWriter, r *http.Request)
 		PoolAmount:    req.PoolAmount,
 		Deadline:      req.Deadline,
 		SponsorWallet: req.SponsorWallet,
-	}, h.minCampaignAmount())
+	}, h.minCampaignAmount(), h.minCampaignLeadTime())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -439,76 +437,7 @@ type fundTxRequest struct {
 }
 
 func (h *Handlers) FundTx(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	user, ok := auth.GetUserFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication required")
-		return
-	}
-	if h.solana == nil || !h.solana.IsConfigured() {
-		writeError(w, http.StatusServiceUnavailable, "campaign funding is unavailable until Solana is configured")
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	var req fundTxRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if req.SponsorWallet == "" {
-		writeError(w, http.StatusBadRequest, "sponsor_wallet is required")
-		return
-	}
-
-	campaign, err := h.loadCampaign(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "campaign not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if campaign.Sponsor != req.SponsorWallet {
-		writeError(w, http.StatusForbidden, "only the campaign sponsor can fund")
-		return
-	}
-	if campaign.State != models.StateCreated {
-		writeError(w, http.StatusBadRequest, "campaign is not in created state")
-		return
-	}
-	if err := requireCampaignOwner(user, campaign, "fund"); err != nil {
-		writeError(w, http.StatusForbidden, err.Error())
-		return
-	}
-
-	githubRepoID, err := h.github.RepositoryID(r.Context(), campaign.Repo)
-	if err != nil {
-		log.Printf("github repository id lookup failed for %s: %v", campaign.Repo, err)
-		writeError(w, http.StatusBadGateway, "failed to resolve repository metadata on GitHub")
-		return
-	}
-
-	fundTx, err := h.solana.BuildFundTransaction(
-		r.Context(),
-		id,
-		campaign.PoolAmount,
-		campaign.Deadline.Unix(),
-		githubRepoID,
-		req.SponsorWallet,
-	)
-	if err != nil {
-		if errors.Is(err, solana.ErrNotConfigured) {
-			writeError(w, http.StatusServiceUnavailable, "campaign funding is unavailable until Solana is configured")
-			return
-		}
-		log.Printf("solana build_fund_tx failed: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to build fund transaction")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, fundTx)
+	writeError(w, http.StatusGone, "campaign funding is deprecated; campaigns are created atomically on-chain")
 }
 
 func (h *Handlers) GetCampaign(w http.ResponseWriter, r *http.Request) {

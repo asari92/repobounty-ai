@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -36,6 +37,13 @@ func (h *Handlers) minCampaignAmount() uint64 {
 	return 500_000_000
 }
 
+func (h *Handlers) minCampaignLeadTime() time.Duration {
+	if h != nil && h.config != nil && h.config.MinDeadlineSeconds > 0 {
+		return time.Duration(h.config.MinDeadlineSeconds) * time.Second
+	}
+	return 5 * time.Minute
+}
+
 func (h *Handlers) CreateCampaignChallenge(w http.ResponseWriter, r *http.Request) {
 	if h.solana == nil || !h.solana.IsConfigured() {
 		writeError(w, http.StatusServiceUnavailable, "campaign creation is disabled until Solana is configured")
@@ -49,7 +57,7 @@ func (h *Handlers) CreateCampaignChallenge(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	deadline, err := normalizeCreateChallengeRequest(&req, h.minCampaignAmount())
+	deadline, err := normalizeCreateChallengeRequest(&req, h.minCampaignAmount(), h.minCampaignLeadTime())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -221,7 +229,7 @@ func (h *Handlers) ClaimChallenge(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func normalizeCreateChallengeRequest(req *models.CreateCampaignChallengeRequest, minCampaignAmount uint64) (time.Time, error) {
+func normalizeCreateChallengeRequest(req *models.CreateCampaignChallengeRequest, minCampaignAmount uint64, minLeadTime time.Duration) (time.Time, error) {
 	if !repoPattern.MatchString(req.Repo) {
 		return time.Time{}, errors.New("repo must be in owner/repo format")
 	}
@@ -242,8 +250,8 @@ func normalizeCreateChallengeRequest(req *models.CreateCampaignChallengeRequest,
 	if err != nil {
 		return time.Time{}, errors.New("deadline must be RFC3339 format")
 	}
-	if deadline.Before(time.Now().UTC().Add(minCampaignLeadTime)) {
-		return time.Time{}, errors.New("deadline must be at least 24 hours in the future")
+	if deadline.Before(time.Now().UTC().Add(minLeadTime)) {
+		return time.Time{}, fmt.Errorf("deadline must be at least %d seconds in the future", int(minLeadTime.Seconds()))
 	}
 
 	req.Deadline = deadline.UTC().Format(time.RFC3339)
