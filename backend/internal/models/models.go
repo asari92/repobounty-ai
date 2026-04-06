@@ -132,11 +132,8 @@ type ContributorImpact struct {
 type CreateCampaignRequest struct {
 	Repo          string `json:"repo"`
 	PoolAmount    uint64 `json:"pool_amount"`
-	RewardAmount  uint64 `json:"reward_amount"`
 	Deadline      string `json:"deadline"`
 	SponsorWallet string `json:"sponsor_wallet"`
-	ChallengeID   string `json:"challenge_id"`
-	Signature     string `json:"signature"`
 }
 
 type CreateCampaignResponse struct {

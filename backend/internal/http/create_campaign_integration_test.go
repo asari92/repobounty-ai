@@ -16,7 +16,6 @@ import (
 
 	gosolana "github.com/gagliardetto/solana-go"
 	"github.com/go-chi/chi/v5"
-	"github.com/mr-tron/base58"
 
 	"github.com/repobounty/repobounty-ai/internal/ai"
 	"github.com/repobounty/repobounty-ai/internal/auth"
@@ -27,31 +26,180 @@ import (
 	"github.com/repobounty/repobounty-ai/internal/store"
 )
 
-func TestCreateCampaignChallengeAcceptsConfiguredMVPDeadline(t *testing.T) {
+func TestCreateCampaignAcceptsConfiguredMVPDeadline(t *testing.T) {
+	InitLogger("development")
+
 	cfg := &config.Config{MinCampaignAmount: 500_000_000, MinDeadlineSeconds: 900}
 	handlers := NewHandlers(store.New(), stubGitHubService{}, &stubSolanaService{}, ai.NewAllocator("", "test"), nil, nil, cfg)
 
-	req := models.CreateCampaignChallengeRequest{
+	req := models.CreateCampaignRequest{
 		Repo:          "octocat/Hello-World",
 		PoolAmount:    500_000_000,
 		Deadline:      time.Now().UTC().Add(20 * time.Minute).Format(time.RFC3339),
 		SponsorWallet: testWalletAddress(t),
 	}
 
-	rec := httptest.NewRecorder()
-	httpReq := httptest.NewRequest(http.MethodPost, "/api/campaigns/create-challenge", mustJSONBody(t, req))
-	handlers.CreateCampaignChallenge(rec, httpReq)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
+	rec := performJSONRequest[models.CreateCampaignResponse](
+		t,
+		NewRouter(handlers, "test"),
+		http.MethodPost,
+		"/api/campaigns/",
+		"",
+		req,
+		http.StatusOK,
+	)
+	if rec.CampaignID == "" {
+		t.Fatal("campaign_id was empty")
 	}
 }
 
-func TestCreateCampaignChallengeRejectsDeadlineBelowConfiguredMinimum(t *testing.T) {
+func TestCreateCampaignDoesNotRequireSponsorChallengeFields(t *testing.T) {
+	router := NewRouter(newTestHandlersWithSolana(t), "test")
+
+	req := models.CreateCampaignRequest{
+		Repo:          "octocat/Hello-World",
+		PoolAmount:    1_000_000_000,
+		Deadline:      time.Now().UTC().Add(48 * time.Hour).Format(time.RFC3339),
+		SponsorWallet: testWalletAddress(t),
+	}
+
+	res := performJSONRequest[models.CreateCampaignResponse](
+		t,
+		router,
+		http.MethodPost,
+		"/api/campaigns/",
+		"",
+		req,
+		http.StatusOK,
+	)
+	if res.CampaignID == "" {
+		t.Fatal("campaign_id was empty")
+	}
+	if res.UnsignedTx == "" {
+		t.Fatal("unsigned_tx was empty")
+	}
+}
+
+func TestCreateCampaignChallengeRouteIsGone(t *testing.T) {
+	router := NewRouter(newTestHandlersWithSolana(t), "test")
+
+	rec := performRequest(t, router, http.MethodPost, "/api/campaigns/create-challenge", nil, "")
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestCreateCampaignConfirmAllowsDelayedConfirmationWithinMinimumLeadWindow(t *testing.T) {
+	InitLogger("development")
+
+	dbPath := filepath.Join(t.TempDir(), "repobounty-create-confirm-delay.db")
+	sqliteStore, err := store.NewSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLite: %v", err)
+	}
+	defer sqliteStore.Close()
+
+	campaignID := "123"
+	walletAddress := testWalletAddress(t)
+	deadline := time.Now().UTC().Add(2 * time.Minute).Format(time.RFC3339)
+	onChainDeadline := deadlineTime(deadline)
+
+	handlers := NewHandlers(
+		sqliteStore,
+		stubGitHubService{},
+		&stubSolanaService{
+			onChainCampaign: &models.Campaign{
+				CampaignID:      campaignID,
+				CampaignPDA:     "campaign-pda",
+				EscrowPDA:       "escrow-pda",
+				VaultAddress:    "escrow-pda",
+				GithubRepoID:    123456,
+				PoolAmount:      1_000_000_000,
+				Deadline:        onChainDeadline,
+				DeadlineAt:      onChainDeadline,
+				ClaimDeadlineAt: onChainDeadline.Add(365 * 24 * time.Hour),
+				State:           models.StateFunded,
+				Status:          models.StateActive,
+				Sponsor:         walletAddress,
+				CreatedAt:       time.Now().UTC(),
+			},
+		},
+		ai.NewAllocator("", "test-model"),
+		nil,
+		nil,
+		&config.Config{
+			Env:                "test",
+			DatabasePath:       dbPath,
+			MinCampaignAmount:  500_000_000,
+			MinDeadlineSeconds: 900,
+		},
+	)
+
+	router := NewRouter(handlers, "test")
+
+	req := struct {
+		Repo          string `json:"repo"`
+		PoolAmount    uint64 `json:"pool_amount"`
+		Deadline      string `json:"deadline"`
+		SponsorWallet string `json:"sponsor_wallet"`
+		TxSignature   string `json:"tx_signature"`
+	}{
+		Repo:          "octocat/Hello-World",
+		PoolAmount:    1_000_000_000,
+		Deadline:      deadline,
+		SponsorWallet: walletAddress,
+		TxSignature:   "mock-signature",
+	}
+
+	res := performJSONRequest[models.CreateCampaignResponse](
+		t,
+		router,
+		http.MethodPost,
+		"/api/campaigns/"+campaignID+"/create-confirm",
+		"",
+		req,
+		http.StatusCreated,
+	)
+	if res.CampaignID != campaignID {
+		t.Fatalf("campaign_id = %q, want %q", res.CampaignID, campaignID)
+	}
+}
+
+func TestCreateCampaignRoutesStillResolveNonNumericCampaignIDs(t *testing.T) {
+	InitLogger("development")
+
+	memStore := store.New()
+	campaign := &models.Campaign{
+		CampaignID: "local-only",
+		Repo:       "acme/local-only",
+		CreatedAt:  time.Unix(100, 0).UTC(),
+	}
+	if err := memStore.Create(campaign); err != nil {
+		t.Fatalf("store.Create: %v", err)
+	}
+
+	handlers := NewHandlers(
+		memStore,
+		stubGitHubService{},
+		&stubSolanaNotConfiguredService{},
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	router := NewRouter(handlers, "test")
+	rec := performRequest(t, router, http.MethodGet, "/api/campaigns/local-only", nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestCreateCampaignRejectsDeadlineBelowConfiguredMinimum(t *testing.T) {
 	cfg := &config.Config{MinCampaignAmount: 500_000_000, MinDeadlineSeconds: 900}
 	handlers := NewHandlers(store.New(), stubGitHubService{}, &stubSolanaService{}, ai.NewAllocator("", "test"), nil, nil, cfg)
 
-	req := models.CreateCampaignChallengeRequest{
+	req := models.CreateCampaignRequest{
 		Repo:          "octocat/Hello-World",
 		PoolAmount:    500_000_000,
 		Deadline:      time.Now().UTC().Add(10 * time.Minute).Format(time.RFC3339),
@@ -59,8 +207,8 @@ func TestCreateCampaignChallengeRejectsDeadlineBelowConfiguredMinimum(t *testing
 	}
 
 	rec := httptest.NewRecorder()
-	httpReq := httptest.NewRequest(http.MethodPost, "/api/campaigns/create-challenge", mustJSONBody(t, req))
-	handlers.CreateCampaignChallenge(rec, httpReq)
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/campaigns/", mustJSONBody(t, req))
+	handlers.CreateCampaign(rec, httpReq)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
@@ -464,40 +612,18 @@ func TestCreateCampaignWalletProofFlow(t *testing.T) {
 
 	router := NewRouter(handlers, "test")
 
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("GenerateKey: %v", err)
 	}
 	walletAddress := gosolana.PublicKeyFromBytes(publicKey).String()
 	deadline := time.Now().UTC().Add(48 * time.Hour).Format(time.RFC3339)
 
-	challengeReq := models.CreateCampaignChallengeRequest{
+	createReq := models.CreateCampaignRequest{
 		Repo:          "octocat/Hello-World",
 		PoolAmount:    1_000_000_000,
 		Deadline:      deadline,
 		SponsorWallet: walletAddress,
-	}
-	challengeRes := performJSONRequest[models.WalletChallengeResponse](
-		t,
-		router,
-		http.MethodPost,
-		"/api/campaigns/create-challenge",
-		"",
-		challengeReq,
-		http.StatusCreated,
-	)
-	if challengeRes.ChallengeID == "" {
-		t.Fatal("challenge_id was empty")
-	}
-
-	signature := base58.Encode(ed25519.Sign(privateKey, []byte(challengeRes.Message)))
-	createReq := models.CreateCampaignRequest{
-		Repo:          challengeReq.Repo,
-		PoolAmount:    challengeReq.PoolAmount,
-		Deadline:      deadline,
-		SponsorWallet: walletAddress,
-		ChallengeID:   challengeRes.ChallengeID,
-		Signature:     signature,
 	}
 	createRes := performJSONRequest[models.CreateCampaignResponse](
 		t,
@@ -521,22 +647,14 @@ func TestCreateCampaignWalletProofFlow(t *testing.T) {
 		t.Fatalf("expected no stored campaign before on-chain confirmation, got err=%v", err)
 	}
 
-	challenge, err := sqliteStore.GetWalletChallenge(challengeRes.ChallengeID)
-	if err != nil {
-		t.Fatalf("GetWalletChallenge: %v", err)
-	}
-	if challenge.UsedAt == nil {
-		t.Fatal("challenge was not marked used")
-	}
-
 	solanaStub.onChainCampaign = &models.Campaign{
 		CampaignID:        createRes.CampaignID,
 		CampaignPDA:       "campaign-pda",
 		EscrowPDA:         "escrow-pda",
 		VaultAddress:      "escrow-pda",
 		GithubRepoID:      123456,
-		PoolAmount:        challengeReq.PoolAmount,
-		TotalRewardAmount: challengeReq.PoolAmount,
+		PoolAmount:        createReq.PoolAmount,
+		TotalRewardAmount: createReq.PoolAmount,
 		Deadline:          deadlineTime(deadline),
 		DeadlineAt:        deadlineTime(deadline),
 		ClaimDeadlineAt:   deadlineTime(deadline).Add(365 * 24 * time.Hour),
@@ -553,8 +671,8 @@ func TestCreateCampaignWalletProofFlow(t *testing.T) {
 		SponsorWallet string `json:"sponsor_wallet"`
 		TxSignature   string `json:"tx_signature"`
 	}{
-		Repo:          challengeReq.Repo,
-		PoolAmount:    challengeReq.PoolAmount,
+		Repo:          createReq.Repo,
+		PoolAmount:    createReq.PoolAmount,
 		Deadline:      deadline,
 		SponsorWallet: walletAddress,
 		TxSignature:   "mock-signature",
@@ -577,15 +695,15 @@ func TestCreateCampaignWalletProofFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get stored campaign after confirm: %v", err)
 	}
-	if storedCampaign.Repo != challengeReq.Repo {
-		t.Fatalf("stored repo = %q, want %q", storedCampaign.Repo, challengeReq.Repo)
+	if storedCampaign.Repo != createReq.Repo {
+		t.Fatalf("stored repo = %q, want %q", storedCampaign.Repo, createReq.Repo)
 	}
 	if storedCampaign.OwnerGitHubUsername != "" {
 		t.Fatalf("expected empty owner github username for wallet-only create, got %q", storedCampaign.OwnerGitHubUsername)
 	}
 }
 
-func TestCreateCampaignChallengeRejectsPoolBelowMinimum(t *testing.T) {
+func TestCreateCampaignRejectsPoolBelowMinimum(t *testing.T) {
 	InitLogger("development")
 
 	dbPath := filepath.Join(t.TempDir(), "repobounty-wallet-proof-min.db")
@@ -618,7 +736,7 @@ func TestCreateCampaignChallengeRejectsPoolBelowMinimum(t *testing.T) {
 	walletAddress := gosolana.PublicKeyFromBytes(publicKey).String()
 	deadline := time.Now().UTC().Add(48 * time.Hour).Format(time.RFC3339)
 
-	payload := models.CreateCampaignChallengeRequest{
+	payload := models.CreateCampaignRequest{
 		Repo:          "octocat/Hello-World",
 		PoolAmount:    499_999_999,
 		Deadline:      deadline,
@@ -630,7 +748,7 @@ func TestCreateCampaignChallengeRejectsPoolBelowMinimum(t *testing.T) {
 		t.Fatalf("Marshal request: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/campaigns/create-challenge", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/campaigns/", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -678,39 +796,19 @@ func TestCreateCampaignRejectsInsufficientSponsorBalanceForFullCreateCost(t *tes
 
 	router := NewRouter(handlers, "test")
 
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("GenerateKey: %v", err)
 	}
 	walletAddress := gosolana.PublicKeyFromBytes(publicKey).String()
 	deadline := time.Now().UTC().Add(48 * time.Hour).Format(time.RFC3339)
 
-	challengeReq := models.CreateCampaignChallengeRequest{
+	createReq := models.CreateCampaignRequest{
 		Repo:          "octocat/Hello-World",
 		PoolAmount:    1_000_000_000,
 		Deadline:      deadline,
 		SponsorWallet: walletAddress,
 	}
-	challengeRes := performJSONRequest[models.WalletChallengeResponse](
-		t,
-		router,
-		http.MethodPost,
-		"/api/campaigns/create-challenge",
-		"",
-		challengeReq,
-		http.StatusCreated,
-	)
-
-	signature := base58.Encode(ed25519.Sign(privateKey, []byte(challengeRes.Message)))
-	createReq := models.CreateCampaignRequest{
-		Repo:          challengeReq.Repo,
-		PoolAmount:    challengeReq.PoolAmount,
-		Deadline:      deadline,
-		SponsorWallet: walletAddress,
-		ChallengeID:   challengeRes.ChallengeID,
-		Signature:     signature,
-	}
-
 	payload, err := json.Marshal(createReq)
 	if err != nil {
 		t.Fatalf("Marshal request: %v", err)
@@ -771,6 +869,88 @@ type stubSolanaService struct {
 
 func (*stubSolanaService) IsConfigured() bool {
 	return true
+}
+
+type stubSolanaNotConfiguredService struct{}
+
+func (*stubSolanaNotConfiguredService) IsConfigured() bool {
+	return false
+}
+
+func (*stubSolanaNotConfiguredService) AuthorityAddress() string {
+	return ""
+}
+
+func (*stubSolanaNotConfiguredService) ListCampaigns(ctx context.Context) ([]*models.Campaign, error) {
+	return nil, nil
+}
+
+func (*stubSolanaNotConfiguredService) GetCampaign(ctx context.Context, campaignID string) (*models.Campaign, error) {
+	return nil, solana.ErrNotConfigured
+}
+
+func (*stubSolanaNotConfiguredService) GetBalance(ctx context.Context, wallet string) (uint64, error) {
+	return 0, solana.ErrNotConfigured
+}
+
+func (*stubSolanaNotConfiguredService) EstimateCreateCampaignCost(ctx context.Context, rewardAmount uint64) (uint64, error) {
+	return 0, solana.ErrNotConfigured
+}
+
+func (*stubSolanaNotConfiguredService) BuildFundTransaction(
+	ctx context.Context,
+	campaignID string,
+	poolAmount uint64,
+	deadline int64,
+	githubRepoID uint64,
+	sponsorPubkey string,
+) (*solana.FundTransaction, error) {
+	return nil, solana.ErrNotConfigured
+}
+
+func (*stubSolanaNotConfiguredService) FinalizeCampaign(
+	ctx context.Context,
+	campaignID string,
+	sponsor string,
+	allocations []solana.AllocationInput,
+) (string, error) {
+	return "", solana.ErrNotConfigured
+}
+
+func (*stubSolanaNotConfiguredService) BuildClaimTransaction(
+	ctx context.Context,
+	campaignID string,
+	sponsor string,
+	githubUserID uint64,
+	userWallet string,
+) (string, error) {
+	return "", solana.ErrNotConfigured
+}
+
+func (*stubSolanaNotConfiguredService) BuildRefundTransaction(
+	ctx context.Context,
+	campaignID string,
+	sponsor string,
+) (string, error) {
+	return "", solana.ErrNotConfigured
+}
+
+func (*stubSolanaNotConfiguredService) VerifyRefundTransaction(
+	ctx context.Context,
+	campaignID string,
+	sponsor string,
+	txSignature string,
+) error {
+	return solana.ErrNotConfigured
+}
+
+func (*stubSolanaNotConfiguredService) GetClaimStatus(
+	ctx context.Context,
+	campaignID string,
+	sponsor string,
+	githubUserID uint64,
+) (*solana.ClaimStatus, error) {
+	return nil, solana.ErrNotConfigured
 }
 
 func (*stubSolanaService) AuthorityAddress() string {

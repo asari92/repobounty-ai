@@ -16,13 +16,6 @@ import (
 	"github.com/repobounty/repobounty-ai/internal/walletproof"
 )
 
-type createCampaignChallengePayload struct {
-	Repo          string `json:"repo"`
-	PoolAmount    uint64 `json:"pool_amount"`
-	Deadline      string `json:"deadline"`
-	SponsorWallet string `json:"sponsor_wallet"`
-}
-
 type claimChallengePayload struct {
 	GitHubUsername    string `json:"github_username"`
 	CampaignID        string `json:"campaign_id"`
@@ -42,91 +35,6 @@ func (h *Handlers) minCampaignLeadTime() time.Duration {
 		return time.Duration(h.config.MinDeadlineSeconds) * time.Second
 	}
 	return 5 * time.Minute
-}
-
-func (h *Handlers) CreateCampaignChallenge(w http.ResponseWriter, r *http.Request) {
-	if h.solana == nil || !h.solana.IsConfigured() {
-		writeError(w, http.StatusServiceUnavailable, "campaign creation is disabled until Solana is configured")
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	var req models.CreateCampaignChallengeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	deadline, err := normalizeCreateChallengeRequest(&req, h.minCampaignAmount(), h.minCampaignLeadTime())
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	issuedAt := time.Now().UTC()
-	expiresAt := issuedAt.Add(walletproof.ChallengeTTL)
-	challengeID := generateState()
-	payload := createCampaignChallengePayload{
-		Repo:          req.Repo,
-		PoolAmount:    req.PoolAmount,
-		Deadline:      deadline.Format(time.RFC3339),
-		SponsorWallet: req.SponsorWallet,
-	}
-
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		log.Printf("create challenge: marshal payload failed: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to create wallet challenge")
-		return
-	}
-
-	message := walletproof.BuildCreateCampaignMessage(walletproof.CreateCampaignMessageInput{
-		ChallengeID:   challengeID,
-		SponsorWallet: req.SponsorWallet,
-		Repo:          req.Repo,
-		PoolAmount:    req.PoolAmount,
-		Deadline:      deadline,
-		IssuedAt:      issuedAt,
-		ExpiresAt:     expiresAt,
-	})
-
-	challenge := &models.WalletChallenge{
-		ChallengeID:   challengeID,
-		Action:        models.WalletChallengeActionCreateCampaign,
-		WalletAddress: req.SponsorWallet,
-		Message:       message,
-		PayloadJSON:   string(payloadJSON),
-		CreatedAt:     issuedAt,
-		ExpiresAt:     expiresAt,
-	}
-
-	if err := h.store.CreateWalletChallenge(challenge); err != nil {
-		h.logWalletChallengeEvent(
-			"create_failed",
-			challenge.ChallengeID,
-			challenge.Action,
-			challenge.WalletAddress,
-			"lookup_result", "store_error",
-		)
-		log.Printf("create challenge: store create failed: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to create wallet challenge")
-		return
-	}
-	h.logWalletChallengeEvent(
-		"created",
-		challenge.ChallengeID,
-		challenge.Action,
-		challenge.WalletAddress,
-		"lookup_result", "stored",
-	)
-
-	writeJSON(w, http.StatusCreated, models.WalletChallengeResponse{
-		ChallengeID:   challenge.ChallengeID,
-		Action:        challenge.Action,
-		WalletAddress: challenge.WalletAddress,
-		Message:       challenge.Message,
-		ExpiresAt:     challenge.ExpiresAt,
-	})
 }
 
 func (h *Handlers) ClaimChallenge(w http.ResponseWriter, r *http.Request) {
@@ -229,32 +137,38 @@ func (h *Handlers) ClaimChallenge(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func normalizeCreateChallengeRequest(req *models.CreateCampaignChallengeRequest, minCampaignAmount uint64, minLeadTime time.Duration) (time.Time, error) {
-	if !repoPattern.MatchString(req.Repo) {
+func normalizeCreateCampaignRequest(repo string, poolAmount uint64, deadlineValue string, sponsorWallet string, minCampaignAmount uint64, minLeadTime time.Duration) (time.Time, error) {
+	return normalizeCreateCampaignRequestWithLeadTime(repo, poolAmount, deadlineValue, sponsorWallet, minCampaignAmount, minLeadTime)
+}
+
+func normalizeCreateCampaignConfirmRequest(repo string, poolAmount uint64, deadlineValue string, sponsorWallet string, minCampaignAmount uint64) (time.Time, error) {
+	return normalizeCreateCampaignRequestWithLeadTime(repo, poolAmount, deadlineValue, sponsorWallet, minCampaignAmount, 0)
+}
+
+func normalizeCreateCampaignRequestWithLeadTime(repo string, poolAmount uint64, deadlineValue string, sponsorWallet string, minCampaignAmount uint64, minLeadTime time.Duration) (time.Time, error) {
+	if !repoPattern.MatchString(repo) {
 		return time.Time{}, errors.New("repo must be in owner/repo format")
 	}
-	if req.PoolAmount == 0 {
+	if poolAmount == 0 {
 		return time.Time{}, errors.New("pool_amount must be greater than 0")
 	}
-	if req.PoolAmount < minCampaignAmount {
+	if poolAmount < minCampaignAmount {
 		return time.Time{}, errors.New("pool_amount must be at least 0.5 SOL")
 	}
-	if req.SponsorWallet == "" {
+	if sponsorWallet == "" {
 		return time.Time{}, errors.New("sponsor_wallet is required")
 	}
-	if !isValidSolanaAddress(req.SponsorWallet) {
+	if !isValidSolanaAddress(sponsorWallet) {
 		return time.Time{}, errors.New("invalid sponsor wallet address")
 	}
 
-	deadline, err := time.Parse(time.RFC3339, req.Deadline)
+	deadline, err := time.Parse(time.RFC3339, deadlineValue)
 	if err != nil {
 		return time.Time{}, errors.New("deadline must be RFC3339 format")
 	}
-	if deadline.Before(time.Now().UTC().Add(minLeadTime)) {
+	if minLeadTime > 0 && deadline.Before(time.Now().UTC().Add(minLeadTime)) {
 		return time.Time{}, fmt.Errorf("deadline must be at least %d seconds in the future", int(minLeadTime.Seconds()))
 	}
-
-	req.Deadline = deadline.UTC().Format(time.RFC3339)
 	return deadline.UTC(), nil
 }
 

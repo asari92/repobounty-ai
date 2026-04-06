@@ -194,42 +194,19 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deadline, err := normalizeCreateChallengeRequest(&models.CreateCampaignChallengeRequest{
-		Repo:          req.Repo,
-		PoolAmount:    req.PoolAmount,
-		Deadline:      req.Deadline,
-		SponsorWallet: req.SponsorWallet,
-	}, h.minCampaignAmount(), h.minCampaignLeadTime())
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	req.Deadline = deadline.Format(time.RFC3339)
-
-	challenge, err := h.loadAndVerifyWalletChallenge(
-		models.WalletChallengeActionCreateCampaign,
-		req.ChallengeID,
+	deadline, err := normalizeCreateCampaignRequest(
+		req.Repo,
+		req.PoolAmount,
+		req.Deadline,
 		req.SponsorWallet,
-		req.Signature,
+		h.minCampaignAmount(),
+		h.minCampaignLeadTime(),
 	)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	var challengePayload createCampaignChallengePayload
-	if err := json.Unmarshal([]byte(challenge.PayloadJSON), &challengePayload); err != nil {
-		log.Printf("create campaign: unmarshal wallet challenge payload failed: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to verify wallet proof")
-		return
-	}
-	if challengePayload.Repo != req.Repo ||
-		challengePayload.PoolAmount != req.PoolAmount ||
-		challengePayload.Deadline != req.Deadline ||
-		challengePayload.SponsorWallet != req.SponsorWallet {
-		writeError(w, http.StatusBadRequest, "wallet proof did not match this campaign request")
-		return
-	}
+	req.Deadline = deadline.Format(time.RFC3339)
 
 	now := time.Now().UTC()
 
@@ -307,11 +284,6 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.markWalletChallengeUsed(req.ChallengeID); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
 	writeJSON(w, http.StatusOK, models.CreateCampaignResponse{
 		CampaignID:   campaignID,
 		CampaignPDA:  fundTx.CampaignPDA,
@@ -342,12 +314,13 @@ func (h *Handlers) CreateCampaignConfirm(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	deadline, err := normalizeCreateChallengeRequest(&models.CreateCampaignChallengeRequest{
-		Repo:          req.Repo,
-		PoolAmount:    req.PoolAmount,
-		Deadline:      req.Deadline,
-		SponsorWallet: req.SponsorWallet,
-	}, h.minCampaignAmount(), h.minCampaignLeadTime())
+	deadline, err := normalizeCreateCampaignConfirmRequest(
+		req.Repo,
+		req.PoolAmount,
+		req.Deadline,
+		req.SponsorWallet,
+		h.minCampaignAmount(),
+	)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

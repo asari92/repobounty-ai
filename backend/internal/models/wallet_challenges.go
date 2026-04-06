@@ -5,8 +5,7 @@ import "time"
 type WalletChallengeAction string
 
 const (
-	WalletChallengeActionCreateCampaign WalletChallengeAction = "create_campaign"
-	WalletChallengeActionClaim          WalletChallengeAction = "claim"
+	WalletChallengeActionClaim WalletChallengeAction = "claim"
 )
 
 type WalletChallenge struct {
@@ -18,13 +17,6 @@ type WalletChallenge struct {
 	CreatedAt     time.Time             `json:"created_at"`
 	ExpiresAt     time.Time             `json:"expires_at"`
 	UsedAt        *time.Time            `json:"used_at,omitempty"`
-}
-
-type CreateCampaignChallengeRequest struct {
-	Repo          string `json:"repo"`
-	PoolAmount    uint64 `json:"pool_amount"`
-	Deadline      string `json:"deadline"`
-	SponsorWallet string `json:"sponsor_wallet"`
 }
 
 type ClaimChallengeRequest struct {
