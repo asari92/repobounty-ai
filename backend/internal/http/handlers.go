@@ -847,22 +847,13 @@ func (h *Handlers) ClaimConfirm(w http.ResponseWriter, r *http.Request) {
 
 	if !matchedAlloc.Claimed {
 		matchedAlloc.Claimed = true
-		matchedAlloc.ClaimantWallet = req.WalletAddress
 	}
-
-	allClaimed := true
-	var totalClaimed uint64
-	for _, a := range campaign.Allocations {
-		if a.Claimed {
-			totalClaimed += a.Amount
-		}
-		if !a.Claimed {
-			allClaimed = false
-		}
-	}
-	campaign.TotalClaimed = totalClaimed
-	if allClaimed {
-		campaign.State = models.StateCompleted
+	matchedAlloc.ClaimantWallet = req.WalletAddress
+	if claimStatus.ClaimedAt != nil {
+		matchedAlloc.ClaimedAt = claimStatus.ClaimedAt
+	} else {
+		claimedAt := time.Now().UTC()
+		matchedAlloc.ClaimedAt = &claimedAt
 	}
 
 	if err := h.store.Update(campaign); err != nil {

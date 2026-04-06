@@ -19,6 +19,7 @@ import (
 	"github.com/mr-tron/base58"
 
 	"github.com/repobounty/repobounty-ai/internal/ai"
+	"github.com/repobounty/repobounty-ai/internal/auth"
 	"github.com/repobounty/repobounty-ai/internal/config"
 	"github.com/repobounty/repobounty-ai/internal/github"
 	"github.com/repobounty/repobounty-ai/internal/models"
@@ -158,6 +159,42 @@ func performRequest(t *testing.T, handler http.Handler, method, path string, bod
 	return recorder
 }
 
+func performAuthedJSONRequest(
+	t *testing.T,
+	handlers *Handlers,
+	user *store.User,
+	method string,
+	path string,
+	body any,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	if handlers == nil || handlers.jwt == nil {
+		t.Fatal("handlers.jwt must be configured for authenticated test requests")
+	}
+
+	token, err := handlers.jwt.GenerateToken(user.GitHubUsername)
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("Marshal request: %v", err)
+	}
+
+	req, err := http.NewRequest(method, path, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	recorder := httptest.NewRecorder()
+	NewRouter(handlers, "test").ServeHTTP(recorder, req)
+	return recorder
+}
+
 func newTestHandlersWithSolana(t *testing.T) *Handlers {
 	t.Helper()
 	InitLogger("development")
@@ -177,6 +214,88 @@ func newTestHandlersWithSolana(t *testing.T) *Handlers {
 	)
 }
 
+func newClaimConfirmHandlersWithOnChainStatus(t *testing.T, claimed bool) (*Handlers, *models.Campaign, *store.User) {
+	t.Helper()
+	InitLogger("development")
+
+	memStore := store.New()
+	user := &store.User{
+		GitHubUsername: "alice",
+		WalletAddress:  testWalletAddress(t),
+		GitHubID:       42,
+		AvatarURL:      "https://example.com/avatar.png",
+		CreatedAt:      time.Unix(100, 0).UTC(),
+	}
+	if err := memStore.CreateUser(user); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	campaign := &models.Campaign{
+		CampaignID: "123",
+		Repo:       "octocat/Hello-World",
+		Sponsor:    testWalletAddress(t),
+		State:      models.StateFunded,
+		Status:     models.StateActive,
+		Allocations: []models.Allocation{
+			{
+				Contributor:  "alice",
+				GithubUserID: 99,
+				Amount:       1_000_000_000,
+				Claimed:      false,
+			},
+			{
+				Contributor:  "bob",
+				GithubUserID: 100,
+				Amount:       1_000_000_000,
+				Claimed:      false,
+			},
+		},
+		CreatedAt: time.Unix(200, 0).UTC(),
+	}
+	if err := memStore.Create(campaign); err != nil {
+		t.Fatalf("Create campaign: %v", err)
+	}
+
+	solanaStub := &claimConfirmSolanaStub{
+		stubSolanaService: stubSolanaService{
+			onChainCampaign: &models.Campaign{
+				CampaignID:      campaign.CampaignID,
+				Repo:            campaign.Repo,
+				Sponsor:         campaign.Sponsor,
+				State:           models.StateCompleted,
+				Status:          models.StateClosed,
+				ClaimedAmount:   2_000_000_000,
+				ClaimedCount:    2,
+				TotalClaimed:    2_000_000_000,
+				Allocations:     nil,
+				CreatedAt:       campaign.CreatedAt,
+				DeadlineAt:      time.Unix(300, 0).UTC(),
+				ClaimDeadlineAt: time.Unix(400, 0).UTC(),
+			},
+		},
+		claimStatus: &solana.ClaimStatus{
+			Claimed:         claimed,
+			RecipientWallet: user.WalletAddress,
+			Amount:          campaign.Allocations[0].Amount,
+		},
+	}
+
+	handlers := NewHandlers(
+		memStore,
+		stubGitHubService{},
+		solanaStub,
+		ai.NewAllocator("", "test-model"),
+		auth.NewJWTManager("test-secret"),
+		nil,
+		&config.Config{
+			Env:               "test",
+			MinCampaignAmount: 500_000_000,
+		},
+	)
+
+	return handlers, campaign, user
+}
+
 func testWalletAddress(t *testing.T) string {
 	t.Helper()
 
@@ -185,6 +304,24 @@ func testWalletAddress(t *testing.T) string {
 		t.Fatalf("GenerateKey: %v", err)
 	}
 	return gosolana.PublicKeyFromBytes(publicKey).String()
+}
+
+type claimConfirmSolanaStub struct {
+	stubSolanaService
+	claimStatus *solana.ClaimStatus
+}
+
+func (s *claimConfirmSolanaStub) GetClaimStatus(
+	ctx context.Context,
+	campaignID string,
+	sponsor string,
+	githubUserID uint64,
+) (*solana.ClaimStatus, error) {
+	if s.claimStatus == nil {
+		return nil, errors.New("not implemented")
+	}
+	status := *s.claimStatus
+	return &status, nil
 }
 
 func TestGetCampaignReturnsNotFoundForStoreOnlyCampaignWhenSolanaConfigured(t *testing.T) {

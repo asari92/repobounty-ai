@@ -421,6 +421,9 @@ func validateClaimConfirmationInputs(
 	contributorGithub string,
 	walletAddress string,
 ) error {
+	// ClaimConfirm uses on-chain claim status as the source of truth.
+	// This helper only validates the authenticated user, the request payload,
+	// and that the contributor exists on the campaign.
 	if campaign.State != models.StateFinalized && campaign.State != models.StateCompleted {
 		return errors.New("campaign is not finalized")
 	}
