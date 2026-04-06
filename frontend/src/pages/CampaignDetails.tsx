@@ -24,7 +24,7 @@ function AllocationBar({ percentage }: { percentage: number }) {
 export default function CampaignDetails() {
   const { id } = useParams<{ id: string }>();
   const { connection } = useConnection();
-  const { publicKey, signMessage, sendTransaction } = useWallet();
+  const { publicKey, signMessage, signTransaction } = useWallet();
   const { setVisible } = useWalletModal();
   const { user } = useAuth();
   const [campaign, setCampaign] = useState<Campaign | null>(null);
@@ -110,8 +110,8 @@ export default function CampaignDetails() {
       setError('This wallet does not support message signing.');
       return;
     }
-    if (!sendTransaction) {
-      setError('This wallet does not support transaction sending.');
+    if (!signTransaction) {
+      setError('This wallet does not support transaction signing.');
       return;
     }
     if (!solanaReady) {
@@ -135,7 +135,8 @@ export default function CampaignDetails() {
       );
       const txBytes = bs58.decode(claimTx.partial_tx);
       const transaction = Transaction.from(txBytes);
-      const txSignature = await sendTransaction(transaction, connection);
+      const signedTransaction = await signTransaction(transaction);
+      const txSignature = await connection.sendRawTransaction(signedTransaction.serialize());
       await connection.confirmTransaction(txSignature, 'confirmed');
       await api.claimConfirm(id, contributor, publicKey.toBase58(), txSignature);
       const updated = await api.getCampaign(id);

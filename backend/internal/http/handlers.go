@@ -199,7 +199,7 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 		PoolAmount:    req.PoolAmount,
 		Deadline:      req.Deadline,
 		SponsorWallet: req.SponsorWallet,
-	})
+	}, h.minCampaignAmount())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -347,7 +347,7 @@ func (h *Handlers) CreateCampaignConfirm(w http.ResponseWriter, r *http.Request)
 		PoolAmount:    req.PoolAmount,
 		Deadline:      req.Deadline,
 		SponsorWallet: req.SponsorWallet,
-	})
+	}, h.minCampaignAmount())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1077,7 +1077,7 @@ func (h *Handlers) listCampaigns(ctx context.Context) ([]*models.Campaign, error
 		return nil, err
 	}
 	if onChainCampaigns == nil {
-		return storedCampaigns, nil
+		return []*models.Campaign{}, nil
 	}
 
 	storedByID := make(map[string]*models.Campaign, len(storedCampaigns))
@@ -1085,18 +1085,13 @@ func (h *Handlers) listCampaigns(ctx context.Context) ([]*models.Campaign, error
 		storedByID[campaign.CampaignID] = campaign
 	}
 
-	mergedCampaigns := make([]*models.Campaign, 0, len(onChainCampaigns)+len(storedCampaigns))
+	mergedCampaigns := make([]*models.Campaign, 0, len(onChainCampaigns))
 	for _, onChainCampaign := range onChainCampaigns {
 		if storedCampaign, ok := storedByID[onChainCampaign.CampaignID]; ok {
 			mergedCampaigns = append(mergedCampaigns, mergeCampaignWithChainData(storedCampaign, onChainCampaign))
-			delete(storedByID, onChainCampaign.CampaignID)
 			continue
 		}
 		mergedCampaigns = append(mergedCampaigns, onChainCampaign)
-	}
-
-	for _, storedCampaign := range storedByID {
-		mergedCampaigns = append(mergedCampaigns, storedCampaign)
 	}
 
 	sort.Slice(mergedCampaigns, func(i, j int) bool {
@@ -1114,16 +1109,20 @@ func (h *Handlers) loadCampaign(ctx context.Context, id string) (*models.Campaig
 
 	if h.solana != nil && h.solana.IsConfigured() {
 		onChainCampaign, err := h.solana.GetCampaign(ctx, id)
-		if err == nil {
-			if storedCampaign == nil {
-				return onChainCampaign, nil
+		if err != nil {
+			if errors.Is(err, solana.ErrCampaignNotFound) {
+				return nil, store.ErrNotFound
 			}
-			mergedCampaign := mergeCampaignWithChainData(storedCampaign, onChainCampaign)
-			if err := h.store.Update(mergedCampaign); err != nil && !errors.Is(err, store.ErrNotFound) {
-				log.Printf("campaign sync failed for %s: %v", id, err)
-			}
-			return mergedCampaign, nil
+			return nil, err
 		}
+		if storedCampaign == nil {
+			return onChainCampaign, nil
+		}
+		mergedCampaign := mergeCampaignWithChainData(storedCampaign, onChainCampaign)
+		if err := h.store.Update(mergedCampaign); err != nil && !errors.Is(err, store.ErrNotFound) {
+			log.Printf("campaign sync failed for %s: %v", id, err)
+		}
+		return mergedCampaign, nil
 	}
 
 	if storedCampaign != nil {
