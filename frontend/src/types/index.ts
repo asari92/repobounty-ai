@@ -39,8 +39,6 @@ export interface CreateCampaignRequest {
   pool_amount: number;
   deadline: string;
   sponsor_wallet: string;
-  challenge_id: string;
-  signature: string;
 }
 
 export interface CreateCampaignResponse {

@@ -2,7 +2,6 @@ import type {
   Campaign,
   CreateCampaignRequest,
   CreateCampaignResponse,
-  WalletChallengeRequest,
   WalletChallengeResponse,
   FinalizePreviewResponse,
   FinalizeResponse,
@@ -49,13 +48,6 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  createCampaignChallenge(data: WalletChallengeRequest): Promise<WalletChallengeResponse> {
-    return request('/campaigns/create-challenge', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  },
-
   createCampaign(data: CreateCampaignRequest): Promise<CreateCampaignResponse> {
     return request('/campaigns/', {
       method: 'POST',

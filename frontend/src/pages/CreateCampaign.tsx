@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useWallet } from '@solana/wallet-adapter-react';
-import { useConnection } from '@solana/wallet-adapter-react';
+import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { Transaction } from '@solana/web3.js';
 import bs58 from 'bs58';
@@ -32,21 +31,38 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+class TransactionFailedError extends Error {}
+
+class ConfirmationTimeoutError extends Error {}
+
+function isRejectedWalletError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  const lower = message.toLowerCase();
+  return lower.includes('rejected') || lower.includes('user rejected');
+}
+
+interface PendingCreate {
+  repo: string;
+  campaignId: string;
+  sponsorWallet: string;
+  poolLamports: number;
+  deadlineRFC3339: string;
+  txSignature: string;
+}
+
 export default function CreateCampaign() {
-  const { publicKey, signMessage, signTransaction } = useWallet();
+  const { publicKey, signTransaction } = useWallet();
   const { connection } = useConnection();
   const { setVisible } = useWalletModal();
   const navigate = useNavigate();
 
-  const [step, setStep] = useState<1 | 2>(1);
   const [repo, setRepo] = useState('');
   const [poolSol, setPoolSol] = useState('');
   const [deadline, setDeadline] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [createdId, setCreatedId] = useState<string | null>(null);
-  const [preparedTx, setPreparedTx] = useState<string | null>(null);
-  const [preparedSponsorWallet, setPreparedSponsorWallet] = useState<string | null>(null);
   const [solanaReady, setSolanaReady] = useState(true);
 
   const minDeadline = toDateTimeLocalValue(new Date(Date.now() + 24 * 60 * 60 * 1000));
@@ -69,17 +85,16 @@ export default function CreateCampaign() {
 
   async function confirmCreatedCampaign(
     campaignId: string,
+    repoName: string,
     sponsorWallet: string,
     poolLamports: number,
     deadlineRFC3339: string,
     txSignature: string
   ) {
-    let lastError: Error | null = null;
-
     for (let attempt = 0; attempt < 12; attempt += 1) {
       try {
         await api.createCampaignConfirm(campaignId, {
-          repo,
+          repo: repoName,
           pool_amount: poolLamports,
           deadline: deadlineRFC3339,
           sponsor_wallet: sponsorWallet,
@@ -88,7 +103,6 @@ export default function CreateCampaign() {
         return;
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Failed to confirm campaign creation';
-        lastError = err instanceof Error ? err : new Error(message);
         if (
           message.includes('campaign transaction is not confirmed on-chain yet') ||
           message.includes('campaign not found')
@@ -96,71 +110,119 @@ export default function CreateCampaign() {
           await delay(1500);
           continue;
         }
-        throw lastError;
+        throw (err instanceof Error ? err : new Error(message));
       }
     }
 
-    throw (
-      lastError ??
-      new Error('Campaign transaction was sent, but on-chain confirmation took too long.')
+    throw new ConfirmationTimeoutError(
+      'Campaign transaction was sent, but backend confirmation is still pending. You can retry confirmation with the same transaction.'
     );
   }
 
-  async function submitPreparedCampaign(
-    campaignId: string,
-    txBase58: string,
-    sponsorWallet: string,
-    poolLamports: number,
-    deadlineRFC3339: string
-  ) {
-    if (!publicKey) {
-      setVisible(true);
+  async function waitForRpcConfirmation(txSignature: string) {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        const { value } = await connection.getSignatureStatuses([txSignature], {
+          searchTransactionHistory: true,
+        });
+        const status = value[0];
+
+        if (status?.err) {
+          throw new TransactionFailedError(
+            'Transaction failed on-chain. Create a new transaction to try again.'
+          );
+        }
+
+        if (
+          status &&
+          (status.confirmationStatus === 'confirmed' ||
+            status.confirmationStatus === 'finalized' ||
+            status.confirmations === null)
+        ) {
+          return;
+        }
+      } catch (err: unknown) {
+        if (err instanceof TransactionFailedError) {
+          throw err;
+        }
+      }
+
+      await delay(1500);
+    }
+
+    throw new ConfirmationTimeoutError(
+      'Transaction was sent, but RPC confirmation is still pending. You can retry confirmation with the same transaction.'
+    );
+  }
+
+  async function finalizePendingCreate(pending: PendingCreate) {
+    setError(null);
+    setStatusMessage('Transaction sent. Waiting for RPC confirmation...');
+
+    try {
+      await waitForRpcConfirmation(pending.txSignature);
+    } catch (err: unknown) {
+      if (err instanceof TransactionFailedError) {
+        setPendingCreate(null);
+        setStatusMessage(null);
+        setError(err.message);
+        return;
+      }
+      if (err instanceof ConfirmationTimeoutError) {
+        setError(err.message);
+        setStatusMessage('Transaction sent. Waiting for on-chain confirmation...');
+        return;
+      }
+      setError(
+        err instanceof Error
+          ? `${err.message}. You can retry confirmation with the same transaction.`
+          : 'Unable to confirm transaction status yet. You can retry confirmation with the same transaction.'
+      );
+      setStatusMessage('Transaction sent. Waiting for RPC confirmation...');
       return;
     }
-    if (!signTransaction) {
-      throw new Error('This wallet does not support transaction signing.');
-    }
-    if (!solanaReady) {
-      throw new Error('Campaign creation is unavailable until the backend is connected to Solana.');
-    }
-    if (publicKey.toBase58() !== sponsorWallet) {
-      throw new Error('Reconnect the same sponsor wallet that prepared this campaign transaction.');
-    }
 
-    const txBytes = bs58.decode(txBase58);
-    const transaction = Transaction.from(txBytes);
-
-    const signedTransaction = await signTransaction(transaction);
-    const signature = await connection.sendRawTransaction(signedTransaction.serialize());
-    await confirmCreatedCampaign(
-      campaignId,
-      sponsorWallet,
-      poolLamports,
-      deadlineRFC3339,
-      signature
-    );
-
-    navigate(`/campaign/${campaignId}`);
+    setStatusMessage('Transaction confirmed on-chain. Finalizing campaign...');
+    try {
+      await confirmCreatedCampaign(
+        pending.campaignId,
+        pending.repo,
+        pending.sponsorWallet,
+        pending.poolLamports,
+        pending.deadlineRFC3339,
+        pending.txSignature
+      );
+      setPendingCreate(null);
+      setStatusMessage(null);
+      navigate(`/campaign/${pending.campaignId}`);
+    } catch (err: unknown) {
+      if (err instanceof ConfirmationTimeoutError) {
+        setError(err.message);
+        setStatusMessage('Transaction confirmed on-chain. Backend confirmation is still pending.');
+        return;
+      }
+      setError(
+        err instanceof Error
+          ? err.message
+        : 'Failed to finalize campaign creation. You can retry confirmation with the same transaction.'
+      );
+    }
   }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setStatusMessage(null);
 
-    if (!publicKey) {
-      setVisible(true);
-      return;
-    }
-    if (!signMessage) {
-      setError('This wallet does not support message signing.');
-      return;
-    }
-    if (!signTransaction) {
-      setError('This wallet does not support transaction signing.');
-      return;
-    }
-    if (!solanaReady) {
-      setError('Campaign creation is unavailable until the backend is connected to Solana.');
+    if (pendingCreate) {
+      setSubmitting(true);
+      try {
+        await finalizePendingCreate(pendingCreate);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Failed to confirm campaign creation');
+      } finally {
+        setSubmitting(false);
+      }
       return;
     }
 
@@ -189,104 +251,82 @@ export default function CreateCampaign() {
       return;
     }
 
+    if (!solanaReady) {
+      setError('Campaign creation is unavailable until the backend is connected to Solana.');
+      return;
+    }
+    if (!publicKey) {
+      setError('Connect a wallet to create a campaign.');
+      setVisible(true);
+      return;
+    }
+    if (!signTransaction) {
+      setError('This wallet does not support transaction signing.');
+      return;
+    }
+
     setSubmitting(true);
     try {
-      const challenge = await api.createCampaignChallenge({
-        repo,
-        pool_amount: poolLamports,
-        deadline: deadlineRFC3339,
-        sponsor_wallet: publicKey.toBase58(),
-      });
-      if (!challenge.challenge_id?.trim()) {
-        throw new Error('Wallet proof challenge was not returned by the backend.');
-      }
-
-      const signatureBytes = await signMessage(new TextEncoder().encode(challenge.message));
-
       const result = await api.createCampaign({
         repo,
         pool_amount: poolLamports,
         deadline: deadlineRFC3339,
         sponsor_wallet: publicKey.toBase58(),
-        challenge_id: challenge.challenge_id,
-        signature: bs58.encode(signatureBytes),
       });
+
       if (!result.campaign_id?.trim()) {
         throw new Error('Campaign ID was not returned by the backend.');
       }
       if (!result.unsigned_tx?.trim()) {
         throw new Error('Create transaction was not returned by the backend.');
       }
-      setCreatedId(result.campaign_id);
-      setPreparedTx(result.unsigned_tx);
-      setPreparedSponsorWallet(publicKey.toBase58());
-      setStep(2);
-      await submitPreparedCampaign(
-        result.campaign_id,
-        result.unsigned_tx,
-        publicKey.toBase58(),
+
+      const txBytes = bs58.decode(result.unsigned_tx);
+      const transaction = Transaction.from(txBytes);
+
+      let signedTransaction;
+      try {
+        signedTransaction = await signTransaction(transaction);
+      } catch (err: unknown) {
+        if (isRejectedWalletError(err)) {
+          throw new Error('Transaction rejected by wallet.');
+        }
+        throw new Error('Failed to sign transaction.');
+      }
+
+      let txSignature: string;
+      try {
+        txSignature = await connection.sendRawTransaction(signedTransaction.serialize());
+      } catch (err: unknown) {
+        if (isRejectedWalletError(err)) {
+          throw new Error('Transaction rejected by wallet.');
+        }
+        throw new Error('Failed to send transaction.');
+      }
+
+      const pending: PendingCreate = {
+        repo,
+        campaignId: result.campaign_id,
+        sponsorWallet: publicKey.toBase58(),
         poolLamports,
-        deadlineRFC3339
-      );
+        deadlineRFC3339,
+        txSignature,
+      };
+      setPendingCreate(pending);
+      await finalizePendingCreate(pending);
     } catch (err: unknown) {
+      if (!(err instanceof ConfirmationTimeoutError)) {
+        setPendingCreate(null);
+        setStatusMessage(null);
+      }
       setError(err instanceof Error ? err.message : 'Failed to create campaign');
     } finally {
       setSubmitting(false);
     }
   }
 
-  async function handleFund() {
-    if (!publicKey || !createdId || !preparedTx || !preparedSponsorWallet) return;
-    setError(null);
-
-    if (!solanaReady) {
-      setError('Campaign creation is unavailable until the backend is connected to Solana.');
-      return;
-    }
-    if (publicKey.toBase58() !== preparedSponsorWallet) {
-      setError('Reconnect the same sponsor wallet that prepared this campaign transaction.');
-      return;
-    }
-
-    setSubmitting(true);
-
-    try {
-      await submitPreparedCampaign(
-        createdId,
-        preparedTx,
-        preparedSponsorWallet,
-        Math.round(parseFloat(poolSol) * 1e9),
-        toStableRFC3339(deadline) ?? deadline
-      );
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        if (err.message.includes('User rejected')) {
-          setError('Transaction rejected by wallet');
-        } else {
-          setError(err.message);
-        }
-      } else {
-        setError('Failed to send fund transaction');
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  function handleBack() {
-    if (step === 2) {
-      setStep(1);
-      setPreparedTx(null);
-      setPreparedSponsorWallet(null);
-      setCreatedId(null);
-      return;
-    }
-    navigate('/');
-  }
-
   return (
     <div className="max-w-lg mx-auto">
-      {/* Header */}
       <div className="mb-6 animate-fade-in-up">
         <h1 className="text-2xl font-bold tracking-tight mb-1">
           <span className="gradient-text">Create Campaign</span>
@@ -297,174 +337,82 @@ export default function CreateCampaign() {
         <div className="gradient-line mt-3" />
       </div>
 
-      {/* Step indicator */}
-      <div className="flex items-center gap-3 mb-6 animate-fade-in" style={{ animationDelay: '60ms' }}>
-        <div
-          className={`flex items-center gap-2 text-xs font-medium ${
-            step >= 1 ? 'text-solana-purple' : 'text-gray-600'
-          }`}
-        >
-          <span className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold ${
-            step >= 1 ? 'bg-solana-purple text-white' : 'bg-solana-border text-gray-500'
-          }`}>
-            1
-          </span>
-          Details
-        </div>
-        <div className="flex-1 h-px bg-solana-border" />
-        <div
-          className={`flex items-center gap-2 text-xs font-medium ${
-            step >= 2 ? 'text-solana-green' : 'text-gray-600'
-          }`}
-        >
-          <span className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold ${
-            step >= 2 ? 'bg-solana-green text-white' : 'bg-solana-border text-gray-500'
-          }`}>
-            2
-          </span>
-          Approve
-        </div>
-      </div>
-
       {!solanaReady && (
         <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-lg p-3 text-xs text-yellow-200 mb-5">
-          Backend is not connected to Solana. Creating and funding campaigns is disabled.
+          Backend is not connected to Solana. Creating campaigns is disabled.
         </div>
       )}
 
-      {step === 1 && (
-        <div className="animate-fade-in-up" style={{ animationDelay: '100ms' }}>
-          <form onSubmit={handleCreate} className="space-y-4">
+      <div className="animate-fade-in-up" style={{ animationDelay: '100ms' }}>
+        <form onSubmit={handleCreate} className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-400 mb-1.5">
+              GitHub Repository
+            </label>
+            <input
+              type="text"
+              value={repo}
+              onChange={(e) => setRepo(e.target.value)}
+              placeholder="owner/repo"
+              className="input"
+              disabled={submitting || pendingCreate !== null}
+              required
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-400 mb-1.5">
-                GitHub Repository
+                Reward Pool (SOL)
               </label>
               <input
-                type="text"
-                value={repo}
-                onChange={(e) => setRepo(e.target.value)}
-                placeholder="owner/repo"
+                type="number"
+                value={poolSol}
+                onChange={(e) => setPoolSol(e.target.value)}
+                placeholder="0.5"
+                step="0.01"
+                min={String(MIN_CAMPAIGN_POOL_SOL)}
                 className="input"
+                disabled={submitting || pendingCreate !== null}
                 required
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-gray-400 mb-1.5">
-                  Reward Pool (SOL)
-                </label>
-                <input
-                  type="number"
-                  value={poolSol}
-                  onChange={(e) => setPoolSol(e.target.value)}
-                  placeholder="0.5"
-                  step="0.01"
-                  min={String(MIN_CAMPAIGN_POOL_SOL)}
-                  className="input"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-400 mb-1.5">
-                  Deadline
-                </label>
-                <input
-                  type="datetime-local"
-                  value={deadline}
-                  onChange={(e) => setDeadline(e.target.value)}
-                  min={minDeadline}
-                  step="60"
-                  className="input"
-                  required
-                />
-              </div>
-            </div>
-
-            {/* Info box */}
-            <div className="card !p-4 !bg-solana-green/[0.03] !border-solana-green/15 text-xs text-gray-400 space-y-1.5">
-              <p><span className="text-solana-green font-medium">AI analysis</span> — commits and PRs are scored automatically</p>
-              <p><span className="text-solana-green font-medium">Escrow</span> — funds held in Solana smart contract until deadline</p>
-              <p><span className="text-solana-green font-medium">Minimum pool</span> — {MIN_CAMPAIGN_POOL_SOL} SOL</p>
-              <p><span className="text-solana-green font-medium">Merged code only</span> — only main branch contributions qualify</p>
-            </div>
-
-            {error && (
-              <div className="bg-red-500/5 border border-red-500/15 rounded-lg p-3 text-xs text-red-400">
-                {error}
-              </div>
-            )}
-
-            <div className="flex gap-3 pt-1">
-              {!publicKey ? (
-                <button
-                  type="button"
-                  onClick={() => setVisible(true)}
-                  className="btn-primary flex-1"
-                >
-                  Connect Wallet
-                </button>
-              ) : !solanaReady ? (
-                <button
-                  type="button"
-                  disabled
-                  className="btn-primary flex-1"
-                >
-                  Solana Required
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="btn-primary flex-1"
-                >
-                  {submitting ? 'Preparing...' : 'Prepare Deposit →'}
-                </button>
-              )}
-              <button type="button" onClick={handleBack} className="btn-secondary">
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {step === 2 && (
-        <div className="animate-fade-in-up space-y-4">
-          <div className="card">
-            <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">
-              Summary
-            </h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between py-1.5 border-b border-solana-border/30">
-                <span className="text-gray-500">Repository</span>
-                <span className="font-mono text-white">{repo}</span>
-              </div>
-              <div className="flex justify-between py-1.5 border-b border-solana-border/30">
-                <span className="text-gray-500">Pool</span>
-                <span className="font-mono text-solana-green">{poolSol} SOL</span>
-              </div>
-              <div className="flex justify-between py-1.5 border-b border-solana-border/30">
-                <span className="text-gray-500">Deadline</span>
-                <span className="text-white">{deadline}</span>
-              </div>
-              <div className="flex justify-between py-1.5">
-                <span className="text-gray-500">Sponsor wallet</span>
-                <span className="font-mono text-white text-xs">{preparedSponsorWallet ?? 'N/A'}</span>
-              </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">
+                Deadline
+              </label>
+              <input
+                type="datetime-local"
+                value={deadline}
+                onChange={(e) => setDeadline(e.target.value)}
+                min={minDeadline}
+                step="60"
+                className="input"
+                disabled={submitting || pendingCreate !== null}
+                required
+              />
             </div>
           </div>
 
-          <div className="stat-block text-center py-6">
-            <p className="text-xs text-gray-500 mb-2">Sign the sponsor transaction to create and fund the campaign</p>
-            <p className="text-3xl font-bold text-solana-purple">{poolSol} SOL</p>
+          <div className="card !p-4 !bg-solana-green/[0.03] !border-solana-green/15 text-xs text-gray-400 space-y-1.5">
+            <p>
+              <span className="text-solana-green font-medium">AI analysis</span> - commits and PRs
+              are scored automatically
+            </p>
+            <p>
+              <span className="text-solana-green font-medium">Escrow</span> - funds held in Solana
+              smart contract until deadline
+            </p>
+            <p>
+              <span className="text-solana-green font-medium">Minimum pool</span> -{' '}
+              {MIN_CAMPAIGN_POOL_SOL} SOL
+            </p>
+            <p>
+              <span className="text-solana-green font-medium">Merged code only</span> - only main
+              branch contributions qualify
+            </p>
           </div>
-
-          <p className="text-[10px] text-gray-600 text-center">
-            The campaign does not exist yet. It will appear only after this wallet signs and the
-            on-chain transaction is confirmed.
-          </p>
 
           {error && (
             <div className="bg-red-500/5 border border-red-500/15 rounded-lg p-3 text-xs text-red-400">
@@ -472,30 +420,41 @@ export default function CreateCampaign() {
             </div>
           )}
 
-          <div className="flex gap-3">
+          {statusMessage && !error && (
+            <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-200">
+              {statusMessage}
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-1">
             <button
-              type="button"
-              onClick={handleFund}
-              disabled={submitting || !publicKey || !solanaReady || !preparedTx}
+              type="submit"
+              disabled={submitting || !solanaReady}
               className="btn-primary flex-1"
             >
               {submitting
-                ? 'Confirming...'
-                : solanaReady
-                  ? 'Create Campaign →'
-                  : 'Solana Required'}
+                ? pendingCreate
+                  ? 'Confirming...'
+                  : 'Creating...'
+                : pendingCreate
+                  ? 'Retry confirmation'
+                  : !publicKey
+                    ? 'Connect Wallet'
+                    : solanaReady
+                      ? 'Create Campaign'
+                      : 'Solana Required'}
             </button>
             <button
               type="button"
-              onClick={handleBack}
+              onClick={() => navigate('/')}
               className="btn-secondary"
               disabled={submitting}
             >
-              Back
+              Cancel
             </button>
           </div>
-        </div>
-      )}
+        </form>
+      </div>
     </div>
   );
 }
