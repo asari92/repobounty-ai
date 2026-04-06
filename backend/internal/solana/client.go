@@ -29,6 +29,7 @@ type Client struct {
 var campaignAccountDiscriminator = anchorDiscriminator("account:Campaign")
 var claimRecordAccountDiscriminator = anchorDiscriminator("account:ClaimRecord")
 var ErrNotConfigured = errors.New("solana client not configured")
+var ErrCampaignNotFound = errors.New("campaign not found")
 
 const (
 	campaignAccountSpace  = 171
@@ -147,7 +148,7 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*models.Ca
 		}
 	}
 
-	return nil, errors.New("campaign not found")
+	return nil, ErrCampaignNotFound
 }
 
 func parseCampaignID(campaignID string) (uint64, error) {

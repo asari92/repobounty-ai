@@ -7,6 +7,9 @@ import { Transaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { api } from '../api/client';
 
+const MIN_CAMPAIGN_POOL_SOL = 0.5;
+const MIN_CAMPAIGN_POOL_LAMPORTS = 500_000_000;
+
 function pad(value: number): string {
   return value.toString().padStart(2, '0');
 }
@@ -30,7 +33,7 @@ function delay(ms: number): Promise<void> {
 }
 
 export default function CreateCampaign() {
-  const { publicKey, sendTransaction, signMessage } = useWallet();
+  const { publicKey, signMessage, signTransaction } = useWallet();
   const { connection } = useConnection();
   const { setVisible } = useWalletModal();
   const navigate = useNavigate();
@@ -114,8 +117,8 @@ export default function CreateCampaign() {
       setVisible(true);
       return;
     }
-    if (!sendTransaction) {
-      throw new Error('This wallet does not support transaction sending.');
+    if (!signTransaction) {
+      throw new Error('This wallet does not support transaction signing.');
     }
     if (!solanaReady) {
       throw new Error('Campaign creation is unavailable until the backend is connected to Solana.');
@@ -127,7 +130,8 @@ export default function CreateCampaign() {
     const txBytes = bs58.decode(txBase58);
     const transaction = Transaction.from(txBytes);
 
-    const signature = await sendTransaction(transaction, connection);
+    const signedTransaction = await signTransaction(transaction);
+    const signature = await connection.sendRawTransaction(signedTransaction.serialize());
     await confirmCreatedCampaign(
       campaignId,
       sponsorWallet,
@@ -151,8 +155,8 @@ export default function CreateCampaign() {
       setError('This wallet does not support message signing.');
       return;
     }
-    if (!sendTransaction) {
-      setError('This wallet does not support transaction sending.');
+    if (!signTransaction) {
+      setError('This wallet does not support transaction signing.');
       return;
     }
     if (!solanaReady) {
@@ -168,6 +172,10 @@ export default function CreateCampaign() {
     const poolLamports = Math.round(parseFloat(poolSol) * 1e9);
     if (isNaN(poolLamports) || poolLamports <= 0) {
       setError('Pool amount must be a positive number');
+      return;
+    }
+    if (poolLamports < MIN_CAMPAIGN_POOL_LAMPORTS) {
+      setError(`Pool amount must be at least ${MIN_CAMPAIGN_POOL_SOL} SOL`);
       return;
     }
     if (parseFloat(poolSol) > 10000) {
@@ -350,9 +358,9 @@ export default function CreateCampaign() {
                   type="number"
                   value={poolSol}
                   onChange={(e) => setPoolSol(e.target.value)}
-                  placeholder="1.0"
+                  placeholder="0.5"
                   step="0.01"
-                  min="0.01"
+                  min={String(MIN_CAMPAIGN_POOL_SOL)}
                   className="input"
                   required
                 />
@@ -378,6 +386,7 @@ export default function CreateCampaign() {
             <div className="card !p-4 !bg-solana-green/[0.03] !border-solana-green/15 text-xs text-gray-400 space-y-1.5">
               <p><span className="text-solana-green font-medium">AI analysis</span> — commits and PRs are scored automatically</p>
               <p><span className="text-solana-green font-medium">Escrow</span> — funds held in Solana smart contract until deadline</p>
+              <p><span className="text-solana-green font-medium">Minimum pool</span> — {MIN_CAMPAIGN_POOL_SOL} SOL</p>
               <p><span className="text-solana-green font-medium">Merged code only</span> — only main branch contributions qualify</p>
             </div>
 

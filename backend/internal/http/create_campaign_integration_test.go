@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	gosolana "github.com/gagliardetto/solana-go"
 	"github.com/mr-tron/base58"
 
@@ -24,6 +25,167 @@ import (
 	"github.com/repobounty/repobounty-ai/internal/solana"
 	"github.com/repobounty/repobounty-ai/internal/store"
 )
+
+func TestListCampaignsHidesStoreOnlyCampaignsWhenSolanaConfigured(t *testing.T) {
+	memStore := store.New()
+	orphan := &models.Campaign{
+		CampaignID: "local-only",
+		Repo:       "acme/local-only",
+		CreatedAt:  time.Unix(100, 0).UTC(),
+	}
+	if err := memStore.Create(orphan); err != nil {
+		t.Fatalf("store.Create orphan: %v", err)
+	}
+
+	onChain := &models.Campaign{
+		CampaignID: "chain-1",
+		Repo:       "acme/chain",
+		CreatedAt:  time.Unix(200, 0).UTC(),
+	}
+
+	handlers := NewHandlers(
+		memStore,
+		nil,
+		&stubSolanaService{campaigns: []*models.Campaign{onChain}},
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/campaigns/", nil)
+	rec := httptest.NewRecorder()
+	handlers.ListCampaigns(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var campaigns []models.Campaign
+	if err := json.NewDecoder(rec.Body).Decode(&campaigns); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(campaigns) != 1 {
+		t.Fatalf("len(campaigns) = %d, want 1", len(campaigns))
+	}
+	if campaigns[0].CampaignID != "chain-1" {
+		t.Fatalf("campaign_id = %q, want %q", campaigns[0].CampaignID, "chain-1")
+	}
+}
+
+func TestGetCampaignReturnsNotFoundForStoreOnlyCampaignWhenSolanaConfigured(t *testing.T) {
+	memStore := store.New()
+	orphan := &models.Campaign{
+		CampaignID: "local-only",
+		Repo:       "acme/local-only",
+		CreatedAt:  time.Unix(100, 0).UTC(),
+	}
+	if err := memStore.Create(orphan); err != nil {
+		t.Fatalf("store.Create orphan: %v", err)
+	}
+
+	handlers := NewHandlers(
+		memStore,
+		nil,
+		&stubSolanaService{},
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/campaigns/local-only", nil)
+	rec := httptest.NewRecorder()
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "local-only")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	handlers.GetCampaign(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestGetCampaignMergesStoreEnrichmentIntoOnChainCampaign(t *testing.T) {
+	memStore := store.New()
+	stored := &models.Campaign{
+		CampaignID:          "chain-1",
+		OwnerGitHubUsername: "asari92",
+		Allocations: []models.Allocation{
+			{Contributor: "alice", Reasoning: "Strong PR impact"},
+		},
+		CreatedAt: time.Unix(100, 0).UTC(),
+	}
+	if err := memStore.Create(stored); err != nil {
+		t.Fatalf("store.Create stored: %v", err)
+	}
+
+	onChain := &models.Campaign{
+		CampaignID: "chain-1",
+		Repo:       "acme/chain",
+		State:      models.StateActive,
+		Allocations: []models.Allocation{
+			{Contributor: "alice", Amount: 123},
+		},
+		CreatedAt: time.Unix(200, 0).UTC(),
+	}
+
+	handlers := NewHandlers(
+		memStore,
+		nil,
+		&stubSolanaService{
+			campaigns:        []*models.Campaign{onChain},
+			onChainCampaign: onChain,
+		},
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	got, err := handlers.loadCampaign(context.Background(), "chain-1")
+	if err != nil {
+		t.Fatalf("loadCampaign: %v", err)
+	}
+	if got.OwnerGitHubUsername != "asari92" {
+		t.Fatalf("owner = %q, want %q", got.OwnerGitHubUsername, "asari92")
+	}
+	if got.State != models.StateActive {
+		t.Fatalf("state = %q, want %q", got.State, models.StateActive)
+	}
+	if len(got.Allocations) != 1 {
+		t.Fatalf("len(allocations) = %d, want 1", len(got.Allocations))
+	}
+	if got.Allocations[0].Reasoning != "Strong PR impact" {
+		t.Fatalf("reasoning = %q, want %q", got.Allocations[0].Reasoning, "Strong PR impact")
+	}
+}
+
+func TestListCampaignsFallsBackToStoreWhenSolanaNotConfigured(t *testing.T) {
+	memStore := store.New()
+	campaign := &models.Campaign{
+		CampaignID: "local-only",
+		Repo:       "acme/local-only",
+		CreatedAt:  time.Unix(100, 0).UTC(),
+	}
+	if err := memStore.Create(campaign); err != nil {
+		t.Fatalf("store.Create: %v", err)
+	}
+
+	handlers := NewHandlers(memStore, nil, nil, nil, nil, nil, nil)
+
+	got, err := handlers.listCampaigns(context.Background())
+	if err != nil {
+		t.Fatalf("listCampaigns: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len(campaigns) = %d, want 1", len(got))
+	}
+	if got[0].CampaignID != "local-only" {
+		t.Fatalf("campaign_id = %q, want %q", got[0].CampaignID, "local-only")
+	}
+}
 
 func TestCreateCampaignWalletProofFlow(t *testing.T) {
 	InitLogger("development")
@@ -172,6 +334,70 @@ func TestCreateCampaignWalletProofFlow(t *testing.T) {
 	}
 }
 
+func TestCreateCampaignChallengeRejectsPoolBelowMinimum(t *testing.T) {
+	InitLogger("development")
+
+	dbPath := filepath.Join(t.TempDir(), "repobounty-wallet-proof-min.db")
+	sqliteStore, err := store.NewSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLite: %v", err)
+	}
+	defer sqliteStore.Close()
+
+	handlers := NewHandlers(
+		sqliteStore,
+		stubGitHubService{},
+		&stubSolanaService{},
+		ai.NewAllocator("", "test-model"),
+		nil,
+		nil,
+		&config.Config{
+			Env:               "test",
+			DatabasePath:      dbPath,
+			MinCampaignAmount: 500_000_000,
+		},
+	)
+
+	router := NewRouter(handlers, "test")
+
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	walletAddress := gosolana.PublicKeyFromBytes(publicKey).String()
+	deadline := time.Now().UTC().Add(48 * time.Hour).Format(time.RFC3339)
+
+	payload := models.CreateCampaignChallengeRequest{
+		Repo:          "octocat/Hello-World",
+		PoolAmount:    499_999_999,
+		Deadline:      deadline,
+		SponsorWallet: walletAddress,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("Marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/campaigns/create-challenge", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	var apiErr models.ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&apiErr); err != nil {
+		t.Fatalf("Decode error response: %v", err)
+	}
+	if apiErr.Error == "" {
+		t.Fatal("expected non-empty API error")
+	}
+}
+
 func TestCreateCampaignRejectsInsufficientSponsorBalanceForFullCreateCost(t *testing.T) {
 	InitLogger("development")
 
@@ -287,6 +513,7 @@ func (stubGitHubService) FetchContributionWindowData(
 
 type stubSolanaService struct {
 	onChainCampaign      *models.Campaign
+	campaigns            []*models.Campaign
 	balance              uint64
 	requiredCreateAmount uint64
 }
@@ -299,8 +526,19 @@ func (*stubSolanaService) AuthorityAddress() string {
 	return "mock-authority"
 }
 
-func (*stubSolanaService) ListCampaigns(ctx context.Context) ([]*models.Campaign, error) {
-	return nil, nil
+func (s *stubSolanaService) ListCampaigns(ctx context.Context) ([]*models.Campaign, error) {
+	if len(s.campaigns) == 0 {
+		return nil, nil
+	}
+	result := make([]*models.Campaign, 0, len(s.campaigns))
+	for _, campaign := range s.campaigns {
+		if campaign == nil {
+			continue
+		}
+		cp := *campaign
+		result = append(result, &cp)
+	}
+	return result, nil
 }
 
 func (s *stubSolanaService) GetCampaign(ctx context.Context, campaignID string) (*models.Campaign, error) {
@@ -308,7 +546,13 @@ func (s *stubSolanaService) GetCampaign(ctx context.Context, campaignID string) 
 		cp := *s.onChainCampaign
 		return &cp, nil
 	}
-	return nil, errors.New("campaign not found")
+	for _, campaign := range s.campaigns {
+		if campaign != nil && campaign.CampaignID == campaignID {
+			cp := *campaign
+			return &cp, nil
+		}
+	}
+	return nil, solana.ErrCampaignNotFound
 }
 
 func (s *stubSolanaService) GetBalance(ctx context.Context, wallet string) (uint64, error) {

@@ -29,6 +29,13 @@ type claimChallengePayload struct {
 	WalletAddress     string `json:"wallet_address"`
 }
 
+func (h *Handlers) minCampaignAmount() uint64 {
+	if h != nil && h.config != nil && h.config.MinCampaignAmount > 0 {
+		return h.config.MinCampaignAmount
+	}
+	return 500_000_000
+}
+
 func (h *Handlers) CreateCampaignChallenge(w http.ResponseWriter, r *http.Request) {
 	if h.solana == nil || !h.solana.IsConfigured() {
 		writeError(w, http.StatusServiceUnavailable, "campaign creation is disabled until Solana is configured")
@@ -42,7 +49,7 @@ func (h *Handlers) CreateCampaignChallenge(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	deadline, err := normalizeCreateChallengeRequest(&req)
+	deadline, err := normalizeCreateChallengeRequest(&req, h.minCampaignAmount())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -214,12 +221,15 @@ func (h *Handlers) ClaimChallenge(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func normalizeCreateChallengeRequest(req *models.CreateCampaignChallengeRequest) (time.Time, error) {
+func normalizeCreateChallengeRequest(req *models.CreateCampaignChallengeRequest, minCampaignAmount uint64) (time.Time, error) {
 	if !repoPattern.MatchString(req.Repo) {
 		return time.Time{}, errors.New("repo must be in owner/repo format")
 	}
 	if req.PoolAmount == 0 {
 		return time.Time{}, errors.New("pool_amount must be greater than 0")
+	}
+	if req.PoolAmount < minCampaignAmount {
+		return time.Time{}, errors.New("pool_amount must be at least 0.5 SOL")
 	}
 	if req.SponsorWallet == "" {
 		return time.Time{}, errors.New("sponsor_wallet is required")
