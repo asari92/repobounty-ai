@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useWallet } from '@solana/wallet-adapter-react';
 import { api } from '../api/client';
 import CampaignCard from '../components/CampaignCard';
 import { useAuth } from '../hooks/useAuth';
@@ -7,6 +8,7 @@ import type { Campaign } from '../types';
 
 export default function Home() {
   const { user } = useAuth();
+  const { publicKey } = useWallet();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -33,8 +35,19 @@ export default function Home() {
 
   const visibleCampaigns = useMemo(() => {
     let filtered =
-      view === 'mine' && user
-        ? campaigns.filter((campaign) => campaign.owner_github_username === user.github_username)
+      view === 'mine' && (user || publicKey)
+        ? campaigns.filter((campaign) => {
+            const walletAddress = publicKey?.toBase58() || user?.wallet_address;
+            const isSponsor = walletAddress && 
+              (campaign.sponsor === walletAddress || 
+               campaign.authority === walletAddress);
+            const isCreator = user?.github_username && 
+              campaign.owner_github_username === user.github_username;
+            const isContributor = user?.github_username && 
+              campaign.allocations?.some(a => a.contributor === user.github_username);
+            
+            return isSponsor || isCreator || isContributor;
+          })
         : view === 'mine'
           ? []
           : campaigns;
@@ -122,16 +135,16 @@ export default function Home() {
         </div>
       )}
 
-      {!loading && !error && view === 'mine' && !user && (
+      {!loading && !error && view === 'mine' && !user && !publicKey && (
         <div className="card text-center py-16">
-          <p className="text-gray-500 text-sm mb-1">Log in with GitHub to see your campaigns.</p>
+          <p className="text-gray-500 text-sm mb-1">Connect GitHub or wallet to see your campaigns.</p>
         </div>
       )}
 
-      {!loading && !error && visibleCampaigns.length === 0 && !(view === 'mine' && !user) && (
+      {!loading && !error && visibleCampaigns.length === 0 && !(view === 'mine' && !user && !publicKey) && (
         <div className="card text-center py-16">
           <p className="text-gray-500 text-sm mb-4">
-            {view === 'mine' ? 'No campaigns for this account.' : 'No campaigns yet.'}
+            {view === 'mine' ? 'No campaigns found for your connected accounts.' : 'No campaigns yet.'}
           </p>
           <Link to="/create" className="btn-primary text-xs">
             Create Campaign
@@ -143,7 +156,7 @@ export default function Home() {
         <>
           <p className="text-[11px] text-gray-600 mb-3">
             {visibleCampaigns.length} campaign{visibleCampaigns.length === 1 ? '' : 's'}
-            {view === 'mine' && user ? ' you created' : ''}
+            {view === 'mine' && (user || publicKey) ? ' related to your accounts' : ''}
           </p>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {visibleCampaigns.map((c, i) => (

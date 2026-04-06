@@ -1076,6 +1076,93 @@ func (h *Handlers) GetClaims(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *Handlers) GetMyCampaigns(w http.ResponseWriter, r *http.Request) {
+	walletAddress := r.URL.Query().Get("wallet")
+	user, _ := auth.GetUserFromContext(r.Context())
+
+	if (user == nil || user.WalletAddress == "") && walletAddress == "" {
+		writeJSON(w, http.StatusOK, []map[string]any{})
+		return
+	}
+
+	filterWallet := walletAddress
+	if filterWallet == "" && user != nil {
+		filterWallet = user.WalletAddress
+	}
+
+	type myCampaign struct {
+		CampaignID  string              `json:"campaign_id"`
+		CampaignPDA string              `json:"campaign_pda,omitempty"`
+		Repo        string              `json:"repo"`
+		PoolAmount  uint64              `json:"pool_amount"`
+		State       string              `json:"state"`
+		Status      string              `json:"status"`
+		Sponsor     string              `json:"sponsor"`
+		Authority   string              `json:"authority"`
+		OwnerGitHub string              `json:"owner_github_username,omitempty"`
+		Allocations []models.Allocation `json:"allocations"`
+		CreatedAt   string              `json:"created_at"`
+		Deadline    string              `json:"deadline"`
+		CanRefund   bool                `json:"can_refund"`
+	}
+
+	campaigns, err := h.listCampaigns(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to load campaigns")
+		return
+	}
+
+	var myCampaigns []myCampaign
+	now := time.Now()
+	for _, campaign := range campaigns {
+		isSponsor := filterWallet != "" &&
+			(campaign.Sponsor == filterWallet || campaign.Authority == filterWallet)
+
+		isContributor := false
+		if user != nil && user.GitHubUsername != "" {
+			if campaign.OwnerGitHubUsername == user.GitHubUsername {
+				isContributor = true
+			} else if campaign.Allocations != nil {
+				for _, alloc := range campaign.Allocations {
+					if alloc.Contributor == user.GitHubUsername {
+						isContributor = true
+						break
+					}
+				}
+			}
+		}
+
+		if !isSponsor && !isContributor {
+			continue
+		}
+
+		refundDeadline := campaign.Deadline.AddDate(0, 0, 365)
+		canRefund := isSponsor && now.After(refundDeadline)
+
+		myCampaigns = append(myCampaigns, myCampaign{
+			CampaignID:  campaign.CampaignID,
+			CampaignPDA: campaign.CampaignPDA,
+			Repo:        campaign.Repo,
+			PoolAmount:  campaign.PoolAmount,
+			State:       string(campaign.State),
+			Status:      campaign.Status,
+			Sponsor:     campaign.Sponsor,
+			Authority:   campaign.Authority,
+			OwnerGitHub: campaign.OwnerGitHubUsername,
+			Allocations: campaign.Allocations,
+			CreatedAt:   campaign.CreatedAt.Format(time.RFC3339),
+			Deadline:    campaign.Deadline.Format(time.RFC3339),
+			CanRefund:   canRefund,
+		})
+	}
+
+	if myCampaigns == nil {
+		myCampaigns = []myCampaign{}
+	}
+
+	writeJSON(w, http.StatusOK, myCampaigns)
+}
+
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(data); err != nil {

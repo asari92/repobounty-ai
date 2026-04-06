@@ -176,3 +176,9 @@ program-id
 # Python cache just in case
 __pycache__/
 *.pyc
+
+# Superpowers plans (not for production repo)
+docs/superpowers/
+
+# Temporary TZ presentations
+TZ_*.md

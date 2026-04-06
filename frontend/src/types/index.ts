@@ -150,6 +150,22 @@ export interface ClaimItem {
   state: string;
 }
 
+export interface MyCampaign {
+  campaign_id: string;
+  campaign_pda?: string;
+  repo: string;
+  pool_amount: number;
+  state: string;
+  status?: string;
+  sponsor: string;
+  authority: string;
+  owner_github_username?: string;
+  allocations: Allocation[];
+  created_at: string;
+  deadline: string;
+  can_refund: boolean;
+}
+
 export interface FundTransactionResponse {
   transaction: string;
   campaign_pda: string;

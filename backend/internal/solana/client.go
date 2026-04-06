@@ -1125,6 +1125,7 @@ func decodeCampaignAccount(data []byte, campaignPDA string, programID solana.Pub
 		ClaimDeadlineAt:   claimDeadlineAt,
 		State:             compatState,
 		Status:            status,
+		Authority:         sponsor.String(),
 		Sponsor:           sponsor.String(),
 		Allocations:       nil,
 		CreatedAt:         createdAt,

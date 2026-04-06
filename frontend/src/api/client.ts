@@ -11,6 +11,7 @@ import type {
   LinkWalletRequest,
   ClaimChallengeRequest,
   ClaimItem,
+  MyCampaign,
   BuildClaimTxResponse,
   HealthResponse,
 } from '../types';
@@ -155,6 +156,10 @@ export const api = {
 
   getClaims(): Promise<ClaimItem[]> {
     return request('/auth/claims');
+  },
+  getMyCampaigns(walletAddress?: string): Promise<MyCampaign[]> {
+    const params = walletAddress ? `?wallet=${walletAddress}` : '';
+    return request(`/auth/my-campaigns${params}`);
   },
   getHealth(): Promise<HealthResponse> {
     return request('/health');

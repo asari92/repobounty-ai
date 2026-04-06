@@ -49,6 +49,7 @@ func NewRouter(h *Handlers, env string) http.Handler {
 			r.With(requireAuth).Get("/me", h.GetMe)
 			r.With(requireAuth).Post("/wallet/link", h.LinkWallet)
 			r.With(requireAuth).Get("/claims", h.GetClaims)
+			r.With(optionalAuth).Get("/my-campaigns", h.GetMyCampaigns)
 		})
 
 		r.Route("/campaigns", func(r chi.Router) {
