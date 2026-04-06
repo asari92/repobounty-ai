@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,12 +13,12 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 
 	"github.com/repobounty/repobounty-ai/internal/ai"
 	"github.com/repobounty/repobounty-ai/internal/auth"
@@ -38,8 +39,23 @@ func isValidSolanaAddress(addr string) bool {
 	return base58Pattern.MatchString(addr)
 }
 
+func generateCampaignID() (string, error) {
+	var raw [8]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("generate campaign id: %w", err)
+	}
+
+	id := binary.LittleEndian.Uint64(raw[:])
+	if id == 0 {
+		id = 1
+	}
+
+	return strconv.FormatUint(id, 10), nil
+}
+
 type githubService interface {
 	RepositoryExists(ctx context.Context, repo string) (bool, error)
+	RepositoryID(ctx context.Context, repo string) (uint64, error)
 	FetchContributionWindowData(
 		ctx context.Context,
 		repo string,
@@ -54,22 +70,18 @@ type solanaService interface {
 	ListCampaigns(ctx context.Context) ([]*models.Campaign, error)
 	GetCampaign(ctx context.Context, campaignID string) (*models.Campaign, error)
 	GetBalance(ctx context.Context, wallet string) (uint64, error)
-	CreateCampaign(
-		ctx context.Context,
-		campaignID string,
-		repo string,
-		poolAmount uint64,
-		deadline int64,
-		sponsorPubkey string,
-	) (string, string, string, error)
+	EstimateCreateCampaignCost(ctx context.Context, rewardAmount uint64) (uint64, error)
 	BuildFundTransaction(
 		ctx context.Context,
 		campaignID string,
 		poolAmount uint64,
+		deadline int64,
+		githubRepoID uint64,
 		sponsorPubkey string,
 	) (*solana.FundTransaction, error)
-	FinalizeCampaign(ctx context.Context, campaignID string, allocations []solana.AllocationInput) (string, error)
-	ClaimAllocation(ctx context.Context, campaignID, contributorGitHub, contributorWallet string) (string, error)
+	FinalizeCampaign(ctx context.Context, campaignID string, sponsor string, allocations []solana.AllocationInput) (string, error)
+	BuildClaimTransaction(ctx context.Context, campaignID string, sponsor string, githubUserID uint64, userWallet string) (string, error)
+	GetClaimStatus(ctx context.Context, campaignID string, sponsor string, githubUserID uint64) (*solana.ClaimStatus, error)
 }
 
 type Handlers struct {
@@ -170,11 +182,6 @@ func (h *Handlers) ListCampaigns(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
-	user, ok := auth.GetUserFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication required")
-		return
-	}
 	if h.solana == nil || !h.solana.IsConfigured() {
 		writeError(w, http.StatusServiceUnavailable, "campaign creation is disabled until Solana is configured")
 		return
@@ -216,8 +223,7 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to verify wallet proof")
 		return
 	}
-	if challengePayload.GitHubUsername != user.GitHubUsername ||
-		challengePayload.Repo != req.Repo ||
+	if challengePayload.Repo != req.Repo ||
 		challengePayload.PoolAmount != req.PoolAmount ||
 		challengePayload.Deadline != req.Deadline ||
 		challengePayload.SponsorWallet != req.SponsorWallet {
@@ -245,8 +251,22 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadGateway, "failed to verify sponsor wallet balance")
 			return
 		}
-		if balance < req.PoolAmount {
-			writeError(w, http.StatusBadRequest, "sponsor wallet does not have enough SOL to fund this campaign")
+		requiredAmount, err := h.solana.EstimateCreateCampaignCost(r.Context(), req.PoolAmount)
+		if err != nil {
+			log.Printf("solana create cost estimate failed for %s: %v", req.SponsorWallet, err)
+			writeError(w, http.StatusBadGateway, "failed to estimate campaign creation cost")
+			return
+		}
+		if balance < requiredAmount {
+			writeError(
+				w,
+				http.StatusBadRequest,
+				fmt.Sprintf(
+					"sponsor wallet does not have enough SOL to create this campaign; required %.6f SOL, available %.6f SOL",
+					float64(requiredAmount)/1e9,
+					float64(balance)/1e9,
+				),
+			)
 			return
 		}
 	}
@@ -256,77 +276,161 @@ func (h *Handlers) CreateCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	campaignID := uuid.New().String()[:12]
-	campaign := &models.Campaign{
-		CampaignID:          campaignID,
-		Repo:                req.Repo,
-		PoolAmount:          req.PoolAmount,
-		Deadline:            deadline,
-		State:               models.StateCreated,
-		Authority:           h.solana.AuthorityAddress(),
-		Sponsor:             req.SponsorWallet,
-		OwnerGitHubUsername: user.GitHubUsername,
-		Allocations:         []models.Allocation{},
-		CreatedAt:           now,
-	}
-
-	if err := h.store.Create(campaign); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to store campaign")
+	githubRepoID, err := h.github.RepositoryID(r.Context(), req.Repo)
+	if err != nil {
+		log.Printf("github repository id lookup failed for %s: %v", req.Repo, err)
+		writeError(w, http.StatusBadGateway, "failed to resolve repository metadata on GitHub")
 		return
 	}
-	if err := h.markWalletChallengeUsed(req.ChallengeID); err != nil {
-		if deleteErr := h.store.DeleteCampaign(campaignID); deleteErr != nil {
-			log.Printf("create campaign: rollback failed after challenge use error for %s: %v", campaignID, deleteErr)
+
+	campaignID, err := generateCampaignID()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate campaign id")
+		return
+	}
+
+	fundTx, err := h.solana.BuildFundTransaction(
+		r.Context(),
+		campaignID,
+		req.PoolAmount,
+		deadline.Unix(),
+		githubRepoID,
+		req.SponsorWallet,
+	)
+	if err != nil {
+		if errors.Is(err, solana.ErrNotConfigured) {
+			writeError(w, http.StatusServiceUnavailable, "campaign creation is disabled until Solana is configured")
+			return
 		}
+		log.Printf("solana build_create_campaign_tx failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to build create campaign transaction")
+		return
+	}
+
+	if err := h.markWalletChallengeUsed(req.ChallengeID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	txSig, campaignPDA, vaultPDA, err := h.solana.CreateCampaign(
-		r.Context(),
-		campaignID,
-		req.Repo,
-		req.PoolAmount,
-		deadline.Unix(),
-		req.SponsorWallet,
-	)
-	if err != nil {
-		if deleteErr := h.store.DeleteCampaign(campaignID); deleteErr != nil {
-			log.Printf("create campaign: rollback failed after on-chain create error for %s: %v", campaignID, deleteErr)
-		}
-		log.Printf("solana create_campaign failed: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to create campaign on-chain")
+	writeJSON(w, http.StatusOK, models.CreateCampaignResponse{
+		CampaignID:   campaignID,
+		CampaignPDA:  fundTx.CampaignPDA,
+		EscrowPDA:    fundTx.EscrowPDA,
+		VaultAddress: fundTx.VaultAddress,
+		Repo:         req.Repo,
+		PoolAmount:   req.PoolAmount,
+		Deadline:     deadline.Format(time.RFC3339),
+		UnsignedTx:   fundTx.Transaction,
+	})
+}
+
+func (h *Handlers) CreateCampaignConfirm(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if h.solana == nil || !h.solana.IsConfigured() {
+		writeError(w, http.StatusServiceUnavailable, "campaign creation is disabled until Solana is configured")
 		return
 	}
 
-	campaign.CampaignPDA = campaignPDA
-	campaign.VaultAddress = vaultPDA
-	campaign.TxSignature = txSig
-
-	if err := h.store.Update(campaign); err != nil {
-		log.Printf("WARNING: store update failed after on-chain campaign creation (campaign=%s, tx=%s): %v", campaign.CampaignID, txSig, err)
-		writeJSON(w, http.StatusAccepted, models.CreateCampaignResponse{
-			CampaignID:   campaign.CampaignID,
-			CampaignPDA:  campaign.CampaignPDA,
-			VaultAddress: campaign.VaultAddress,
-			Repo:         campaign.Repo,
-			PoolAmount:   campaign.PoolAmount,
-			Deadline:     campaign.Deadline.Format(time.RFC3339),
-			State:        campaign.State,
-			TxSignature:  txSig,
-		})
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req models.CreateCampaignConfirmRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+	if strings.TrimSpace(req.TxSignature) == "" {
+		writeError(w, http.StatusBadRequest, "tx_signature is required")
+		return
+	}
+
+	deadline, err := normalizeCreateChallengeRequest(&models.CreateCampaignChallengeRequest{
+		Repo:          req.Repo,
+		PoolAmount:    req.PoolAmount,
+		Deadline:      req.Deadline,
+		SponsorWallet: req.SponsorWallet,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.Deadline = deadline.Format(time.RFC3339)
+
+	onChainCampaign, err := h.solana.GetCampaign(r.Context(), id)
+	if err != nil {
+		log.Printf("create confirm: on-chain campaign lookup failed for %s: %v", id, err)
+		writeError(w, http.StatusConflict, "campaign transaction is not confirmed on-chain yet")
+		return
+	}
+
+	if onChainCampaign.Sponsor != req.SponsorWallet {
+		writeError(w, http.StatusBadRequest, "on-chain sponsor did not match the requested wallet")
+		return
+	}
+	if onChainCampaign.PoolAmount != req.PoolAmount {
+		writeError(w, http.StatusBadRequest, "on-chain reward amount did not match the requested pool")
+		return
+	}
+	if !onChainCampaign.Deadline.IsZero() && onChainCampaign.Deadline.UTC().Unix() != deadline.UTC().Unix() {
+		writeError(w, http.StatusBadRequest, "on-chain deadline did not match the requested deadline")
+		return
+	}
+
+	githubRepoID, err := h.github.RepositoryID(r.Context(), req.Repo)
+	if err != nil {
+		log.Printf("create confirm: github repository id lookup failed for %s: %v", req.Repo, err)
+		writeError(w, http.StatusBadGateway, "failed to resolve repository metadata on GitHub")
+		return
+	}
+	if onChainCampaign.GithubRepoID != 0 && onChainCampaign.GithubRepoID != githubRepoID {
+		writeError(w, http.StatusBadRequest, "on-chain repository metadata did not match the requested repository")
+		return
+	}
+
+	campaign := &models.Campaign{
+		CampaignID:          id,
+		CampaignPDA:         onChainCampaign.CampaignPDA,
+		EscrowPDA:           onChainCampaign.EscrowPDA,
+		VaultAddress:        onChainCampaign.VaultAddress,
+		GithubRepoID:        githubRepoID,
+		Repo:                req.Repo,
+		PoolAmount:          onChainCampaign.PoolAmount,
+		TotalRewardAmount:   onChainCampaign.TotalRewardAmount,
+		Deadline:            deadline,
+		DeadlineAt:          onChainCampaign.DeadlineAt,
+		ClaimDeadlineAt:     onChainCampaign.ClaimDeadlineAt,
+		State:               onChainCampaign.State,
+		Status:              onChainCampaign.Status,
+		Authority:           onChainCampaign.Authority,
+		Sponsor:             onChainCampaign.Sponsor,
+		OwnerGitHubUsername: "",
+		Allocations:         []models.Allocation{},
+		CreatedAt:           onChainCampaign.CreatedAt,
+		TxSignature:         req.TxSignature,
+	}
+
+	if existing, err := h.store.Get(id); err == nil && existing != nil {
+		campaign.Allocations = existing.Allocations
+		if err := h.store.Update(campaign); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to store campaign")
+			return
+		}
+	} else {
+		if err := h.store.Create(campaign); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to store campaign")
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusCreated, models.CreateCampaignResponse{
 		CampaignID:   campaign.CampaignID,
 		CampaignPDA:  campaign.CampaignPDA,
+		EscrowPDA:    campaign.EscrowPDA,
 		VaultAddress: campaign.VaultAddress,
 		Repo:         campaign.Repo,
 		PoolAmount:   campaign.PoolAmount,
 		Deadline:     campaign.Deadline.Format(time.RFC3339),
 		State:        campaign.State,
-		TxSignature:  txSig,
+		Status:       campaign.Status,
+		TxSignature:  campaign.TxSignature,
 	})
 }
 
@@ -379,7 +483,21 @@ func (h *Handlers) FundTx(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fundTx, err := h.solana.BuildFundTransaction(r.Context(), id, campaign.PoolAmount, req.SponsorWallet)
+	githubRepoID, err := h.github.RepositoryID(r.Context(), campaign.Repo)
+	if err != nil {
+		log.Printf("github repository id lookup failed for %s: %v", campaign.Repo, err)
+		writeError(w, http.StatusBadGateway, "failed to resolve repository metadata on GitHub")
+		return
+	}
+
+	fundTx, err := h.solana.BuildFundTransaction(
+		r.Context(),
+		id,
+		campaign.PoolAmount,
+		campaign.Deadline.Unix(),
+		githubRepoID,
+		req.SponsorWallet,
+	)
 	if err != nil {
 		if errors.Is(err, solana.ErrNotConfigured) {
 			writeError(w, http.StatusServiceUnavailable, "campaign funding is unavailable until Solana is configured")
@@ -508,13 +626,18 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 
 	solanaInputs := make([]solana.AllocationInput, len(result.allocations))
 	for i, a := range result.allocations {
+		if a.GithubUserID == 0 {
+			log.Printf("finalize: missing github_user_id for allocation %s in campaign %s", a.Contributor, campaign.CampaignID)
+			writeError(w, http.StatusInternalServerError, "failed to map contributor identities for on-chain finalization")
+			return
+		}
 		solanaInputs[i] = solana.AllocationInput{
-			Contributor: a.Contributor,
-			Percentage:  a.Percentage,
+			GithubUserID: a.GithubUserID,
+			Amount:       a.Amount,
 		}
 	}
 
-	txSig, err := h.solana.FinalizeCampaign(r.Context(), campaign.CampaignID, solanaInputs)
+	txSig, err := h.solana.FinalizeCampaign(r.Context(), campaign.CampaignID, campaign.Sponsor, solanaInputs)
 	if err != nil {
 		if errors.Is(err, solana.ErrNotConfigured) {
 			writeError(w, http.StatusServiceUnavailable, "campaign finalization is unavailable until Solana is configured")
@@ -683,33 +806,136 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "contributor not found in allocations")
 		return
 	}
+	if matchedAlloc.GithubUserID == 0 {
+		writeError(w, http.StatusInternalServerError, "failed to map contributor identities for on-chain claim")
+		return
+	}
 	if err := h.markWalletChallengeUsed(req.ChallengeID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	txSig, err := h.solana.ClaimAllocation(r.Context(), campaign.CampaignID, req.ContributorGithub, req.WalletAddress)
+	partialTx, err := h.solana.BuildClaimTransaction(
+		r.Context(),
+		campaign.CampaignID,
+		campaign.Sponsor,
+		matchedAlloc.GithubUserID,
+		req.WalletAddress,
+	)
 	if err != nil {
 		if errors.Is(err, solana.ErrNotConfigured) {
 			writeError(w, http.StatusServiceUnavailable, "claims are unavailable until Solana is configured")
 			return
 		}
-		log.Printf("solana claim failed: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to claim on-chain")
+		log.Printf("solana build_claim_tx failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to build claim transaction")
 		return
 	}
 
-	matchedAlloc.Claimed = true
-	matchedAlloc.ClaimantWallet = req.WalletAddress
-	campaign.TotalClaimed += matchedAlloc.Amount
+	writeJSON(w, http.StatusOK, models.BuildClaimTxResponse{
+		PartialTx: partialTx,
+	})
+}
+
+func (h *Handlers) ClaimPermit(w http.ResponseWriter, r *http.Request) {
+	h.Claim(w, r)
+}
+
+func (h *Handlers) ClaimConfirm(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if h.solana == nil || !h.solana.IsConfigured() {
+		writeError(w, http.StatusServiceUnavailable, "claims are unavailable until Solana is configured")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	val, _ := h.claimLocks.LoadOrStore(id, &sync.Mutex{})
+	mu := val.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
+
+	user, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	var req models.ClaimConfirmRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	campaign, err := h.loadCampaign(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "campaign not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	if err := validateClaimConfirmationInputs(user.GitHubUsername, campaign, req.ContributorGithub, req.WalletAddress); err != nil {
+		switch err.Error() {
+		case "campaign is not finalized":
+			writeError(w, http.StatusConflict, err.Error())
+		case "can only claim your own allocation":
+			writeError(w, http.StatusForbidden, err.Error())
+		case "contributor not found in allocations":
+			writeError(w, http.StatusNotFound, err.Error())
+		default:
+			writeError(w, http.StatusBadRequest, err.Error())
+		}
+		return
+	}
+
+	matchedAlloc := findAllocation(campaign, req.ContributorGithub)
+	if matchedAlloc == nil {
+		writeError(w, http.StatusNotFound, "contributor not found in allocations")
+		return
+	}
+	if matchedAlloc.GithubUserID == 0 {
+		writeError(w, http.StatusInternalServerError, "failed to map contributor identities for on-chain claim")
+		return
+	}
+
+	claimStatus, err := h.solana.GetClaimStatus(r.Context(), campaign.CampaignID, campaign.Sponsor, matchedAlloc.GithubUserID)
+	if err != nil {
+		if errors.Is(err, solana.ErrNotConfigured) {
+			writeError(w, http.StatusServiceUnavailable, "claims are unavailable until Solana is configured")
+			return
+		}
+		log.Printf("solana claim status lookup failed: %v", err)
+		writeError(w, http.StatusBadGateway, "failed to confirm on-chain claim")
+		return
+	}
+	if !claimStatus.Claimed {
+		writeError(w, http.StatusConflict, "claim is not confirmed on-chain yet")
+		return
+	}
+	if claimStatus.RecipientWallet != "" && claimStatus.RecipientWallet != req.WalletAddress {
+		writeError(w, http.StatusConflict, "claim was finalized to a different wallet")
+		return
+	}
+
+	if !matchedAlloc.Claimed {
+		matchedAlloc.Claimed = true
+		matchedAlloc.ClaimantWallet = req.WalletAddress
+	}
 
 	allClaimed := true
+	var totalClaimed uint64
 	for _, a := range campaign.Allocations {
+		if a.Claimed {
+			totalClaimed += a.Amount
+		}
 		if !a.Claimed {
 			allClaimed = false
-			break
 		}
 	}
+	campaign.TotalClaimed = totalClaimed
 	if allClaimed {
 		campaign.State = models.StateCompleted
 	}
@@ -723,31 +949,27 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err != nil {
-			log.Printf("WARNING: claim store update failed after on-chain claim (campaign=%s, tx=%s): %v", campaign.CampaignID, txSig, err)
-			explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
+			log.Printf("WARNING: claim store update failed after on-chain confirmation (campaign=%s): %v", campaign.CampaignID, err)
 			writeJSON(w, http.StatusAccepted, models.FinalizeResponse{
-				CampaignID:        campaign.CampaignID,
-				State:             campaign.State,
-				Allocations:       campaign.Allocations,
-				TxSignature:       txSig,
-				SolanaExplorerURL: explorerURL,
+				CampaignID:  campaign.CampaignID,
+				State:       campaign.State,
+				Allocations: campaign.Allocations,
+				TxSignature: req.TxSignature,
 			})
 			return
 		}
 	}
 
-	explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
-	writeJSON(w, http.StatusOK, models.FinalizeResponse{
-		CampaignID:        campaign.CampaignID,
-		State:             campaign.State,
-		Allocations:       campaign.Allocations,
-		TxSignature:       txSig,
-		SolanaExplorerURL: explorerURL,
-	})
-}
-
-func (h *Handlers) ClaimPermit(w http.ResponseWriter, r *http.Request) {
-	h.Claim(w, r)
+	response := models.FinalizeResponse{
+		CampaignID:  campaign.CampaignID,
+		State:       campaign.State,
+		Allocations: campaign.Allocations,
+		TxSignature: req.TxSignature,
+	}
+	if req.TxSignature != "" {
+		response.SolanaExplorerURL = fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", req.TxSignature)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *Handlers) GetClaims(w http.ResponseWriter, r *http.Request) {
@@ -920,17 +1142,69 @@ func mergeCampaignWithChainData(stored, onChain *models.Campaign) *models.Campai
 	}
 
 	merged := *stored
-	merged.CampaignPDA = onChain.CampaignPDA
-	merged.VaultAddress = onChain.VaultAddress
-	merged.Repo = onChain.Repo
-	merged.PoolAmount = onChain.PoolAmount
-	merged.TotalClaimed = onChain.TotalClaimed
-	merged.Deadline = onChain.Deadline
-	merged.State = onChain.State
-	merged.Authority = onChain.Authority
-	merged.Sponsor = onChain.Sponsor
-	merged.CreatedAt = onChain.CreatedAt
-	merged.FinalizedAt = onChain.FinalizedAt
+	if onChain.CampaignPDA != "" {
+		merged.CampaignPDA = onChain.CampaignPDA
+	}
+	if onChain.EscrowPDA != "" {
+		merged.EscrowPDA = onChain.EscrowPDA
+	}
+	if onChain.VaultAddress != "" {
+		merged.VaultAddress = onChain.VaultAddress
+	}
+	if onChain.Repo != "" {
+		merged.Repo = onChain.Repo
+	}
+	if onChain.PoolAmount != 0 {
+		merged.PoolAmount = onChain.PoolAmount
+	}
+	if onChain.TotalRewardAmount != 0 {
+		merged.TotalRewardAmount = onChain.TotalRewardAmount
+	}
+	if onChain.TotalClaimed != 0 {
+		merged.TotalClaimed = onChain.TotalClaimed
+	}
+	if !onChain.Deadline.IsZero() {
+		merged.Deadline = onChain.Deadline
+	}
+	if !onChain.DeadlineAt.IsZero() {
+		merged.DeadlineAt = onChain.DeadlineAt
+	}
+	if !onChain.ClaimDeadlineAt.IsZero() {
+		merged.ClaimDeadlineAt = onChain.ClaimDeadlineAt
+	}
+	if onChain.State != "" {
+		merged.State = onChain.State
+	}
+	if onChain.Status != "" {
+		merged.Status = onChain.Status
+	}
+	if onChain.Authority != "" {
+		merged.Authority = onChain.Authority
+	}
+	if onChain.Sponsor != "" {
+		merged.Sponsor = onChain.Sponsor
+	}
+	if !onChain.CreatedAt.IsZero() {
+		merged.CreatedAt = onChain.CreatedAt
+	}
+	if onChain.FinalizedAt != nil {
+		merged.FinalizedAt = onChain.FinalizedAt
+	}
+	if onChain.GithubRepoID != 0 {
+		merged.GithubRepoID = onChain.GithubRepoID
+	}
+	if onChain.AllocatedAmount != 0 {
+		merged.AllocatedAmount = onChain.AllocatedAmount
+	}
+	if onChain.ClaimedAmount != 0 {
+		merged.ClaimedAmount = onChain.ClaimedAmount
+	}
+	if onChain.AllocationsCount != 0 {
+		merged.AllocationsCount = onChain.AllocationsCount
+	}
+	if onChain.ClaimedCount != 0 {
+		merged.ClaimedCount = onChain.ClaimedCount
+	}
 	if onChain.TxSignature != "" {
 		merged.TxSignature = onChain.TxSignature
 	}

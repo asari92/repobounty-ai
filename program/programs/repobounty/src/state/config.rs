@@ -22,8 +22,7 @@ pub struct Config {
     /// Treasury wallet that receives service fees.
     pub treasury_wallet: Pubkey,
 
-    /// When true, most instructions are blocked.
-    /// `refund_unclaimed` is always allowed.
+    /// When true, state-changing instructions are blocked until the admin unpauses the program.
     pub paused: bool,
 
     /// PDA bump seed.

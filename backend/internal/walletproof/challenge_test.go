@@ -3,6 +3,7 @@ package walletproof
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,5 +61,21 @@ func TestVerifySignatureRejectsTamperedMessage(t *testing.T) {
 		signatureBase58,
 	); err == nil {
 		t.Fatal("VerifySignature succeeded for tampered message")
+	}
+}
+
+func TestBuildCreateCampaignMessageOmitsGitHubUsernameWhenEmpty(t *testing.T) {
+	message := BuildCreateCampaignMessage(CreateCampaignMessageInput{
+		ChallengeID:   "challenge-3",
+		SponsorWallet: "wallet",
+		Repo:          "owner/repo",
+		PoolAmount:    1_000_000_000,
+		Deadline:      time.Unix(1_700_000_000, 0).UTC(),
+		IssuedAt:      time.Unix(1_699_000_000, 0).UTC(),
+		ExpiresAt:     time.Unix(1_699_000_600, 0).UTC(),
+	})
+
+	if strings.Contains(message, "GitHub username:") {
+		t.Fatalf("expected no GitHub username line, got message:\n%s", message)
 	}
 }

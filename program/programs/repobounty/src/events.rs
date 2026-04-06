@@ -32,6 +32,7 @@ pub struct ClaimProcessed {
     pub github_user_id: u64,
     pub recipient_wallet: Pubkey,
     pub amount: u64,
+    pub payer_mode: u8,
 }
 
 #[event]

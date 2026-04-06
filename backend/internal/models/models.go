@@ -29,39 +29,39 @@ const (
 // During the migration, V2 fields will gradually replace V1 fields.
 type Campaign struct {
 	// --- V2 fields ---
-	CampaignPDA     string     `json:"campaign_pda"`
-	EscrowPDA       string     `json:"escrow_pda"`
-	GithubRepoID    uint64     `json:"github_repo_id"`
-	RepoOwner       string     `json:"repo_owner"`
-	RepoName        string     `json:"repo_name"`
-	RepoURL         string     `json:"repo_url"`
-	DeadlineAt      time.Time  `json:"deadline_at"`
-	ClaimDeadlineAt time.Time  `json:"claim_deadline_at"`
-	ServiceFee      uint64     `json:"service_fee"`
-	AllocatedAmount uint64     `json:"allocated_amount"`
-	ClaimedAmount   uint64     `json:"claimed_amount"`
-	AllocationsCount uint32    `json:"allocations_count"`
-	ClaimedCount    uint32     `json:"claimed_count"`
-	Status          string     `json:"status"`
-	ClosedAt        *time.Time `json:"closed_at,omitempty"`
-	CloseReason     string     `json:"close_reason,omitempty"`
+	CampaignPDA      string     `json:"campaign_pda"`
+	EscrowPDA        string     `json:"escrow_pda"`
+	GithubRepoID     uint64     `json:"github_repo_id"`
+	RepoOwner        string     `json:"repo_owner"`
+	RepoName         string     `json:"repo_name"`
+	RepoURL          string     `json:"repo_url"`
+	DeadlineAt       time.Time  `json:"deadline_at"`
+	ClaimDeadlineAt  time.Time  `json:"claim_deadline_at"`
+	ServiceFee       uint64     `json:"service_fee"`
+	AllocatedAmount  uint64     `json:"allocated_amount"`
+	ClaimedAmount    uint64     `json:"claimed_amount"`
+	AllocationsCount uint32     `json:"allocations_count"`
+	ClaimedCount     uint32     `json:"claimed_count"`
+	Status           string     `json:"status"`
+	ClosedAt         *time.Time `json:"closed_at,omitempty"`
+	CloseReason      string     `json:"close_reason,omitempty"`
 
 	// --- V1 compat fields (used by store, handlers, solana client) ---
-	CampaignID          string       `json:"campaign_id"`
-	Repo                string       `json:"repo"`
-	PoolAmount          uint64       `json:"pool_amount"`
-	TotalRewardAmount   uint64       `json:"total_reward_amount"`
-	VaultAddress        string       `json:"vault_address"`
+	CampaignID          string        `json:"campaign_id"`
+	Repo                string        `json:"repo"`
+	PoolAmount          uint64        `json:"pool_amount"`
+	TotalRewardAmount   uint64        `json:"total_reward_amount"`
+	VaultAddress        string        `json:"vault_address"`
 	State               CampaignState `json:"state"`
-	Authority           string       `json:"authority"`
-	Sponsor             string       `json:"sponsor"`
-	Deadline            time.Time    `json:"deadline"`
-	TotalClaimed        uint64       `json:"total_claimed"`
-	OwnerGitHubUsername string       `json:"owner_github_username"`
-	Allocations         []Allocation `json:"allocations"`
-	CreatedAt           time.Time    `json:"created_at"`
-	FinalizedAt         *time.Time   `json:"finalized_at,omitempty"`
-	TxSignature         string       `json:"tx_signature,omitempty"`
+	Authority           string        `json:"authority"`
+	Sponsor             string        `json:"sponsor"`
+	Deadline            time.Time     `json:"deadline"`
+	TotalClaimed        uint64        `json:"total_claimed"`
+	OwnerGitHubUsername string        `json:"owner_github_username"`
+	Allocations         []Allocation  `json:"allocations"`
+	CreatedAt           time.Time     `json:"created_at"`
+	FinalizedAt         *time.Time    `json:"finalized_at,omitempty"`
+	TxSignature         string        `json:"tx_signature,omitempty"`
 }
 
 // Allocation holds both V2 and V1 fields.
@@ -114,6 +114,7 @@ type User struct {
 }
 
 type Contributor struct {
+	GithubUserID uint64 `json:"github_user_id,omitempty"`
 	Username     string `json:"username"`
 	Commits      int    `json:"commits"`
 	PullRequests int    `json:"pull_requests"`
@@ -139,18 +140,26 @@ type CreateCampaignRequest struct {
 }
 
 type CreateCampaignResponse struct {
-	CampaignID   string `json:"campaign_id"`
-	CampaignPDA  string `json:"campaign_pda"`
-	EscrowPDA    string `json:"escrow_pda,omitempty"`
-	VaultAddress string `json:"vault_address,omitempty"`
-	Repo         string `json:"repo"`
-	PoolAmount   uint64 `json:"pool_amount"`
-	Deadline     string `json:"deadline"`
-	State        CampaignState `json:"state"`
-	Status       string `json:"status,omitempty"`
-	ServiceFee   uint64 `json:"service_fee,omitempty"`
-	TxSignature  string `json:"tx_signature,omitempty"`
-	UnsignedTx   string `json:"unsigned_tx,omitempty"`
+	CampaignID   string        `json:"campaign_id"`
+	CampaignPDA  string        `json:"campaign_pda"`
+	EscrowPDA    string        `json:"escrow_pda,omitempty"`
+	VaultAddress string        `json:"vault_address,omitempty"`
+	Repo         string        `json:"repo"`
+	PoolAmount   uint64        `json:"pool_amount"`
+	Deadline     string        `json:"deadline"`
+	State        CampaignState `json:"state,omitempty"`
+	Status       string        `json:"status,omitempty"`
+	ServiceFee   uint64        `json:"service_fee,omitempty"`
+	TxSignature  string        `json:"tx_signature,omitempty"`
+	UnsignedTx   string        `json:"unsigned_tx,omitempty"`
+}
+
+type CreateCampaignConfirmRequest struct {
+	Repo          string `json:"repo"`
+	PoolAmount    uint64 `json:"pool_amount"`
+	Deadline      string `json:"deadline"`
+	SponsorWallet string `json:"sponsor_wallet"`
+	TxSignature   string `json:"tx_signature"`
 }
 
 type FinalizePreviewResponse struct {
@@ -164,20 +173,26 @@ type FinalizePreviewResponse struct {
 }
 
 type FinalizeResponse struct {
-	CampaignID        string         `json:"campaign_id"`
-	State             CampaignState  `json:"state,omitempty"`
-	Status            string         `json:"status,omitempty"`
-	Allocations       interface{}    `json:"allocations"`
-	TxSignature       string         `json:"tx_signature,omitempty"`
-	TxSignatures      []string       `json:"tx_signatures,omitempty"`
-	TotalBatches      int            `json:"total_batches,omitempty"`
-	SolanaExplorerURL string         `json:"solana_explorer_url,omitempty"`
-	AllocationMode    AllocationMode `json:"allocation_mode,omitempty"`
+	CampaignID        string           `json:"campaign_id"`
+	State             CampaignState    `json:"state,omitempty"`
+	Status            string           `json:"status,omitempty"`
+	Allocations       interface{}      `json:"allocations"`
+	TxSignature       string           `json:"tx_signature,omitempty"`
+	TxSignatures      []string         `json:"tx_signatures,omitempty"`
+	TotalBatches      int              `json:"total_batches,omitempty"`
+	SolanaExplorerURL string           `json:"solana_explorer_url,omitempty"`
+	AllocationMode    AllocationMode   `json:"allocation_mode,omitempty"`
 	Snapshot          *SnapshotSummary `json:"snapshot,omitempty"`
 }
 
 type BuildClaimTxResponse struct {
 	PartialTx string `json:"partial_tx"`
+}
+
+type ClaimConfirmRequest struct {
+	ContributorGithub string `json:"contributor_github"`
+	WalletAddress     string `json:"wallet_address"`
+	TxSignature       string `json:"tx_signature,omitempty"`
 }
 
 type ErrorResponse struct {

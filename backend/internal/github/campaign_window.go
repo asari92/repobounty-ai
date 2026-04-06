@@ -22,16 +22,36 @@ type ContributionWindowData struct {
 	ContributorNotes   string
 }
 
-// FetchContributionWindowData approximates campaign-scoped contributions from merged PRs whose
-// merged_at timestamps fall inside the campaign window. GitHub's contributor summary endpoint is
-// repository-lifetime scoped, so direct pushes and review-only activity outside merged PRs are not
-// captured in this MVP snapshot.
+// FetchContributionWindowData returns contributor data for allocation.
+// In MVP/demo mode we analyze the full repository history.
+// In production we fall back to campaign-window-only analysis.
 func (c *Client) FetchContributionWindowData(
 	ctx context.Context,
 	repo string,
 	windowStart time.Time,
 	windowEnd time.Time,
 ) (*ContributionWindowData, error) {
+	if !c.isProduction {
+		contributors, err := c.FetchContributors(ctx, repo)
+		if err != nil {
+			return nil, err
+		}
+
+		contributorPRDiffs, err := c.FetchContributorsPRDiffs(ctx, repo, 0)
+		if err != nil {
+			return nil, err
+		}
+
+		return &ContributionWindowData{
+			Contributors:       contributors,
+			ContributorPRDiffs: contributorPRDiffs,
+			WindowStart:        windowStart.UTC(),
+			WindowEnd:          windowEnd.UTC(),
+			ContributorSource:  "repository_history_mvp",
+			ContributorNotes:   "MVP/demo mode analyzes the full available repository history. A future production flow will restrict analysis to activity inside the campaign window.",
+		}, nil
+	}
+
 	parts := strings.SplitN(repo, "/", 2)
 	if len(parts) != 2 {
 		return nil, fmt.Errorf("invalid repo format, expected owner/repo: %s", repo)

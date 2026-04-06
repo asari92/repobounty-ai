@@ -60,7 +60,7 @@ func main() {
 	ghClient := github.NewClientWithEnv(cfg.GitHubToken, env == "production")
 	aiAllocator := ai.NewAllocator(cfg.OpenRouterAPIKey, cfg.Model)
 
-	solClient, err := solana.NewClient(cfg.SolanaRPCURL, cfg.SolanaPrivateKey, cfg.ProgramID)
+	solClient, err := solana.NewClient(cfg.SolanaRPCURL, cfg.ServicePrivateKey, cfg.ProgramID)
 	if err != nil {
 		logger.Fatal("failed to init solana client", zap.Error(err))
 	}

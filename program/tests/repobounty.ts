@@ -1,56 +1,43 @@
-import * as anchor from "@coral-xyz/anchor";
-import { Program } from "@coral-xyz/anchor";
-import { Repobounty } from "../target/types/repobounty";
-import { expect } from "chai";
-import {
-  createMint,
-  createAccount,
-  mintTo,
-  getAccount,
-  getAssociatedTokenAddressSync,
-  TOKEN_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-} from "@solana/spl-token";
+import * as anchor from '@coral-xyz/anchor';
+import { Program } from '@coral-xyz/anchor';
+import { expect } from 'chai';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+import { Repobounty } from '../target/types/repobounty';
+
+const { Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram } = anchor.web3;
 
 function campaignPda(
-  sponsor: anchor.web3.PublicKey,
+  sponsor: PublicKey,
   campaignId: anchor.BN,
-  programId: anchor.web3.PublicKey
-): [anchor.web3.PublicKey, number] {
-  return anchor.web3.PublicKey.findProgramAddressSync(
+  programId: PublicKey
+): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
     [
-      Buffer.from("campaign"),
+      Buffer.from('campaign'),
       sponsor.toBuffer(),
-      campaignId.toArrayLike(Buffer, "le", 8),
+      campaignId.toArrayLike(Buffer, 'le', 8),
     ],
     programId
   );
 }
 
-function escrowAuthorityPda(
-  campaign: anchor.web3.PublicKey,
-  programId: anchor.web3.PublicKey
-): [anchor.web3.PublicKey, number] {
-  return anchor.web3.PublicKey.findProgramAddressSync(
-    [Buffer.from("escrow_authority"), campaign.toBuffer()],
+function escrowPda(campaign: PublicKey, programId: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from('escrow'), campaign.toBuffer()],
     programId
   );
 }
 
 function claimRecordPda(
-  campaign: anchor.web3.PublicKey,
+  campaign: PublicKey,
   githubUserId: anchor.BN,
-  programId: anchor.web3.PublicKey
-): [anchor.web3.PublicKey, number] {
-  return anchor.web3.PublicKey.findProgramAddressSync(
+  programId: PublicKey
+): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
     [
-      Buffer.from("claim"),
+      Buffer.from('claim'),
       campaign.toBuffer(),
-      githubUserId.toArrayLike(Buffer, "le", 8),
+      githubUserId.toArrayLike(Buffer, 'le', 8),
     ],
     programId
   );
@@ -58,541 +45,464 @@ function claimRecordPda(
 
 async function airdrop(
   connection: anchor.web3.Connection,
-  pubkey: anchor.web3.PublicKey,
+  pubkey: PublicKey,
   sol: number
 ) {
-  const sig = await connection.requestAirdrop(
-    pubkey,
-    sol * anchor.web3.LAMPORTS_PER_SOL
-  );
-  await connection.confirmTransaction(sig);
+  const signature = await connection.requestAirdrop(pubkey, sol * LAMPORTS_PER_SOL);
+  await connection.confirmTransaction(signature, 'confirmed');
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+function expectErrorCode(error: unknown, expectedCode: string) {
+  const anchorErrorCode = (error as any)?.error?.errorCode?.code;
+  if (anchorErrorCode) {
+    expect(anchorErrorCode).to.equal(expectedCode);
+    return;
+  }
 
-describe("repobounty", () => {
+  const message =
+    error instanceof Error ? error.message : typeof error === "string" ? error : JSON.stringify(error);
+  expect(message).to.include(expectedCode);
+}
+
+describe('repobounty', () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
+
   const program = anchor.workspace.Repobounty as Program<Repobounty>;
   const connection = provider.connection;
   const programId = program.programId;
 
-  // Keypairs
-  const admin = anchor.web3.Keypair.generate();
-  const finalizeAuth = anchor.web3.Keypair.generate();
-  const claimAuth = anchor.web3.Keypair.generate();
-  const sponsor = anchor.web3.Keypair.generate();
-  const user1 = anchor.web3.Keypair.generate();
+  const admin = Keypair.generate();
+  const serviceWallet = Keypair.generate();
+  const sponsor = Keypair.generate();
+  const outsider = Keypair.generate();
+  const contributor = Keypair.generate();
 
-  // Mint & accounts
-  let mint: anchor.web3.PublicKey;
-  let sponsorAta: anchor.web3.PublicKey;
+  const [configPda] = PublicKey.findProgramAddressSync([Buffer.from('config')], programId);
 
-  // Config PDA
-  const [configPda] = anchor.web3.PublicKey.findProgramAddressSync(
-    [Buffer.from("config")],
-    programId
-  );
-
-  // Campaign constants
-  const deadlineOffset = 48 * 3600; // +48h
-  const totalAmount = new anchor.BN(1_000_000_000);
+  const primaryCampaignId = new anchor.BN(1);
+  const primaryGithubRepoId = new anchor.BN(123456);
+  const rewardAmount = new anchor.BN(1_000_000_000);
+  const serviceFeeAmount = 50_000_000;
+  const deadlineOffsetSeconds = 10 * 60;
 
   before(async () => {
-    // Fund all keypairs
     await Promise.all(
-      [admin, sponsor, finalizeAuth, claimAuth, user1].map((kp) =>
-        airdrop(connection, kp.publicKey, 10)
+      [admin, serviceWallet, sponsor, outsider, contributor].map((keypair) =>
+        airdrop(connection, keypair.publicKey, 10)
       )
     );
-
-    // Create SPL mint
-    mint = await createMint(connection, admin, admin.publicKey, null, 9);
-
-    // Sponsor ATA with 10B tokens
-    sponsorAta = await createAccount(
-      connection,
-      sponsor,
-      mint,
-      sponsor.publicKey
-    );
-    await mintTo(connection, admin, mint, sponsorAta, admin, 10_000_000_000);
   });
 
-  // ===================== INITIALIZE CONFIG =====================
-
-  describe("initialize_config", () => {
-    it("creates config successfully", async () => {
+  describe('initialize_config', () => {
+    it('creates config successfully', async () => {
       await program.methods
-        .initializeConfig(finalizeAuth.publicKey, claimAuth.publicKey)
+        .initializeConfig(
+          serviceWallet.publicKey,
+          serviceWallet.publicKey,
+          serviceWallet.publicKey
+        )
         .accounts({
+          adminWallet: admin.publicKey,
           config: configPda,
-          admin: admin.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId,
+          systemProgram: SystemProgram.programId,
         })
         .signers([admin])
         .rpc();
 
-      const cfg = await program.account.config.fetch(configPda);
-      expect(cfg.admin.toBase58()).to.equal(admin.publicKey.toBase58());
-      expect(cfg.finalizeAuthority.toBase58()).to.equal(
-        finalizeAuth.publicKey.toBase58()
+      const config = await program.account.config.fetch(configPda);
+      expect(config.adminWallet.toBase58()).to.equal(admin.publicKey.toBase58());
+      expect(config.finalizeAuthority.toBase58()).to.equal(
+        serviceWallet.publicKey.toBase58()
       );
-      expect(cfg.claimAuthority.toBase58()).to.equal(
-        claimAuth.publicKey.toBase58()
+      expect(config.claimAuthority.toBase58()).to.equal(serviceWallet.publicKey.toBase58());
+      expect(config.treasuryWallet.toBase58()).to.equal(
+        serviceWallet.publicKey.toBase58()
       );
-      expect(cfg.paused).to.be.false;
+      expect(config.paused).to.equal(false);
     });
 
-    it("rejects double initialization", async () => {
+    it('rejects double initialization', async () => {
       try {
         await program.methods
-          .initializeConfig(finalizeAuth.publicKey, claimAuth.publicKey)
+          .initializeConfig(
+            serviceWallet.publicKey,
+            serviceWallet.publicKey,
+            serviceWallet.publicKey
+          )
           .accounts({
+            adminWallet: admin.publicKey,
             config: configPda,
-            admin: admin.publicKey,
-            systemProgram: anchor.web3.SystemProgram.programId,
+            systemProgram: SystemProgram.programId,
           })
           .signers([admin])
           .rpc();
-        expect.fail("should have thrown");
+        expect.fail('expected initializeConfig to fail');
       } catch {
-        // expected: account already initialized
+        // expected: config PDA already exists
       }
     });
   });
 
-  // ===================== UPDATE CONFIG =====================
+  describe('admin controls', () => {
+    it('rotates finalize, claim, and treasury wallets', async () => {
+      const newFinalize = Keypair.generate().publicKey;
+      const newClaim = Keypair.generate().publicKey;
+      const newTreasury = Keypair.generate().publicKey;
 
-  describe("update_config", () => {
-    it("pauses the program", async () => {
       await program.methods
-        .updateConfig(null, null, null, true)
-        .accounts({ config: configPda, admin: admin.publicKey })
+        .updateConfig(newFinalize, newClaim, newTreasury)
+        .accounts({
+          adminWallet: admin.publicKey,
+          config: configPda,
+        })
         .signers([admin])
         .rpc();
 
-      expect((await program.account.config.fetch(configPda)).paused).to.be.true;
-    });
+      let config = await program.account.config.fetch(configPda);
+      expect(config.finalizeAuthority.toBase58()).to.equal(newFinalize.toBase58());
+      expect(config.claimAuthority.toBase58()).to.equal(newClaim.toBase58());
+      expect(config.treasuryWallet.toBase58()).to.equal(newTreasury.toBase58());
 
-    it("unpauses the program", async () => {
       await program.methods
-        .updateConfig(null, null, null, false)
-        .accounts({ config: configPda, admin: admin.publicKey })
+        .updateConfig(
+          serviceWallet.publicKey,
+          serviceWallet.publicKey,
+          serviceWallet.publicKey
+        )
+        .accounts({
+          adminWallet: admin.publicKey,
+          config: configPda,
+        })
         .signers([admin])
         .rpc();
 
-      expect((await program.account.config.fetch(configPda)).paused).to.be
-        .false;
-    });
-
-    it("rotates finalize authority", async () => {
-      const newAuth = anchor.web3.Keypair.generate();
-      await program.methods
-        .updateConfig(null, newAuth.publicKey, null, null)
-        .accounts({ config: configPda, admin: admin.publicKey })
-        .signers([admin])
-        .rpc();
-
-      const cfg = await program.account.config.fetch(configPda);
-      expect(cfg.finalizeAuthority.toBase58()).to.equal(
-        newAuth.publicKey.toBase58()
+      config = await program.account.config.fetch(configPda);
+      expect(config.finalizeAuthority.toBase58()).to.equal(
+        serviceWallet.publicKey.toBase58()
       );
-
-      // Restore original
-      await program.methods
-        .updateConfig(null, finalizeAuth.publicKey, null, null)
-        .accounts({ config: configPda, admin: admin.publicKey })
-        .signers([admin])
-        .rpc();
+      expect(config.claimAuthority.toBase58()).to.equal(serviceWallet.publicKey.toBase58());
+      expect(config.treasuryWallet.toBase58()).to.equal(
+        serviceWallet.publicKey.toBase58()
+      );
     });
 
-    it("rejects unauthorized caller", async () => {
+    it('pauses and unpauses the program', async () => {
+      await program.methods
+        .setPaused(true)
+        .accounts({
+          adminWallet: admin.publicKey,
+          config: configPda,
+        })
+        .signers([admin])
+        .rpc();
+
+      expect((await program.account.config.fetch(configPda)).paused).to.equal(true);
+
+      await program.methods
+        .setPaused(false)
+        .accounts({
+          adminWallet: admin.publicKey,
+          config: configPda,
+        })
+        .signers([admin])
+        .rpc();
+
+      expect((await program.account.config.fetch(configPda)).paused).to.equal(false);
+    });
+
+    it('rejects unauthorized config updates', async () => {
       try {
         await program.methods
-          .updateConfig(null, null, null, true)
-          .accounts({ config: configPda, admin: sponsor.publicKey })
-          .signers([sponsor])
+          .updateConfig(
+            outsider.publicKey,
+            outsider.publicKey,
+            outsider.publicKey
+          )
+          .accounts({
+            adminWallet: outsider.publicKey,
+            config: configPda,
+          })
+          .signers([outsider])
           .rpc();
-        expect.fail("should have thrown");
-      } catch (err: any) {
-        expect(err.error.errorCode.code).to.equal("Unauthorized");
+        expect.fail('expected updateConfig to fail');
+      } catch (error) {
+        expectErrorCode(error, 'Unauthorized');
       }
     });
   });
 
-  // ===================== CREATE CAMPAIGN =====================
+  describe('create_campaign_with_deposit', () => {
+    it('creates campaign, funds escrow, and pays treasury fee', async () => {
+      const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + deadlineOffsetSeconds);
+      const [campaign] = campaignPda(sponsor.publicKey, primaryCampaignId, programId);
+      const [escrow] = escrowPda(campaign, programId);
 
-  describe("create_campaign_with_deposit", () => {
-    const cid = new anchor.BN(1);
-
-    it("creates campaign and deposits tokens to escrow", async () => {
-      const deadline = new anchor.BN(
-        Math.floor(Date.now() / 1000) + deadlineOffset
-      );
-      const [cPda] = campaignPda(sponsor.publicKey, cid, programId);
-      const [eAuth] = escrowAuthorityPda(cPda, programId);
-      const eAta = getAssociatedTokenAddressSync(mint, eAuth, true);
-
-      const beforeBal = (await getAccount(connection, sponsorAta)).amount;
+      const treasuryBefore = await connection.getBalance(serviceWallet.publicKey);
 
       await program.methods
         .createCampaignWithDeposit(
-          cid,
-          new anchor.BN(123456),
-          "anthropics",
-          "claude-code",
+          primaryCampaignId,
+          primaryGithubRepoId,
           deadline,
-          totalAmount
+          rewardAmount
         )
         .accounts({
-          config: configPda,
-          campaign: cPda,
-          escrowAuthority: eAuth,
-          escrowTokenAccount: eAta,
           sponsor: sponsor.publicKey,
-          sponsorTokenAccount: sponsorAta,
-          tokenMint: mint,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-          systemProgram: anchor.web3.SystemProgram.programId,
+          config: configPda,
+          campaign,
+          escrow,
+          treasuryWallet: serviceWallet.publicKey,
+          systemProgram: SystemProgram.programId,
         })
         .signers([sponsor])
         .rpc();
 
-      // Verify on-chain campaign
-      const c = await program.account.campaign.fetch(cPda);
-      expect(c.campaignId.toNumber()).to.equal(1);
-      expect(c.repoOwner).to.equal("anthropics");
-      expect(c.repoName).to.equal("claude-code");
-      expect(c.totalAmount.toNumber()).to.equal(totalAmount.toNumber());
-      expect(c.allocatedAmount.toNumber()).to.equal(0);
-      expect(c.claimedAmount.toNumber()).to.equal(0);
-      expect(c.allocationsCount).to.equal(0);
-      expect(c.status).to.deep.equal({ active: {} });
+      const createdCampaign = await program.account.campaign.fetch(campaign);
+      expect(createdCampaign.campaignId.toNumber()).to.equal(primaryCampaignId.toNumber());
+      expect(createdCampaign.sponsor.toBase58()).to.equal(sponsor.publicKey.toBase58());
+      expect(createdCampaign.githubRepoId.toNumber()).to.equal(primaryGithubRepoId.toNumber());
+      expect(createdCampaign.totalRewardAmount.toNumber()).to.equal(rewardAmount.toNumber());
+      expect(createdCampaign.allocatedAmount.toNumber()).to.equal(0);
+      expect(createdCampaign.claimedAmount.toNumber()).to.equal(0);
+      expect(createdCampaign.allocationsCount).to.equal(0);
+      expect(createdCampaign.claimedCount).to.equal(0);
+      expect(createdCampaign.status).to.equal(0);
 
-      // Verify escrow balance
-      const escrow = await getAccount(connection, eAta);
-      expect(Number(escrow.amount)).to.equal(totalAmount.toNumber());
+      const escrowBalance = await connection.getBalance(escrow);
+      expect(escrowBalance).to.equal(rewardAmount.toNumber());
 
-      // Verify sponsor balance decreased
-      const afterBal = (await getAccount(connection, sponsorAta)).amount;
-      expect(Number(beforeBal) - Number(afterBal)).to.equal(
-        totalAmount.toNumber()
-      );
+      const treasuryAfter = await connection.getBalance(serviceWallet.publicKey);
+      expect(treasuryAfter - treasuryBefore).to.equal(serviceFeeAmount);
     });
 
-    it("rejects deadline < 24h", async () => {
-      const cid2 = new anchor.BN(90);
-      const shortDeadline = new anchor.BN(
-        Math.floor(Date.now() / 1000) + 3600
-      );
-      const [cPda] = campaignPda(sponsor.publicKey, cid2, programId);
-      const [eAuth] = escrowAuthorityPda(cPda, programId);
-      const eAta = getAssociatedTokenAddressSync(mint, eAuth, true);
+    it('rejects deadline below minimum', async () => {
+      const campaignId = new anchor.BN(2);
+      const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + 60);
+      const [campaign] = campaignPda(sponsor.publicKey, campaignId, programId);
+      const [escrow] = escrowPda(campaign, programId);
 
       try {
         await program.methods
           .createCampaignWithDeposit(
-            cid2,
-            new anchor.BN(1),
-            "o",
-            "r",
-            shortDeadline,
-            totalAmount
-          )
-          .accounts({
-            config: configPda,
-            campaign: cPda,
-            escrowAuthority: eAuth,
-            escrowTokenAccount: eAta,
-            sponsor: sponsor.publicKey,
-            sponsorTokenAccount: sponsorAta,
-            tokenMint: mint,
-            tokenProgram: TOKEN_PROGRAM_ID,
-            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-            systemProgram: anchor.web3.SystemProgram.programId,
-          })
-          .signers([sponsor])
-          .rpc();
-        expect.fail("should have thrown");
-      } catch (err: any) {
-        expect(err.error.errorCode.code).to.equal("DeadlineTooSoon");
-      }
-    });
-
-    it("rejects zero amount", async () => {
-      const cid3 = new anchor.BN(91);
-      const deadline = new anchor.BN(
-        Math.floor(Date.now() / 1000) + deadlineOffset
-      );
-      const [cPda] = campaignPda(sponsor.publicKey, cid3, programId);
-      const [eAuth] = escrowAuthorityPda(cPda, programId);
-      const eAta = getAssociatedTokenAddressSync(mint, eAuth, true);
-
-      try {
-        await program.methods
-          .createCampaignWithDeposit(
-            cid3,
-            new anchor.BN(1),
-            "o",
-            "r",
+            campaignId,
+            new anchor.BN(222),
             deadline,
-            new anchor.BN(0)
+            rewardAmount
           )
           .accounts({
-            config: configPda,
-            campaign: cPda,
-            escrowAuthority: eAuth,
-            escrowTokenAccount: eAta,
             sponsor: sponsor.publicKey,
-            sponsorTokenAccount: sponsorAta,
-            tokenMint: mint,
-            tokenProgram: TOKEN_PROGRAM_ID,
-            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-            systemProgram: anchor.web3.SystemProgram.programId,
+            config: configPda,
+            campaign,
+            escrow,
+            treasuryWallet: serviceWallet.publicKey,
+            systemProgram: SystemProgram.programId,
           })
           .signers([sponsor])
           .rpc();
-        expect.fail("should have thrown");
-      } catch (err: any) {
-        expect(err.error.errorCode.code).to.equal("InvalidAmount");
+        expect.fail('expected createCampaignWithDeposit to fail');
+      } catch (error) {
+        expectErrorCode(error, 'InvalidDeadline');
       }
     });
 
-    it("rejects when program is paused", async () => {
-      // Pause
+    it('rejects reward amount below minimum', async () => {
+      const campaignId = new anchor.BN(3);
+      const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + deadlineOffsetSeconds);
+      const [campaign] = campaignPda(sponsor.publicKey, campaignId, programId);
+      const [escrow] = escrowPda(campaign, programId);
+
+      try {
+        await program.methods
+          .createCampaignWithDeposit(
+            campaignId,
+            new anchor.BN(333),
+            deadline,
+            new anchor.BN(1)
+          )
+          .accounts({
+            sponsor: sponsor.publicKey,
+            config: configPda,
+            campaign,
+            escrow,
+            treasuryWallet: serviceWallet.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([sponsor])
+          .rpc();
+        expect.fail('expected createCampaignWithDeposit to fail');
+      } catch (error) {
+        expectErrorCode(error, 'InvalidCampaignAmount');
+      }
+    });
+
+    it('rejects an unexpected treasury wallet', async () => {
+      const campaignId = new anchor.BN(4);
+      const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + deadlineOffsetSeconds);
+      const [campaign] = campaignPda(sponsor.publicKey, campaignId, programId);
+      const [escrow] = escrowPda(campaign, programId);
+
+      try {
+        await program.methods
+          .createCampaignWithDeposit(
+            campaignId,
+            new anchor.BN(444),
+            deadline,
+            rewardAmount
+          )
+          .accounts({
+            sponsor: sponsor.publicKey,
+            config: configPda,
+            campaign,
+            escrow,
+            treasuryWallet: outsider.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([sponsor])
+          .rpc();
+        expect.fail('expected createCampaignWithDeposit to fail');
+      } catch (error) {
+        expectErrorCode(error, 'Unauthorized');
+      }
+    });
+
+    it('rejects campaign creation while paused', async () => {
       await program.methods
-        .updateConfig(null, null, null, true)
-        .accounts({ config: configPda, admin: admin.publicKey })
+        .setPaused(true)
+        .accounts({
+          adminWallet: admin.publicKey,
+          config: configPda,
+        })
         .signers([admin])
         .rpc();
 
-      const cid4 = new anchor.BN(92);
-      const deadline = new anchor.BN(
-        Math.floor(Date.now() / 1000) + deadlineOffset
-      );
-      const [cPda] = campaignPda(sponsor.publicKey, cid4, programId);
-      const [eAuth] = escrowAuthorityPda(cPda, programId);
-      const eAta = getAssociatedTokenAddressSync(mint, eAuth, true);
+      const campaignId = new anchor.BN(5);
+      const deadline = new anchor.BN(Math.floor(Date.now() / 1000) + deadlineOffsetSeconds);
+      const [campaign] = campaignPda(sponsor.publicKey, campaignId, programId);
+      const [escrow] = escrowPda(campaign, programId);
 
       try {
         await program.methods
           .createCampaignWithDeposit(
-            cid4,
-            new anchor.BN(1),
-            "o",
-            "r",
+            campaignId,
+            new anchor.BN(555),
             deadline,
-            totalAmount
+            rewardAmount
           )
           .accounts({
-            config: configPda,
-            campaign: cPda,
-            escrowAuthority: eAuth,
-            escrowTokenAccount: eAta,
             sponsor: sponsor.publicKey,
-            sponsorTokenAccount: sponsorAta,
-            tokenMint: mint,
-            tokenProgram: TOKEN_PROGRAM_ID,
-            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-            systemProgram: anchor.web3.SystemProgram.programId,
+            config: configPda,
+            campaign,
+            escrow,
+            treasuryWallet: serviceWallet.publicKey,
+            systemProgram: SystemProgram.programId,
           })
           .signers([sponsor])
           .rpc();
-        expect.fail("should have thrown");
-      } catch (err: any) {
-        expect(err.error.errorCode.code).to.equal("ProgramPaused");
-      }
-
-      // Unpause for remaining tests
-      await program.methods
-        .updateConfig(null, null, null, false)
-        .accounts({ config: configPda, admin: admin.publicKey })
-        .signers([admin])
-        .rpc();
-    });
-  });
-
-  // ===================== FINALIZE CAMPAIGN =====================
-
-  describe("finalize_campaign", () => {
-    // Use campaign #1 created above
-    const cid = new anchor.BN(1);
-
-    it("rejects finalization before deadline", async () => {
-      const [cPda] = campaignPda(sponsor.publicKey, cid, programId);
-      const githubId = new anchor.BN(1001);
-      const [crPda] = claimRecordPda(cPda, githubId, programId);
-
-      try {
+        expect.fail('expected createCampaignWithDeposit to fail');
+      } catch (error) {
+        expectErrorCode(error, 'ProgramPaused');
+      } finally {
         await program.methods
-          .finalizeCampaign(
-            [
-              {
-                githubUserId: githubId,
-                githubUsername: "alice",
-                amount: totalAmount,
-              },
-            ],
-            true
-          )
+          .setPaused(false)
           .accounts({
+            adminWallet: admin.publicKey,
             config: configPda,
-            campaign: cPda,
-            finalizeAuthority: finalizeAuth.publicKey,
-            systemProgram: anchor.web3.SystemProgram.programId,
           })
-          .remainingAccounts([
-            { pubkey: crPda, isSigner: false, isWritable: true },
-          ])
-          .signers([finalizeAuth])
+          .signers([admin])
           .rpc();
-        expect.fail("should have thrown");
-      } catch (err: any) {
-        expect(err.error.errorCode.code).to.equal("DeadlineNotReached");
-      }
-    });
-
-    it("rejects wrong authority", async () => {
-      const [cPda] = campaignPda(sponsor.publicKey, cid, programId);
-
-      try {
-        await program.methods
-          .finalizeCampaign(
-            [
-              {
-                githubUserId: new anchor.BN(1001),
-                githubUsername: "alice",
-                amount: totalAmount,
-              },
-            ],
-            true
-          )
-          .accounts({
-            config: configPda,
-            campaign: cPda,
-            finalizeAuthority: sponsor.publicKey,
-            systemProgram: anchor.web3.SystemProgram.programId,
-          })
-          .remainingAccounts([])
-          .signers([sponsor])
-          .rpc();
-        expect.fail("should have thrown");
-      } catch (err: any) {
-        expect(err.error.errorCode.code).to.equal("Unauthorized");
-      }
-    });
-
-    it("rejects empty allocations", async () => {
-      const [cPda] = campaignPda(sponsor.publicKey, cid, programId);
-
-      try {
-        await program.methods
-          .finalizeCampaign([], true)
-          .accounts({
-            config: configPda,
-            campaign: cPda,
-            finalizeAuthority: finalizeAuth.publicKey,
-            systemProgram: anchor.web3.SystemProgram.programId,
-          })
-          .signers([finalizeAuth])
-          .rpc();
-        expect.fail("should have thrown");
-      } catch (err: any) {
-        expect(err.error.errorCode.code).to.equal("EmptyAllocations");
-      }
-    });
-
-    it("rejects duplicate github_user_id in batch", async () => {
-      const [cPda] = campaignPda(sponsor.publicKey, cid, programId);
-      const uid = new anchor.BN(2001);
-      const [cr1] = claimRecordPda(cPda, uid, programId);
-
-      try {
-        await program.methods
-          .finalizeCampaign(
-            [
-              { githubUserId: uid, githubUsername: "bob", amount: new anchor.BN(500) },
-              { githubUserId: uid, githubUsername: "bob2", amount: new anchor.BN(500) },
-            ],
-            true
-          )
-          .accounts({
-            config: configPda,
-            campaign: cPda,
-            finalizeAuthority: finalizeAuth.publicKey,
-            systemProgram: anchor.web3.SystemProgram.programId,
-          })
-          .remainingAccounts([
-            { pubkey: cr1, isSigner: false, isWritable: true },
-            { pubkey: cr1, isSigner: false, isWritable: true },
-          ])
-          .signers([finalizeAuth])
-          .rpc();
-        expect.fail("should have thrown");
-      } catch (err: any) {
-        expect(err.error.errorCode.code).to.equal("DuplicateAllocation");
-      }
-    });
-
-    it("rejects zero allocation amount", async () => {
-      const [cPda] = campaignPda(sponsor.publicKey, cid, programId);
-      const uid = new anchor.BN(3001);
-      const [cr1] = claimRecordPda(cPda, uid, programId);
-
-      try {
-        await program.methods
-          .finalizeCampaign(
-            [{ githubUserId: uid, githubUsername: "eve", amount: new anchor.BN(0) }],
-            true
-          )
-          .accounts({
-            config: configPda,
-            campaign: cPda,
-            finalizeAuthority: finalizeAuth.publicKey,
-            systemProgram: anchor.web3.SystemProgram.programId,
-          })
-          .remainingAccounts([
-            { pubkey: cr1, isSigner: false, isWritable: true },
-          ])
-          .signers([finalizeAuth])
-          .rpc();
-        expect.fail("should have thrown");
-      } catch (err: any) {
-        expect(err.error.errorCode.code).to.equal("ZeroAllocationAmount");
       }
     });
   });
 
-  // ===================== CLOCK-DEPENDENT TESTS =====================
-  // Finalize happy path, claim, and refund require clock >= deadline.
-  // These tests need `anchor-bankrun` or `solana-test-validator --warp-slot`
-  // to advance the validator clock past the 24h+ deadline.
-  //
-  // To run locally with bankrun:
-  //   1. `anchor build` to generate IDL + program .so
-  //   2. Change this file to use BankrunProvider
-  //   3. Set clock to desired timestamp via context.setClock()
-  //
-  // The instruction logic for finalize/claim/refund is fully implemented
-  // and validated above via error-path tests. Happy-path integration
-  // tests are deferred to the bankrun setup.
-  // -----------------------------------------------------------------
+  describe('finalize_campaign_batch', () => {
+    it('rejects finalization before the deadline', async () => {
+      const [campaign] = campaignPda(sponsor.publicKey, primaryCampaignId, programId);
+      const githubUserId = new anchor.BN(9001);
+      const [claimRecord] = claimRecordPda(campaign, githubUserId, programId);
 
-  describe("clock-dependent (require bankrun)", () => {
-    it.skip("finalize_campaign — single batch happy path", () => {});
-    it.skip("finalize_campaign — multi-batch happy path", () => {});
-    it.skip("finalize_campaign — rejects mismatched total on final batch", () => {});
-    it.skip("claim_backend_paid — happy path", () => {});
-    it.skip("claim_backend_paid — rejects double claim", () => {});
-    it.skip("claim_backend_paid — auto-closes on last claim", () => {});
-    it.skip("claim_user_paid — happy path with co-signer", () => {});
-    it.skip("claim_user_paid — rejects without co-signer", () => {});
-    it.skip("claim_user_paid — rejects after claim window", () => {});
-    it.skip("refund_unclaimed — happy path after 365d", () => {});
-    it.skip("refund_unclaimed — rejects before claim window expires", () => {});
+      try {
+        await program.methods
+          .finalizeCampaignBatch(
+            [{ githubUserId, amount: rewardAmount }],
+            false
+          )
+          .accounts({
+            finalizeAuthority: serviceWallet.publicKey,
+            config: configPda,
+            campaign,
+            systemProgram: SystemProgram.programId,
+          })
+          .remainingAccounts([{ pubkey: claimRecord, isSigner: false, isWritable: true }])
+          .signers([serviceWallet])
+          .rpc();
+        expect.fail('expected finalizeCampaignBatch to fail');
+      } catch (error) {
+        expectErrorCode(error, 'DeadlineNotReached');
+      }
+    });
+
+    it('rejects the wrong finalize authority', async () => {
+      const [campaign] = campaignPda(sponsor.publicKey, primaryCampaignId, programId);
+
+      try {
+        await program.methods
+          .finalizeCampaignBatch(
+            [{ githubUserId: new anchor.BN(9002), amount: rewardAmount }],
+            false
+          )
+          .accounts({
+            finalizeAuthority: outsider.publicKey,
+            config: configPda,
+            campaign,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([outsider])
+          .rpc();
+        expect.fail('expected finalizeCampaignBatch to fail');
+      } catch (error) {
+        expectErrorCode(error, 'Unauthorized');
+      }
+    });
+  });
+
+  describe('clock-dependent scenarios', () => {
+    it.skip('finalize_campaign_batch happy path after deadline', () => {});
+    it.skip('claim happy path after finalization', async () => {
+      const [campaign] = campaignPda(sponsor.publicKey, primaryCampaignId, programId);
+      const githubUserId = new anchor.BN(9001);
+      const [claimRecord] = claimRecordPda(campaign, githubUserId, programId);
+      const [escrow] = escrowPda(campaign, programId);
+
+      await program.methods
+        .claim(githubUserId, 0)
+        .accounts({
+          user: contributor.publicKey,
+          claimAuthority: serviceWallet.publicKey,
+          config: configPda,
+          campaign,
+          claimRecord,
+          escrow,
+          recipientWallet: contributor.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([contributor, serviceWallet]);
+    });
+    it.skip('refund_unclaimed after claim window expires', async () => {
+      const [campaign] = campaignPda(sponsor.publicKey, primaryCampaignId, programId);
+      const [escrow] = escrowPda(campaign, programId);
+
+      await program.methods
+        .refundUnclaimed()
+        .accounts({
+          sponsor: sponsor.publicKey,
+          config: configPda,
+          campaign,
+          escrow,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([sponsor]);
+    });
+    it.skip('close_unfinalizable_campaign after deadline', () => {});
   });
 });

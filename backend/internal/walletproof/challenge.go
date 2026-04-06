@@ -39,7 +39,6 @@ func BuildCreateCampaignMessage(input CreateCampaignMessageInput) string {
 		"",
 		"Action: create_campaign",
 		fmt.Sprintf("Challenge ID: %s", input.ChallengeID),
-		fmt.Sprintf("GitHub username: @%s", input.GitHubUsername),
 		fmt.Sprintf("Sponsor wallet: %s", input.SponsorWallet),
 		fmt.Sprintf("Repository: %s", input.Repo),
 		fmt.Sprintf("Pool amount (lamports): %d", input.PoolAmount),
@@ -47,7 +46,10 @@ func BuildCreateCampaignMessage(input CreateCampaignMessageInput) string {
 		fmt.Sprintf("Issued at (UTC): %s", input.IssuedAt.UTC().Format(time.RFC3339)),
 		fmt.Sprintf("Expires at (UTC): %s", input.ExpiresAt.UTC().Format(time.RFC3339)),
 		"",
-		"Only sign this message to prove control of the sponsor wallet for this exact campaign draft.",
+		"Only sign this message to prove control of the sponsor wallet for this exact campaign transaction.",
+	}
+	if strings.TrimSpace(input.GitHubUsername) != "" {
+		lines = append(lines[:4], append([]string{fmt.Sprintf("GitHub username: @%s", input.GitHubUsername)}, lines[4:]...)...)
 	}
 	return strings.Join(lines, "\n")
 }

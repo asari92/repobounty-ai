@@ -22,6 +22,13 @@ type Client struct {
 	isProduction bool
 }
 
+type RepositoryMetadata struct {
+	ID      uint64
+	Owner   string
+	Name    string
+	HTMLURL string
+}
+
 func NewClient(token string) *Client {
 	return NewClientWithEnv(token, false)
 }
@@ -31,15 +38,31 @@ func NewClientWithEnv(token string, isProduction bool) *Client {
 }
 
 func (c *Client) RepositoryExists(ctx context.Context, repo string) (bool, error) {
+	_, found, err := c.fetchRepositoryMetadata(ctx, repo)
+	return found, err
+}
+
+func (c *Client) RepositoryID(ctx context.Context, repo string) (uint64, error) {
+	metadata, found, err := c.fetchRepositoryMetadata(ctx, repo)
+	if err != nil {
+		return 0, err
+	}
+	if !found {
+		return 0, fmt.Errorf("repository was not found or is not public")
+	}
+	return metadata.ID, nil
+}
+
+func (c *Client) fetchRepositoryMetadata(ctx context.Context, repo string) (*RepositoryMetadata, bool, error) {
 	parts := strings.SplitN(repo, "/", 2)
 	if len(parts) != 2 {
-		return false, fmt.Errorf("invalid repo format, expected owner/repo: %s", repo)
+		return nil, false, fmt.Errorf("invalid repo format, expected owner/repo: %s", repo)
 	}
 
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s", parts[0], parts[1])
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	if c.token != "" {
@@ -48,18 +71,34 @@ func (c *Client) RepositoryExists(ctx context.Context, repo string) (bool, error
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("request %s: %w", url, err)
+		return nil, false, fmt.Errorf("request %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
 	switch resp.StatusCode {
 	case http.StatusOK:
-		return true, nil
+		var payload struct {
+			ID      uint64 `json:"id"`
+			Name    string `json:"name"`
+			HTMLURL string `json:"html_url"`
+			Owner   struct {
+				Login string `json:"login"`
+			} `json:"owner"`
+		}
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+			return nil, false, fmt.Errorf("parse github repository metadata: %w", err)
+		}
+		return &RepositoryMetadata{
+			ID:      payload.ID,
+			Owner:   payload.Owner.Login,
+			Name:    payload.Name,
+			HTMLURL: payload.HTMLURL,
+		}, true, nil
 	case http.StatusNotFound:
-		return false, nil
+		return nil, false, nil
 	default:
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return false, fmt.Errorf("github repo lookup %s returned %d: %s", url, resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, false, fmt.Errorf("github repo lookup %s returned %d: %s", url, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 }
 
@@ -138,8 +177,9 @@ func (c *Client) fetchContributorStats(ctx context.Context, owner, repo string) 
 				continue
 			}
 			result = append(result, models.Contributor{
-				Username: gc.Login,
-				Commits:  gc.Contributions,
+				GithubUserID: gc.ID,
+				Username:     gc.Login,
+				Commits:      gc.Contributions,
 			})
 		}
 		return nil
@@ -152,6 +192,7 @@ func (c *Client) fetchContributorStats(ctx context.Context, owner, repo string) 
 }
 
 type ghContributor struct {
+	ID            uint64 `json:"id"`
 	Login         string `json:"login"`
 	AvatarURL     string `json:"avatar_url"`
 	Contributions int    `json:"contributions"`
@@ -209,9 +250,9 @@ func (c *Client) doGet(ctx context.Context, url string) ([]byte, error) {
 
 func mockContributors() []models.Contributor {
 	return []models.Contributor{
-		{Username: "alice-dev", Commits: 47, PullRequests: 12, Reviews: 8, LinesAdded: 3200, LinesDeleted: 980},
-		{Username: "bob-builder", Commits: 31, PullRequests: 8, Reviews: 15, LinesAdded: 2100, LinesDeleted: 650},
-		{Username: "charlie-fix", Commits: 19, PullRequests: 5, Reviews: 3, LinesAdded: 890, LinesDeleted: 420},
+		{GithubUserID: 101, Username: "alice-dev", Commits: 47, PullRequests: 12, Reviews: 8, LinesAdded: 3200, LinesDeleted: 980},
+		{GithubUserID: 202, Username: "bob-builder", Commits: 31, PullRequests: 8, Reviews: 15, LinesAdded: 2100, LinesDeleted: 650},
+		{GithubUserID: 303, Username: "charlie-fix", Commits: 19, PullRequests: 5, Reviews: 3, LinesAdded: 890, LinesDeleted: 420},
 	}
 }
 

@@ -71,6 +71,9 @@ pub enum RepoBountyError {
     #[msg("Invalid recipient wallet")]
     InvalidRecipientWallet,
 
+    #[msg("Invalid payer mode")]
+    InvalidPayerMode,
+
     #[msg("Cannot close: partial finalization exists")]
     PartialFinalizationExists,
 

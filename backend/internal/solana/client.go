@@ -9,11 +9,11 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gagliardetto/solana-go"
-	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/rpc"
 	rpcjson "github.com/gagliardetto/solana-go/rpc/jsonrpc"
 	"github.com/mr-tron/base58"
@@ -27,7 +27,15 @@ type Client struct {
 }
 
 var campaignAccountDiscriminator = anchorDiscriminator("account:Campaign")
+var claimRecordAccountDiscriminator = anchorDiscriminator("account:ClaimRecord")
 var ErrNotConfigured = errors.New("solana client not configured")
+
+const (
+	campaignAccountSpace  = 171
+	serviceFeeDenominator = 1000
+	serviceFeeNumerator   = 5
+	minServiceFeeLamports = 50_000_000
+)
 
 func NewClient(rpcURL, privateKeyBase58, programIDStr string) (*Client, error) {
 	if strings.TrimSpace(privateKeyBase58) == "" || isPlaceholderProgramID(programIDStr) {
@@ -142,21 +150,68 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*models.Ca
 	return nil, errors.New("campaign not found")
 }
 
+func parseCampaignID(campaignID string) (uint64, error) {
+	parsed, err := strconv.ParseUint(strings.TrimSpace(campaignID), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse numeric campaign id: %w", err)
+	}
+	if parsed == 0 {
+		return 0, fmt.Errorf("campaign id must be greater than zero")
+	}
+	return parsed, nil
+}
+
+func campaignIDSeed(campaignID uint64) []byte {
+	var raw [8]byte
+	binary.LittleEndian.PutUint64(raw[:], campaignID)
+	return raw[:]
+}
+
+func deriveConfigPDA(programID solana.PublicKey) (solana.PublicKey, uint8, error) {
+	return solana.FindProgramAddress([][]byte{[]byte("config")}, programID)
+}
+
+func deriveCampaignPDA(programID, sponsor solana.PublicKey, campaignID uint64) (solana.PublicKey, uint8, error) {
+	return solana.FindProgramAddress(
+		[][]byte{
+			[]byte("campaign"),
+			sponsor.Bytes(),
+			campaignIDSeed(campaignID),
+		},
+		programID,
+	)
+}
+
+func deriveEscrowPDA(programID, campaignPDA solana.PublicKey) (solana.PublicKey, uint8, error) {
+	return solana.FindProgramAddress(
+		[][]byte{
+			[]byte("escrow"),
+			campaignPDA.Bytes(),
+		},
+		programID,
+	)
+}
+
+func deriveClaimRecordPDA(programID, campaignPDA solana.PublicKey, githubUserID uint64) (solana.PublicKey, uint8, error) {
+	return solana.FindProgramAddress(
+		[][]byte{
+			[]byte("claim"),
+			campaignPDA.Bytes(),
+			campaignIDSeed(githubUserID),
+		},
+		programID,
+	)
+}
+
 func (c *Client) GetVaultPDA(campaignPDA string) (string, error) {
 	campaignKey, err := solana.PublicKeyFromBase58(campaignPDA)
 	if err != nil {
 		return "", fmt.Errorf("parse campaign PDA: %w", err)
 	}
 
-	vaultPDA, _, err := solana.FindProgramAddress(
-		[][]byte{
-			[]byte("vault"),
-			campaignKey.Bytes(),
-		},
-		c.programID,
-	)
+	vaultPDA, _, err := deriveEscrowPDA(c.programID, campaignKey)
 	if err != nil {
-		return "", fmt.Errorf("derive vault PDA: %w", err)
+		return "", fmt.Errorf("derive escrow PDA: %w", err)
 	}
 
 	return vaultPDA.String(), nil
@@ -178,6 +233,203 @@ func (c *Client) GetBalance(ctx context.Context, wallet string) (uint64, error) 
 	}
 
 	return uint64(balance.Value), nil
+}
+
+func (c *Client) EstimateCreateCampaignCost(ctx context.Context, rewardAmount uint64) (uint64, error) {
+	if !c.IsConfigured() {
+		return 0, ErrNotConfigured
+	}
+
+	serviceFee := rewardAmount * serviceFeeNumerator / serviceFeeDenominator
+	if serviceFee < minServiceFeeLamports {
+		serviceFee = minServiceFeeLamports
+	}
+
+	campaignRent, err := c.rpcClient.GetMinimumBalanceForRentExemption(
+		ctx,
+		campaignAccountSpace,
+		rpc.CommitmentConfirmed,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("get campaign rent exemption: %w", err)
+	}
+
+	return rewardAmount + serviceFee + campaignRent, nil
+}
+
+type ClaimStatus struct {
+	Claimed         bool
+	RecipientWallet string
+	ClaimedAt       *time.Time
+	Amount          uint64
+}
+
+func (c *Client) BuildClaimTransaction(
+	ctx context.Context,
+	campaignID string,
+	sponsor string,
+	githubUserID uint64,
+	userWallet string,
+) (string, error) {
+	if !c.IsConfigured() {
+		return "", ErrNotConfigured
+	}
+
+	sponsorKey, err := solana.PublicKeyFromBase58(sponsor)
+	if err != nil {
+		return "", fmt.Errorf("parse sponsor pubkey: %w", err)
+	}
+
+	parsedCampaignID, err := parseCampaignID(campaignID)
+	if err != nil {
+		return "", err
+	}
+
+	userKey, err := solana.PublicKeyFromBase58(userWallet)
+	if err != nil {
+		return "", fmt.Errorf("parse user wallet: %w", err)
+	}
+
+	configPDA, _, err := deriveConfigPDA(c.programID)
+	if err != nil {
+		return "", fmt.Errorf("derive config PDA: %w", err)
+	}
+
+	campaignPDA, _, err := deriveCampaignPDA(c.programID, sponsorKey, parsedCampaignID)
+	if err != nil {
+		return "", fmt.Errorf("derive campaign PDA: %w", err)
+	}
+
+	claimRecordPDA, _, err := deriveClaimRecordPDA(c.programID, campaignPDA, githubUserID)
+	if err != nil {
+		return "", fmt.Errorf("derive claim record PDA: %w", err)
+	}
+
+	escrowPDA, _, err := deriveEscrowPDA(c.programID, campaignPDA)
+	if err != nil {
+		return "", fmt.Errorf("derive escrow PDA: %w", err)
+	}
+
+	recent, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		return "", fmt.Errorf("get blockhash: %w", err)
+	}
+
+	instruction := newClaimInstruction(
+		c.programID,
+		userKey,
+		c.privateKey.PublicKey(),
+		configPDA,
+		campaignPDA,
+		claimRecordPDA,
+		escrowPDA,
+		userKey,
+		githubUserID,
+		0,
+	)
+
+	tx, err := solana.NewTransaction(
+		[]solana.Instruction{instruction},
+		recent.Value.Blockhash,
+		solana.TransactionPayer(userKey),
+	)
+	if err != nil {
+		return "", fmt.Errorf("build transaction: %w", err)
+	}
+
+	_, err = tx.PartialSign(func(key solana.PublicKey) *solana.PrivateKey {
+		if key.Equals(c.privateKey.PublicKey()) {
+			return &c.privateKey
+		}
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("partial sign transaction: %w", err)
+	}
+
+	txData, err := tx.MarshalBinary()
+	if err != nil {
+		return "", fmt.Errorf("marshal transaction: %w", err)
+	}
+
+	return base58.Encode(txData), nil
+}
+
+func (c *Client) GetClaimStatus(
+	ctx context.Context,
+	campaignID string,
+	sponsor string,
+	githubUserID uint64,
+) (*ClaimStatus, error) {
+	if !c.IsConfigured() {
+		return nil, ErrNotConfigured
+	}
+
+	sponsorKey, err := solana.PublicKeyFromBase58(sponsor)
+	if err != nil {
+		return nil, fmt.Errorf("parse sponsor pubkey: %w", err)
+	}
+
+	parsedCampaignID, err := parseCampaignID(campaignID)
+	if err != nil {
+		return nil, err
+	}
+
+	campaignPDA, _, err := deriveCampaignPDA(c.programID, sponsorKey, parsedCampaignID)
+	if err != nil {
+		return nil, fmt.Errorf("derive campaign PDA: %w", err)
+	}
+
+	claimRecordPDA, _, err := deriveClaimRecordPDA(c.programID, campaignPDA, githubUserID)
+	if err != nil {
+		return nil, fmt.Errorf("derive claim record PDA: %w", err)
+	}
+
+	account, err := c.rpcClient.GetAccountInfo(ctx, claimRecordPDA)
+	if err != nil {
+		return nil, fmt.Errorf("get claim record: %w", err)
+	}
+	if account == nil || account.Value == nil {
+		return nil, fmt.Errorf("claim record not found")
+	}
+
+	status, err := decodeClaimRecordAccount(account.Value.Data.GetBinary())
+	if err != nil {
+		return nil, err
+	}
+	return status, nil
+}
+
+func newClaimInstruction(
+	programID solana.PublicKey,
+	user solana.PublicKey,
+	claimAuthority solana.PublicKey,
+	configPDA solana.PublicKey,
+	campaignPDA solana.PublicKey,
+	claimRecordPDA solana.PublicKey,
+	escrowPDA solana.PublicKey,
+	recipientWallet solana.PublicKey,
+	githubUserID uint64,
+	payerMode uint8,
+) solana.Instruction {
+	data := anchorDiscriminator("global:claim")
+	data = appendBorshU64(data, githubUserID)
+	data = append(data, payerMode)
+
+	return solana.NewInstruction(
+		programID,
+		solana.AccountMetaSlice{
+			solana.NewAccountMeta(user, true, true),
+			solana.NewAccountMeta(claimAuthority, false, true),
+			solana.NewAccountMeta(configPDA, false, false),
+			solana.NewAccountMeta(campaignPDA, true, false),
+			solana.NewAccountMeta(claimRecordPDA, true, false),
+			solana.NewAccountMeta(escrowPDA, true, false),
+			solana.NewAccountMeta(recipientWallet, true, false),
+			solana.NewAccountMeta(solana.SystemProgramID, false, false),
+		},
+		data,
+	)
 }
 
 func (c *Client) ClaimAllocation(ctx context.Context, campaignID, contributorGitHub string, contributorWallet string) (string, error) {
@@ -236,22 +488,49 @@ type FundTransaction struct {
 	Transaction  string `json:"transaction"`
 	CampaignPDA  string `json:"campaign_pda"`
 	VaultAddress string `json:"vault_address"`
+	EscrowPDA    string `json:"escrow_pda,omitempty"`
 }
 
-func newFundCampaignInstruction(programID, campaignPDA, vaultPDA, sponsorKey solana.PublicKey) solana.Instruction {
+func newCreateCampaignWithDepositInstruction(
+	programID solana.PublicKey,
+	sponsorKey solana.PublicKey,
+	configPDA solana.PublicKey,
+	campaignPDA solana.PublicKey,
+	escrowPDA solana.PublicKey,
+	treasuryWallet solana.PublicKey,
+	campaignID uint64,
+	githubRepoID uint64,
+	deadline int64,
+	rewardAmount uint64,
+) solana.Instruction {
+	data := anchorDiscriminator("global:create_campaign_with_deposit")
+	data = appendBorshU64(data, campaignID)
+	data = appendBorshU64(data, githubRepoID)
+	data = appendBorshI64(data, deadline)
+	data = appendBorshU64(data, rewardAmount)
+
 	return solana.NewInstruction(
 		programID,
 		solana.AccountMetaSlice{
+			solana.NewAccountMeta(sponsorKey, true, true),
+			solana.NewAccountMeta(configPDA, false, false),
 			solana.NewAccountMeta(campaignPDA, true, false),
-			solana.NewAccountMeta(vaultPDA, true, false),
-			solana.NewAccountMeta(sponsorKey, false, true),
+			solana.NewAccountMeta(escrowPDA, true, false),
+			solana.NewAccountMeta(treasuryWallet, true, false),
 			solana.NewAccountMeta(solana.SystemProgramID, false, false),
 		},
-		anchorDiscriminator("global:fund_campaign"),
+		data,
 	)
 }
 
-func (c *Client) BuildFundTransaction(ctx context.Context, campaignID string, poolAmount uint64, sponsorPubkey string) (*FundTransaction, error) {
+func (c *Client) BuildFundTransaction(
+	ctx context.Context,
+	campaignID string,
+	poolAmount uint64,
+	deadline int64,
+	githubRepoID uint64,
+	sponsorPubkey string,
+) (*FundTransaction, error) {
 	if !c.IsConfigured() {
 		return nil, ErrNotConfigured
 	}
@@ -261,26 +540,24 @@ func (c *Client) BuildFundTransaction(ctx context.Context, campaignID string, po
 		return nil, fmt.Errorf("parse sponsor pubkey: %w", err)
 	}
 
-	campaignPDA, _, err := solana.FindProgramAddress(
-		[][]byte{
-			[]byte("campaign"),
-			[]byte(campaignID),
-		},
-		c.programID,
-	)
+	parsedCampaignID, err := parseCampaignID(campaignID)
+	if err != nil {
+		return nil, err
+	}
+
+	configPDA, _, err := deriveConfigPDA(c.programID)
+	if err != nil {
+		return nil, fmt.Errorf("derive config PDA: %w", err)
+	}
+
+	campaignPDA, _, err := deriveCampaignPDA(c.programID, sponsorKey, parsedCampaignID)
 	if err != nil {
 		return nil, fmt.Errorf("derive campaign PDA: %w", err)
 	}
 
-	vaultPDA, _, err := solana.FindProgramAddress(
-		[][]byte{
-			[]byte("vault"),
-			campaignPDA.Bytes(),
-		},
-		c.programID,
-	)
+	vaultPDA, _, err := deriveEscrowPDA(c.programID, campaignPDA)
 	if err != nil {
-		return nil, fmt.Errorf("derive vault PDA: %w", err)
+		return nil, fmt.Errorf("derive escrow PDA: %w", err)
 	}
 
 	recent, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
@@ -288,19 +565,20 @@ func (c *Client) BuildFundTransaction(ctx context.Context, campaignID string, po
 		return nil, fmt.Errorf("get blockhash: %w", err)
 	}
 
-	transferIx, err := system.NewTransferInstruction(
-		poolAmount,
-		sponsorKey,
-		vaultPDA,
-	).ValidateAndBuild()
-	if err != nil {
-		return nil, fmt.Errorf("build transfer instruction: %w", err)
-	}
-
 	tx, err := solana.NewTransaction(
 		[]solana.Instruction{
-			transferIx,
-			newFundCampaignInstruction(c.programID, campaignPDA, vaultPDA, sponsorKey),
+			newCreateCampaignWithDepositInstruction(
+				c.programID,
+				sponsorKey,
+				configPDA,
+				campaignPDA,
+				vaultPDA,
+				c.privateKey.PublicKey(),
+				parsedCampaignID,
+				githubRepoID,
+				deadline,
+				poolAmount,
+			),
 		},
 		recent.Value.Blockhash,
 		solana.TransactionPayer(sponsorKey),
@@ -320,6 +598,7 @@ func (c *Client) BuildFundTransaction(ctx context.Context, campaignID string, po
 		Transaction:  txBase58,
 		CampaignPDA:  campaignPDA.String(),
 		VaultAddress: vaultPDA.String(),
+		EscrowPDA:    vaultPDA.String(),
 	}, nil
 }
 
@@ -385,43 +664,87 @@ func (c *Client) CreateCampaign(ctx context.Context, campaignID, repo string, po
 }
 
 type AllocationInput struct {
-	Contributor string
-	Percentage  uint16
+	GithubUserID uint64
+	Amount       uint64
 }
 
-func (c *Client) FinalizeCampaign(ctx context.Context, campaignID string, allocations []AllocationInput) (string, error) {
+func newFinalizeCampaignBatchInstruction(
+	programID solana.PublicKey,
+	finalizeAuthority solana.PublicKey,
+	configPDA solana.PublicKey,
+	campaignPDA solana.PublicKey,
+	claimRecordPDAs []solana.PublicKey,
+	allocations []AllocationInput,
+	hasMore bool,
+) solana.Instruction {
+	data := anchorDiscriminator("global:finalize_campaign_batch")
+	data = appendBorshU32(data, uint32(len(allocations)))
+	for _, a := range allocations {
+		data = appendBorshU64(data, a.GithubUserID)
+		data = appendBorshU64(data, a.Amount)
+	}
+	if hasMore {
+		data = append(data, 1)
+	} else {
+		data = append(data, 0)
+	}
+
+	accounts := solana.AccountMetaSlice{
+		solana.NewAccountMeta(finalizeAuthority, true, true),
+		solana.NewAccountMeta(configPDA, false, false),
+		solana.NewAccountMeta(campaignPDA, true, false),
+		solana.NewAccountMeta(solana.SystemProgramID, false, false),
+	}
+	for _, claimRecordPDA := range claimRecordPDAs {
+		accounts = append(accounts, solana.NewAccountMeta(claimRecordPDA, true, false))
+	}
+
+	return solana.NewInstruction(programID, accounts, data)
+}
+
+func (c *Client) FinalizeCampaign(ctx context.Context, campaignID string, sponsor string, allocations []AllocationInput) (string, error) {
 	if !c.IsConfigured() {
 		return "", ErrNotConfigured
 	}
 
 	authority := c.privateKey.PublicKey()
-	campaignPDA, _, err := solana.FindProgramAddress(
-		[][]byte{
-			[]byte("campaign"),
-			[]byte(campaignID),
-		},
-		c.programID,
-	)
+	sponsorKey, err := solana.PublicKeyFromBase58(sponsor)
+	if err != nil {
+		return "", fmt.Errorf("parse sponsor pubkey: %w", err)
+	}
+
+	parsedCampaignID, err := parseCampaignID(campaignID)
+	if err != nil {
+		return "", err
+	}
+
+	configPDA, _, err := deriveConfigPDA(c.programID)
+	if err != nil {
+		return "", fmt.Errorf("derive config PDA: %w", err)
+	}
+
+	campaignPDA, _, err := deriveCampaignPDA(c.programID, sponsorKey, parsedCampaignID)
 	if err != nil {
 		return "", fmt.Errorf("derive campaign PDA: %w", err)
 	}
 
-	discriminator := anchorDiscriminator("global:finalize_campaign")
-
-	data := discriminator
-	data = appendBorshU32(data, uint32(len(allocations)))
-	for _, a := range allocations {
-		data = appendBorshString(data, a.Contributor)
-		data = appendBorshU16(data, a.Percentage)
+	claimRecordPDAs := make([]solana.PublicKey, 0, len(allocations))
+	for _, allocation := range allocations {
+		claimRecordPDA, _, err := deriveClaimRecordPDA(c.programID, campaignPDA, allocation.GithubUserID)
+		if err != nil {
+			return "", fmt.Errorf("derive claim record PDA: %w", err)
+		}
+		claimRecordPDAs = append(claimRecordPDAs, claimRecordPDA)
 	}
 
-	instruction := solana.NewInstruction(
+	instruction := newFinalizeCampaignBatchInstruction(
 		c.programID,
-		solana.AccountMetaSlice{
-			solana.NewAccountMeta(campaignPDA, true, false),
-			solana.NewAccountMeta(authority, false, true),
-		},
-		data,
+		authority,
+		configPDA,
+		campaignPDA,
+		claimRecordPDAs,
+		allocations,
+		false,
 	)
 
 	return c.sendTransaction(ctx, instruction)
@@ -493,113 +816,24 @@ func decodeCampaignAccount(data []byte, campaignPDA string, programID solana.Pub
 
 	dec := accountDecoder{data: data[8:]}
 
-	authorityBytes, err := dec.readBytes(32)
-	if err != nil {
-		return nil, err
+	if _, err := dec.readU8(); err != nil {
+		return nil, fmt.Errorf("read version: %w", err)
 	}
-	authority := solana.PublicKeyFromBytes(authorityBytes)
 
-	sponsorBytes, err := dec.readBytes(32)
-	if err != nil {
-		return nil, err
-	}
-	sponsor := solana.PublicKeyFromBytes(sponsorBytes)
-
-	campaignID, err := dec.readString()
+	campaignID, err := dec.readU64()
 	if err != nil {
 		return nil, fmt.Errorf("read campaign_id: %w", err)
 	}
 
-	repo, err := dec.readString()
+	sponsorBytes, err := dec.readBytes(32)
 	if err != nil {
-		return nil, fmt.Errorf("read repo: %w", err)
+		return nil, fmt.Errorf("read sponsor: %w", err)
 	}
+	sponsor := solana.PublicKeyFromBytes(sponsorBytes)
 
-	poolAmount, err := dec.readU64()
+	githubRepoID, err := dec.readU64()
 	if err != nil {
-		return nil, fmt.Errorf("read pool_amount: %w", err)
-	}
-
-	totalClaimed, err := dec.readU64()
-	if err != nil {
-		return nil, fmt.Errorf("read total_claimed: %w", err)
-	}
-
-	deadlineUnix, err := dec.readI64()
-	if err != nil {
-		return nil, fmt.Errorf("read deadline: %w", err)
-	}
-
-	stateByte, err := dec.readU8()
-	if err != nil {
-		return nil, fmt.Errorf("read state: %w", err)
-	}
-
-	var state models.CampaignState
-	switch stateByte {
-	case 0:
-		state = models.StateCreated
-	case 1:
-		state = models.StateFunded
-	case 2:
-		state = models.StateFinalized
-	case 3:
-		state = models.StateCompleted
-	default:
-		return nil, fmt.Errorf("unknown state: %d", stateByte)
-	}
-
-	allocCount, err := dec.readU32()
-	if err != nil {
-		return nil, fmt.Errorf("read allocations len: %w", err)
-	}
-
-	allocations := make([]models.Allocation, 0, allocCount)
-	for i := uint32(0); i < allocCount; i++ {
-		contributor, err := dec.readString()
-		if err != nil {
-			return nil, fmt.Errorf("read allocation contributor: %w", err)
-		}
-		percentage, err := dec.readU16()
-		if err != nil {
-			return nil, fmt.Errorf("read allocation percentage: %w", err)
-		}
-		amount, err := dec.readU64()
-		if err != nil {
-			return nil, fmt.Errorf("read allocation amount: %w", err)
-		}
-		claimedByte, err := dec.readU8()
-		if err != nil {
-			return nil, fmt.Errorf("read allocation claimed: %w", err)
-		}
-		claimed := claimedByte == 1
-		claimantWallet := ""
-		claimantTag, err := dec.readU8()
-		if err != nil {
-			return nil, fmt.Errorf("read claimant tag: %w", err)
-		}
-		if claimantTag == 1 {
-			claimantBytes, err := dec.readBytes(32)
-			if err != nil {
-				return nil, fmt.Errorf("read claimant pubkey: %w", err)
-			}
-			claimantKey := solana.PublicKeyFromBytes(claimantBytes)
-			claimantWallet = claimantKey.String()
-		}
-		allocations = append(allocations, models.Allocation{
-			Contributor:    contributor,
-			Percentage:     percentage,
-			Amount:         amount,
-			Claimed:        claimed,
-			ClaimantWallet: claimantWallet,
-		})
-	}
-
-	if _, err := dec.readU8(); err != nil {
-		return nil, fmt.Errorf("read bump: %w", err)
-	}
-	if _, err := dec.readU8(); err != nil {
-		return nil, fmt.Errorf("read vault_bump: %w", err)
+		return nil, fmt.Errorf("read github_repo_id: %w", err)
 	}
 
 	createdAtUnix, err := dec.readI64()
@@ -607,19 +841,67 @@ func decodeCampaignAccount(data []byte, campaignPDA string, programID solana.Pub
 		return nil, fmt.Errorf("read created_at: %w", err)
 	}
 
-	finalizedAtTag, err := dec.readU8()
+	deadlineUnix, err := dec.readI64()
 	if err != nil {
-		return nil, fmt.Errorf("read finalized_at tag: %w", err)
+		return nil, fmt.Errorf("read deadline_at: %w", err)
 	}
 
-	var finalizedAt *time.Time
-	if finalizedAtTag == 1 {
-		finalizedAtUnix, err := dec.readI64()
-		if err != nil {
-			return nil, fmt.Errorf("read finalized_at: %w", err)
-		}
-		t := time.Unix(finalizedAtUnix, 0).UTC()
-		finalizedAt = &t
+	claimDeadlineUnix, err := dec.readI64()
+	if err != nil {
+		return nil, fmt.Errorf("read claim_deadline_at: %w", err)
+	}
+
+	totalRewardAmount, err := dec.readU64()
+	if err != nil {
+		return nil, fmt.Errorf("read total_reward_amount: %w", err)
+	}
+
+	allocatedAmount, err := dec.readU64()
+	if err != nil {
+		return nil, fmt.Errorf("read allocated_amount: %w", err)
+	}
+
+	claimedAmount, err := dec.readU64()
+	if err != nil {
+		return nil, fmt.Errorf("read claimed_amount: %w", err)
+	}
+
+	allocationsCount, err := dec.readU32()
+	if err != nil {
+		return nil, fmt.Errorf("read allocations_count: %w", err)
+	}
+
+	claimedCount, err := dec.readU32()
+	if err != nil {
+		return nil, fmt.Errorf("read claimed_count: %w", err)
+	}
+
+	statusByte, err := dec.readU8()
+	if err != nil {
+		return nil, fmt.Errorf("read status: %w", err)
+	}
+
+	var compatState models.CampaignState
+	var status string
+	switch statusByte {
+	case 0:
+		compatState = models.StateFunded
+		status = models.StateActive
+	case 1:
+		compatState = models.StateFinalized
+		status = models.StateFinalized
+	case 2:
+		compatState = models.StateCompleted
+		status = models.StateClosed
+	default:
+		return nil, fmt.Errorf("unknown campaign status: %d", statusByte)
+	}
+
+	if _, err := dec.readU8(); err != nil {
+		return nil, fmt.Errorf("read bump: %w", err)
+	}
+	if _, err := dec.readBytes(64); err != nil {
+		return nil, fmt.Errorf("read reserved bytes: %w", err)
 	}
 
 	campaignKey, err := solana.PublicKeyFromBase58(campaignPDA)
@@ -627,32 +909,85 @@ func decodeCampaignAccount(data []byte, campaignPDA string, programID solana.Pub
 		return nil, fmt.Errorf("parse campaign PDA: %w", err)
 	}
 
-	vaultPDA, _, err := solana.FindProgramAddress(
-		[][]byte{
-			[]byte("vault"),
-			campaignKey.Bytes(),
-		},
-		programID,
-	)
+	escrowPDA, _, err := deriveEscrowPDA(programID, campaignKey)
 	if err != nil {
-		return nil, fmt.Errorf("derive vault PDA: %w", err)
+		return nil, fmt.Errorf("derive escrow PDA: %w", err)
 	}
 
+	createdAt := time.Unix(createdAtUnix, 0).UTC()
+	deadlineAt := time.Unix(deadlineUnix, 0).UTC()
+	claimDeadlineAt := time.Unix(claimDeadlineUnix, 0).UTC()
+
 	return &models.Campaign{
-		CampaignID:   campaignID,
-		CampaignPDA:  campaignPDA,
-		VaultAddress: vaultPDA.String(),
-		Repo:         repo,
-		PoolAmount:   poolAmount,
-		TotalClaimed: totalClaimed,
-		Deadline:     time.Unix(deadlineUnix, 0).UTC(),
-		State:        state,
-		Authority:    authority.String(),
-		Sponsor:      sponsor.String(),
-		Allocations:  allocations,
-		CreatedAt:    time.Unix(createdAtUnix, 0).UTC(),
-		FinalizedAt:  finalizedAt,
+		CampaignID:        strconv.FormatUint(campaignID, 10),
+		CampaignPDA:       campaignPDA,
+		EscrowPDA:         escrowPDA.String(),
+		VaultAddress:      escrowPDA.String(),
+		GithubRepoID:      githubRepoID,
+		PoolAmount:        totalRewardAmount,
+		TotalRewardAmount: totalRewardAmount,
+		AllocatedAmount:   allocatedAmount,
+		ClaimedAmount:     claimedAmount,
+		AllocationsCount:  allocationsCount,
+		ClaimedCount:      claimedCount,
+		TotalClaimed:      claimedAmount,
+		Deadline:          deadlineAt,
+		DeadlineAt:        deadlineAt,
+		ClaimDeadlineAt:   claimDeadlineAt,
+		State:             compatState,
+		Status:            status,
+		Sponsor:           sponsor.String(),
+		Allocations:       nil,
+		CreatedAt:         createdAt,
 	}, nil
+}
+
+func decodeClaimRecordAccount(data []byte) (*ClaimStatus, error) {
+	if len(data) < len(claimRecordAccountDiscriminator) {
+		return nil, fmt.Errorf("claim record account too short")
+	}
+	if !equalBytes(data[:8], claimRecordAccountDiscriminator) {
+		return nil, fmt.Errorf("unexpected claim record discriminator")
+	}
+
+	dec := accountDecoder{data: data[8:]}
+
+	if _, err := dec.readBytes(32); err != nil {
+		return nil, fmt.Errorf("read campaign: %w", err)
+	}
+	if _, err := dec.readU64(); err != nil {
+		return nil, fmt.Errorf("read github_user_id: %w", err)
+	}
+	amount, err := dec.readU64()
+	if err != nil {
+		return nil, fmt.Errorf("read amount: %w", err)
+	}
+	claimedRaw, err := dec.readU8()
+	if err != nil {
+		return nil, fmt.Errorf("read claimed flag: %w", err)
+	}
+	recipientWallet, err := dec.readOptionPubkey()
+	if err != nil {
+		return nil, fmt.Errorf("read claimed_to_wallet: %w", err)
+	}
+	claimedAt, err := dec.readOptionI64()
+	if err != nil {
+		return nil, fmt.Errorf("read claimed_at: %w", err)
+	}
+
+	status := &ClaimStatus{
+		Claimed: claimedRaw != 0,
+		Amount:  amount,
+	}
+	if recipientWallet != nil {
+		status.RecipientWallet = recipientWallet.String()
+	}
+	if claimedAt != nil {
+		timestamp := time.Unix(*claimedAt, 0).UTC()
+		status.ClaimedAt = &timestamp
+	}
+
+	return status, nil
 }
 
 type accountDecoder struct {
@@ -719,6 +1054,43 @@ func (d *accountDecoder) readString() (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+func (d *accountDecoder) readOptionPubkey() (*solana.PublicKey, error) {
+	tag, err := d.readU8()
+	if err != nil {
+		return nil, err
+	}
+	if tag == 0 {
+		return nil, nil
+	}
+	if tag != 1 {
+		return nil, fmt.Errorf("invalid option tag %d", tag)
+	}
+	b, err := d.readBytes(32)
+	if err != nil {
+		return nil, err
+	}
+	key := solana.PublicKeyFromBytes(b)
+	return &key, nil
+}
+
+func (d *accountDecoder) readOptionI64() (*int64, error) {
+	tag, err := d.readU8()
+	if err != nil {
+		return nil, err
+	}
+	if tag == 0 {
+		return nil, nil
+	}
+	if tag != 1 {
+		return nil, fmt.Errorf("invalid option tag %d", tag)
+	}
+	v, err := d.readI64()
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
 }
 
 func equalBytes(a, b []byte) bool {

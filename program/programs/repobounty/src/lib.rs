@@ -8,7 +8,7 @@ pub mod state;
 
 use instructions::*;
 
-declare_id!("8oSXz4bbvUYVnNruhPEF3JR7jMsSApf7EpAyDpXxDLSJ");
+declare_id!("5VdatUgJ6AsZ7RbC8TBz6AxUdBNtQ6MckLsKbxgZQdS6");
 
 #[program]
 pub mod repobounty {
@@ -61,8 +61,8 @@ pub mod repobounty {
         instructions::finalize_campaign::handler(ctx, allocations, has_more)
     }
 
-    pub fn claim(ctx: Context<Claim>, github_user_id: u64) -> Result<()> {
-        instructions::claim::handler(ctx, github_user_id)
+    pub fn claim(ctx: Context<Claim>, github_user_id: u64, payer_mode: u8) -> Result<()> {
+        instructions::claim::handler(ctx, github_user_id, payer_mode)
     }
 
     pub fn close_unfinalizable_campaign(ctx: Context<CloseUnfinalizableCampaign>) -> Result<()> {

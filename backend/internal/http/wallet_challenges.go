@@ -16,11 +16,10 @@ import (
 )
 
 type createCampaignChallengePayload struct {
-	GitHubUsername string `json:"github_username"`
-	Repo           string `json:"repo"`
-	PoolAmount     uint64 `json:"pool_amount"`
-	Deadline       string `json:"deadline"`
-	SponsorWallet  string `json:"sponsor_wallet"`
+	Repo          string `json:"repo"`
+	PoolAmount    uint64 `json:"pool_amount"`
+	Deadline      string `json:"deadline"`
+	SponsorWallet string `json:"sponsor_wallet"`
 }
 
 type claimChallengePayload struct {
@@ -31,11 +30,6 @@ type claimChallengePayload struct {
 }
 
 func (h *Handlers) CreateCampaignChallenge(w http.ResponseWriter, r *http.Request) {
-	user, ok := auth.GetUserFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication required")
-		return
-	}
 	if h.solana == nil || !h.solana.IsConfigured() {
 		writeError(w, http.StatusServiceUnavailable, "campaign creation is disabled until Solana is configured")
 		return
@@ -58,11 +52,10 @@ func (h *Handlers) CreateCampaignChallenge(w http.ResponseWriter, r *http.Reques
 	expiresAt := issuedAt.Add(walletproof.ChallengeTTL)
 	challengeID := generateState()
 	payload := createCampaignChallengePayload{
-		GitHubUsername: user.GitHubUsername,
-		Repo:           req.Repo,
-		PoolAmount:     req.PoolAmount,
-		Deadline:       deadline.Format(time.RFC3339),
-		SponsorWallet:  req.SponsorWallet,
+		Repo:          req.Repo,
+		PoolAmount:    req.PoolAmount,
+		Deadline:      deadline.Format(time.RFC3339),
+		SponsorWallet: req.SponsorWallet,
 	}
 
 	payloadJSON, err := json.Marshal(payload)
@@ -73,14 +66,13 @@ func (h *Handlers) CreateCampaignChallenge(w http.ResponseWriter, r *http.Reques
 	}
 
 	message := walletproof.BuildCreateCampaignMessage(walletproof.CreateCampaignMessageInput{
-		ChallengeID:    challengeID,
-		GitHubUsername: user.GitHubUsername,
-		SponsorWallet:  req.SponsorWallet,
-		Repo:           req.Repo,
-		PoolAmount:     req.PoolAmount,
-		Deadline:       deadline,
-		IssuedAt:       issuedAt,
-		ExpiresAt:      expiresAt,
+		ChallengeID:   challengeID,
+		SponsorWallet: req.SponsorWallet,
+		Repo:          req.Repo,
+		PoolAmount:    req.PoolAmount,
+		Deadline:      deadline,
+		IssuedAt:      issuedAt,
+		ExpiresAt:     expiresAt,
 	})
 
 	challenge := &models.WalletChallenge{
@@ -401,6 +393,30 @@ func validateClaimInputs(
 	}
 	if allocation.Claimed {
 		return errors.New("allocation already claimed")
+	}
+	return nil
+}
+
+func validateClaimConfirmationInputs(
+	githubUsername string,
+	campaign *models.Campaign,
+	contributorGithub string,
+	walletAddress string,
+) error {
+	if campaign.State != models.StateFinalized && campaign.State != models.StateCompleted {
+		return errors.New("campaign is not finalized")
+	}
+	if contributorGithub == "" || walletAddress == "" {
+		return errors.New("contributor_github and wallet_address are required")
+	}
+	if !isValidSolanaAddress(walletAddress) {
+		return errors.New("invalid wallet address format")
+	}
+	if githubUsername != contributorGithub {
+		return errors.New("can only claim your own allocation")
+	}
+	if findAllocation(campaign, contributorGithub) == nil {
+		return errors.New("contributor not found in allocations")
 	}
 	return nil
 }

@@ -14,6 +14,8 @@ var errSnapshotNotFound = errors.New("finalize snapshot not found")
 var errSnapshotStale = errors.New("finalize snapshot is stale")
 var errSnapshotNotApproved = errors.New("finalize snapshot has not been approved")
 
+const snapshotInputVersion = "repository_history_mvp_v1"
+
 type allocationOptions struct {
 	forceDeterministic bool
 }
@@ -25,7 +27,8 @@ func campaignContributionWindow(campaign *models.Campaign) (time.Time, time.Time
 func buildSnapshotInputHash(campaign *models.Campaign) string {
 	start, end := campaignContributionWindow(campaign)
 	hash := sha256.Sum256([]byte(
-		campaign.CampaignID + "|" +
+		snapshotInputVersion + "|" +
+			campaign.CampaignID + "|" +
 			campaign.Repo + "|" +
 			campaign.Sponsor + "|" +
 			campaign.CreatedAt.UTC().Format(time.RFC3339Nano) + "|" +

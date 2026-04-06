@@ -47,11 +47,14 @@ export interface CreateCampaignResponse {
   campaign_id: string;
   campaign_pda: string;
   vault_address: string;
+  escrow_pda?: string;
   repo: string;
   pool_amount: number;
   deadline: string;
-  state: 'created';
-  tx_signature: string;
+  state?: 'created' | 'funded' | 'finalized' | 'completed';
+  status?: 'active' | 'finalized' | 'closed';
+  tx_signature?: string;
+  unsigned_tx?: string;
 }
 
 export interface FinalizePreviewResponse {
@@ -119,6 +122,10 @@ export interface WalletChallengeResponse {
   wallet_address: string;
   message: string;
   expires_at: string;
+}
+
+export interface BuildClaimTxResponse {
+  partial_tx: string;
 }
 
 export interface SnapshotSummary {
