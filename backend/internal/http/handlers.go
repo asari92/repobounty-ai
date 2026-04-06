@@ -432,10 +432,6 @@ func (h *Handlers) CreateCampaignConfirm(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-type fundTxRequest struct {
-	SponsorWallet string `json:"sponsor_wallet"`
-}
-
 func (h *Handlers) FundTx(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusGone, "campaign funding is deprecated; campaigns are created atomically on-chain")
 }

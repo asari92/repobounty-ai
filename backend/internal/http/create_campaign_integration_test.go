@@ -27,13 +27,13 @@ import (
 )
 
 func TestCreateCampaignChallengeAcceptsConfiguredMVPDeadline(t *testing.T) {
-	cfg := &config.Config{MinCampaignAmount: 500_000_000, MinDeadlineSeconds: 300}
+	cfg := &config.Config{MinCampaignAmount: 500_000_000, MinDeadlineSeconds: 900}
 	handlers := NewHandlers(store.New(), stubGitHubService{}, &stubSolanaService{}, ai.NewAllocator("", "test"), nil, nil, cfg)
 
 	req := models.CreateCampaignChallengeRequest{
 		Repo:          "octocat/Hello-World",
 		PoolAmount:    500_000_000,
-		Deadline:      time.Now().UTC().Add(10 * time.Minute).Format(time.RFC3339),
+		Deadline:      time.Now().UTC().Add(20 * time.Minute).Format(time.RFC3339),
 		SponsorWallet: testWalletAddress(t),
 	}
 
@@ -47,13 +47,13 @@ func TestCreateCampaignChallengeAcceptsConfiguredMVPDeadline(t *testing.T) {
 }
 
 func TestCreateCampaignChallengeRejectsDeadlineBelowConfiguredMinimum(t *testing.T) {
-	cfg := &config.Config{MinCampaignAmount: 500_000_000, MinDeadlineSeconds: 300}
+	cfg := &config.Config{MinCampaignAmount: 500_000_000, MinDeadlineSeconds: 900}
 	handlers := NewHandlers(store.New(), stubGitHubService{}, &stubSolanaService{}, ai.NewAllocator("", "test"), nil, nil, cfg)
 
 	req := models.CreateCampaignChallengeRequest{
 		Repo:          "octocat/Hello-World",
 		PoolAmount:    500_000_000,
-		Deadline:      time.Now().UTC().Add(2 * time.Minute).Format(time.RFC3339),
+		Deadline:      time.Now().UTC().Add(10 * time.Minute).Format(time.RFC3339),
 		SponsorWallet: testWalletAddress(t),
 	}
 
