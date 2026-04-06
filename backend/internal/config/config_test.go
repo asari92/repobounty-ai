@@ -7,6 +7,19 @@ import (
 	"testing"
 )
 
+func TestLoadUsesOneMinuteAutoFinalizeIntervalByDefault(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("AUTO_FINALIZE_INTERVAL_SECONDS", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AutoFinalizeIntervalSeconds != 60 {
+		t.Fatalf("AutoFinalizeIntervalSeconds = %d, want %d", cfg.AutoFinalizeIntervalSeconds, 60)
+	}
+}
+
 func TestLoadUsesServicePrivateKey(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("SERVICE_PRIVATE_KEY", "service-key")

@@ -16,6 +16,13 @@ import (
 
 const maxAutoFinalizeRetries = 3
 
+func normalizeAutoFinalizeInterval(interval time.Duration) time.Duration {
+	if interval <= 0 {
+		return time.Minute
+	}
+	return interval
+}
+
 func StartAutoFinalizeWorker(
 	ctx context.Context,
 	campaignStore store.CampaignStore,
@@ -25,9 +32,7 @@ func StartAutoFinalizeWorker(
 	logger *zap.Logger,
 	interval time.Duration,
 ) {
-	if interval == 0 {
-		interval = 5 * time.Minute
-	}
+	interval = normalizeAutoFinalizeInterval(interval)
 
 	retries := make(map[string]int) // campaign_id -> failure count
 

@@ -91,7 +91,15 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	handler.StartAutoFinalizeWorker(ctx, campaignStore, ghClient, aiAllocator, solClient, logger, 5*time.Minute)
+	handler.StartAutoFinalizeWorker(
+		ctx,
+		campaignStore,
+		ghClient,
+		aiAllocator,
+		solClient,
+		logger,
+		time.Duration(cfg.AutoFinalizeIntervalSeconds)*time.Second,
+	)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),
