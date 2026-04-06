@@ -9,16 +9,6 @@ import { api } from '../api/client';
 const MIN_CAMPAIGN_POOL_SOL = 0.5;
 const MIN_CAMPAIGN_POOL_LAMPORTS = 500_000_000;
 
-function pad(value: number): string {
-  return value.toString().padStart(2, '0');
-}
-
-function toDateTimeLocalValue(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
-    date.getDate()
-  )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
 function toStableRFC3339(value: string): string | null {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -30,8 +20,6 @@ function toStableRFC3339(value: string): string | null {
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
-
-class TransactionFailedError extends Error {}
 
 class ConfirmationTimeoutError extends Error {}
 
@@ -50,6 +38,8 @@ interface PendingCreate {
   txSignature: string;
 }
 
+type RpcTransactionState = 'pending' | 'confirmed' | 'failed';
+
 export default function CreateCampaign() {
   const { publicKey, signTransaction } = useWallet();
   const { connection } = useConnection();
@@ -64,8 +54,6 @@ export default function CreateCampaign() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [solanaReady, setSolanaReady] = useState(true);
-
-  const minDeadline = toDateTimeLocalValue(new Date(Date.now() + 24 * 60 * 60 * 1000));
 
   useEffect(() => {
     let cancelled = false;
@@ -119,70 +107,34 @@ export default function CreateCampaign() {
     );
   }
 
-  async function waitForRpcConfirmation(txSignature: string) {
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      try {
-        const { value } = await connection.getSignatureStatuses([txSignature], {
-          searchTransactionHistory: true,
-        });
-        const status = value[0];
+  async function lookupTransactionState(txSignature: string): Promise<RpcTransactionState> {
+    try {
+      const { value } = await connection.getSignatureStatuses([txSignature], {
+        searchTransactionHistory: true,
+      });
+      const status = value[0];
 
-        if (status?.err) {
-          throw new TransactionFailedError(
-            'Transaction failed on-chain. Create a new transaction to try again.'
-          );
-        }
-
-        if (
-          status &&
-          (status.confirmationStatus === 'confirmed' ||
-            status.confirmationStatus === 'finalized' ||
-            status.confirmations === null)
-        ) {
-          return;
-        }
-      } catch (err: unknown) {
-        if (err instanceof TransactionFailedError) {
-          throw err;
-        }
+      if (status?.err) {
+        return 'failed';
       }
-
-      await delay(1500);
+      if (
+        status &&
+        (status.confirmationStatus === 'confirmed' ||
+          status.confirmationStatus === 'finalized' ||
+          status.confirmations === null)
+      ) {
+        return 'confirmed';
+      }
+    } catch {
+      return 'pending';
     }
 
-    throw new ConfirmationTimeoutError(
-      'Transaction was sent, but RPC confirmation is still pending. You can retry confirmation with the same transaction.'
-    );
+    return 'pending';
   }
 
   async function finalizePendingCreate(pending: PendingCreate) {
     setError(null);
-    setStatusMessage('Transaction sent. Waiting for RPC confirmation...');
-
-    try {
-      await waitForRpcConfirmation(pending.txSignature);
-    } catch (err: unknown) {
-      if (err instanceof TransactionFailedError) {
-        setPendingCreate(null);
-        setStatusMessage(null);
-        setError(err.message);
-        return;
-      }
-      if (err instanceof ConfirmationTimeoutError) {
-        setError(err.message);
-        setStatusMessage('Transaction sent. Waiting for on-chain confirmation...');
-        return;
-      }
-      setError(
-        err instanceof Error
-          ? `${err.message}. You can retry confirmation with the same transaction.`
-          : 'Unable to confirm transaction status yet. You can retry confirmation with the same transaction.'
-      );
-      setStatusMessage('Transaction sent. Waiting for RPC confirmation...');
-      return;
-    }
-
-    setStatusMessage('Transaction confirmed on-chain. Finalizing campaign...');
+    setStatusMessage('Transaction sent. Waiting for on-chain confirmation...');
     try {
       await confirmCreatedCampaign(
         pending.campaignId,
@@ -196,15 +148,31 @@ export default function CreateCampaign() {
       setStatusMessage(null);
       navigate(`/campaign/${pending.campaignId}`);
     } catch (err: unknown) {
+      const txState = await lookupTransactionState(pending.txSignature);
+      if (txState === 'failed') {
+        setPendingCreate(null);
+        setStatusMessage(null);
+        setError('Transaction failed on-chain. Create a new transaction to try again.');
+        return;
+      }
       if (err instanceof ConfirmationTimeoutError) {
         setError(err.message);
-        setStatusMessage('Transaction confirmed on-chain. Backend confirmation is still pending.');
+        setStatusMessage(
+          txState === 'confirmed'
+            ? 'Transaction confirmed on-chain. Backend confirmation is still pending.'
+            : 'Transaction sent. Waiting for on-chain confirmation...'
+        );
         return;
       }
       setError(
         err instanceof Error
-          ? err.message
-        : 'Failed to finalize campaign creation. You can retry confirmation with the same transaction.'
+          ? `${err.message}. You can retry confirmation with the same transaction.`
+          : 'Failed to finalize campaign creation. You can retry confirmation with the same transaction.'
+      );
+      setStatusMessage(
+        txState === 'confirmed'
+          ? 'Transaction confirmed on-chain. Backend confirmation is still pending.'
+          : 'Transaction sent. Waiting for on-chain confirmation...'
       );
     }
   }
@@ -386,7 +354,6 @@ export default function CreateCampaign() {
                 type="datetime-local"
                 value={deadline}
                 onChange={(e) => setDeadline(e.target.value)}
-                min={minDeadline}
                 step="60"
                 className="input"
                 disabled={submitting || pendingCreate !== null}
