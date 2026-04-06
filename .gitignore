@@ -155,6 +155,7 @@ build/
 coverage/
 
 # Go / Backend
+backend/api
 bin/
 vendor/
 *.test
