@@ -63,6 +63,8 @@ func NewRouter(h *Handlers, env string) http.Handler {
 			r.With(requireAuth).Post("/{id}/claim-challenge", h.ClaimChallenge)
 			r.With(requireAuth).Post("/{id}/claim", h.ClaimPermit)
 			r.With(requireAuth).Post("/{id}/claim-confirm", h.ClaimConfirm)
+			r.Post("/{id}/refund", h.RefundBuild)
+			r.Post("/{id}/refund-confirm", h.RefundConfirm)
 			r.Post("/{id}/fund-tx", h.FundTx)
 		})
 	})

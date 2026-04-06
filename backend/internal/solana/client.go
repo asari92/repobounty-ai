@@ -28,6 +28,7 @@ type Client struct {
 
 var campaignAccountDiscriminator = anchorDiscriminator("account:Campaign")
 var claimRecordAccountDiscriminator = anchorDiscriminator("account:ClaimRecord")
+var refundUnclaimedInstructionDiscriminator = anchorDiscriminator("global:refund_unclaimed")
 var ErrNotConfigured = errors.New("solana client not configured")
 var ErrCampaignNotFound = errors.New("campaign not found")
 
@@ -433,6 +434,120 @@ func newClaimInstruction(
 	)
 }
 
+func newRefundUnclaimedInstruction(
+	programID solana.PublicKey,
+	sponsor solana.PublicKey,
+	config solana.PublicKey,
+	campaign solana.PublicKey,
+	escrow solana.PublicKey,
+) *solana.GenericInstruction {
+	data := anchorDiscriminator("global:refund_unclaimed")
+
+	return solana.NewInstruction(
+		programID,
+		solana.AccountMetaSlice{
+			solana.NewAccountMeta(sponsor, true, true),
+			solana.NewAccountMeta(config, false, false),
+			solana.NewAccountMeta(campaign, true, false),
+			solana.NewAccountMeta(escrow, true, false),
+			solana.NewAccountMeta(solana.SystemProgramID, false, false),
+		},
+		data,
+	)
+}
+
+func (c *Client) BuildRefundTransaction(ctx context.Context, campaignID string, sponsor string) (string, error) {
+	if !c.IsConfigured() {
+		return "", ErrNotConfigured
+	}
+
+	sponsorKey, err := solana.PublicKeyFromBase58(sponsor)
+	if err != nil {
+		return "", fmt.Errorf("parse sponsor pubkey: %w", err)
+	}
+
+	parsedCampaignID, err := parseCampaignID(campaignID)
+	if err != nil {
+		return "", err
+	}
+
+	configPDA, _, err := deriveConfigPDA(c.programID)
+	if err != nil {
+		return "", fmt.Errorf("derive config PDA: %w", err)
+	}
+
+	campaignPDA, _, err := deriveCampaignPDA(c.programID, sponsorKey, parsedCampaignID)
+	if err != nil {
+		return "", fmt.Errorf("derive campaign PDA: %w", err)
+	}
+
+	escrowPDA, _, err := deriveEscrowPDA(c.programID, campaignPDA)
+	if err != nil {
+		return "", fmt.Errorf("derive escrow PDA: %w", err)
+	}
+
+	recent, err := c.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		return "", fmt.Errorf("get blockhash: %w", err)
+	}
+
+	tx, err := solana.NewTransaction(
+		[]solana.Instruction{
+			newRefundUnclaimedInstruction(c.programID, sponsorKey, configPDA, campaignPDA, escrowPDA),
+		},
+		recent.Value.Blockhash,
+		solana.TransactionPayer(sponsorKey),
+	)
+	if err != nil {
+		return "", fmt.Errorf("build transaction: %w", err)
+	}
+
+	txData, err := tx.MarshalBinary()
+	if err != nil {
+		return "", fmt.Errorf("marshal transaction: %w", err)
+	}
+
+	return base58.Encode(txData), nil
+}
+
+func (c *Client) VerifyRefundTransaction(ctx context.Context, campaignID string, sponsor string, txSignature string) error {
+	if !c.IsConfigured() {
+		return ErrNotConfigured
+	}
+
+	signature, err := solana.SignatureFromBase58(strings.TrimSpace(txSignature))
+	if err != nil {
+		return fmt.Errorf("parse transaction signature: %w", err)
+	}
+
+	result, err := c.rpcClient.GetTransaction(
+		ctx,
+		signature,
+		&rpc.GetTransactionOpts{
+			Commitment: rpc.CommitmentFinalized,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("get transaction: %w", err)
+	}
+	if result == nil || result.Transaction == nil {
+		return fmt.Errorf("refund transaction not found")
+	}
+	if result.Meta == nil {
+		return fmt.Errorf("refund transaction metadata missing")
+	}
+	if result.Meta.Err != nil {
+		return fmt.Errorf("refund transaction failed")
+	}
+
+	tx, err := result.Transaction.GetTransaction()
+	if err != nil {
+		return fmt.Errorf("decode transaction: %w", err)
+	}
+
+	return verifyRefundTransaction(tx, campaignID, sponsor, c.programID)
+}
+
 func (c *Client) ClaimAllocation(ctx context.Context, campaignID, contributorGitHub string, contributorWallet string) (string, error) {
 	if !c.IsConfigured() {
 		return "", ErrNotConfigured
@@ -805,6 +920,79 @@ func (c *Client) sendTransaction(ctx context.Context, instruction solana.Instruc
 func anchorDiscriminator(namespace string) []byte {
 	h := sha256.Sum256([]byte(namespace))
 	return h[:8]
+}
+
+func verifyRefundTransaction(tx *solana.Transaction, campaignID, sponsor string, programID solana.PublicKey) error {
+	if tx == nil {
+		return fmt.Errorf("transaction is nil")
+	}
+
+	sponsorKey, err := solana.PublicKeyFromBase58(sponsor)
+	if err != nil {
+		return fmt.Errorf("parse sponsor pubkey: %w", err)
+	}
+
+	parsedCampaignID, err := parseCampaignID(campaignID)
+	if err != nil {
+		return err
+	}
+
+	configPDA, _, err := deriveConfigPDA(programID)
+	if err != nil {
+		return fmt.Errorf("derive config PDA: %w", err)
+	}
+
+	campaignPDA, _, err := deriveCampaignPDA(programID, sponsorKey, parsedCampaignID)
+	if err != nil {
+		return fmt.Errorf("derive campaign PDA: %w", err)
+	}
+
+	escrowPDA, _, err := deriveEscrowPDA(programID, campaignPDA)
+	if err != nil {
+		return fmt.Errorf("derive escrow PDA: %w", err)
+	}
+
+	for _, ix := range tx.Message.Instructions {
+		program, err := tx.Message.Program(ix.ProgramIDIndex)
+		if err != nil || !program.Equals(programID) {
+			continue
+		}
+
+		data := []byte(ix.Data)
+		if len(data) < len(refundUnclaimedInstructionDiscriminator) {
+			continue
+		}
+		if !equalBytes(data[:len(refundUnclaimedInstructionDiscriminator)], refundUnclaimedInstructionDiscriminator) {
+			continue
+		}
+
+		accounts, err := ix.ResolveInstructionAccounts(&tx.Message)
+		if err != nil {
+			return fmt.Errorf("resolve refund instruction accounts: %w", err)
+		}
+		if len(accounts) < 5 {
+			return fmt.Errorf("refund instruction missing required accounts")
+		}
+		if accounts[0] == nil || !accounts[0].PublicKey.Equals(sponsorKey) {
+			return fmt.Errorf("refund sponsor mismatch")
+		}
+		if accounts[1] == nil || !accounts[1].PublicKey.Equals(configPDA) {
+			return fmt.Errorf("refund config mismatch")
+		}
+		if accounts[2] == nil || !accounts[2].PublicKey.Equals(campaignPDA) {
+			return fmt.Errorf("refund campaign mismatch")
+		}
+		if accounts[3] == nil || !accounts[3].PublicKey.Equals(escrowPDA) {
+			return fmt.Errorf("refund escrow mismatch")
+		}
+		if accounts[4] == nil || !accounts[4].PublicKey.Equals(solana.SystemProgramID) {
+			return fmt.Errorf("refund system program mismatch")
+		}
+
+		return nil
+	}
+
+	return fmt.Errorf("refund instruction not found")
 }
 
 func decodeCampaignAccount(data []byte, campaignPDA string, programID solana.PublicKey) (*models.Campaign, error) {

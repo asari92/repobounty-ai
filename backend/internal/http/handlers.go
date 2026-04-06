@@ -79,6 +79,8 @@ type solanaService interface {
 	) (*solana.FundTransaction, error)
 	FinalizeCampaign(ctx context.Context, campaignID string, sponsor string, allocations []solana.AllocationInput) (string, error)
 	BuildClaimTransaction(ctx context.Context, campaignID string, sponsor string, githubUserID uint64, userWallet string) (string, error)
+	BuildRefundTransaction(ctx context.Context, campaignID string, sponsor string) (string, error)
+	VerifyRefundTransaction(ctx context.Context, campaignID string, sponsor string, txSignature string) error
 	GetClaimStatus(ctx context.Context, campaignID string, sponsor string, githubUserID uint64) (*solana.ClaimStatus, error)
 }
 
@@ -886,6 +888,162 @@ func (h *Handlers) ClaimConfirm(w http.ResponseWriter, r *http.Request) {
 		response.SolanaExplorerURL = fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", req.TxSignature)
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (h *Handlers) RefundBuild(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if h.solana == nil || !h.solana.IsConfigured() {
+		writeError(w, http.StatusServiceUnavailable, "refunds are unavailable until Solana is configured")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	var req models.RefundBuildRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.SponsorWallet == "" {
+		writeError(w, http.StatusBadRequest, "sponsor_wallet is required")
+		return
+	}
+	if !isValidSolanaAddress(req.SponsorWallet) {
+		writeError(w, http.StatusBadRequest, "invalid wallet address format")
+		return
+	}
+
+	campaign, err := h.solana.GetCampaign(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, solana.ErrCampaignNotFound) {
+			writeError(w, http.StatusNotFound, "campaign not found")
+			return
+		}
+		log.Printf("refund: load on-chain campaign failed: %v", err)
+		writeError(w, http.StatusBadGateway, "failed to load on-chain campaign")
+		return
+	}
+	if campaign.Sponsor != req.SponsorWallet {
+		writeError(w, http.StatusForbidden, "only the sponsor can refund this campaign")
+		return
+	}
+	if campaign.Status == models.StateClosed {
+		writeError(w, http.StatusConflict, "campaign is already closed on-chain")
+		return
+	}
+	if !time.Now().UTC().After(campaign.ClaimDeadlineAt) {
+		writeError(w, http.StatusConflict, "claim deadline has not been reached yet")
+		return
+	}
+
+	partialTx, err := h.solana.BuildRefundTransaction(r.Context(), campaign.CampaignID, req.SponsorWallet)
+	if err != nil {
+		if errors.Is(err, solana.ErrNotConfigured) {
+			writeError(w, http.StatusServiceUnavailable, "refunds are unavailable until Solana is configured")
+			return
+		}
+		log.Printf("solana build_refund_tx failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to build refund transaction")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, models.RefundBuildResponse{
+		PartialTx: partialTx,
+	})
+}
+
+func (h *Handlers) RefundConfirm(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if h.solana == nil || !h.solana.IsConfigured() {
+		writeError(w, http.StatusServiceUnavailable, "refunds are unavailable until Solana is configured")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	var req models.RefundConfirmRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.SponsorWallet == "" {
+		writeError(w, http.StatusBadRequest, "sponsor_wallet is required")
+		return
+	}
+	if !isValidSolanaAddress(req.SponsorWallet) {
+		writeError(w, http.StatusBadRequest, "invalid wallet address format")
+		return
+	}
+	txSignature := strings.TrimSpace(req.TxSignature)
+	if txSignature == "" {
+		writeError(w, http.StatusBadRequest, "tx_signature is required")
+		return
+	}
+
+	if err := h.solana.VerifyRefundTransaction(r.Context(), id, req.SponsorWallet, txSignature); err != nil {
+		if errors.Is(err, solana.ErrNotConfigured) {
+			writeError(w, http.StatusServiceUnavailable, "refunds are unavailable until Solana is configured")
+			return
+		}
+		log.Printf("refund confirm: verify transaction failed: %v", err)
+		writeError(w, http.StatusConflict, "refund is not confirmed on-chain yet")
+		return
+	}
+
+	onChainCampaign, err := h.solana.GetCampaign(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, solana.ErrCampaignNotFound) {
+			log.Printf("refund confirm: on-chain campaign lookup returned not found after verified refund, continuing with transaction proof: campaign=%s", id)
+		} else {
+			log.Printf("refund confirm: load on-chain campaign failed after verified refund, continuing with transaction proof: %v", err)
+		}
+		onChainCampaign = nil
+	}
+
+	campaign, err := h.store.Get(id)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		log.Printf("refund confirm: load stored campaign failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if campaign == nil {
+		if onChainCampaign != nil {
+			campaign = onChainCampaign
+		} else {
+			campaign = &models.Campaign{
+				CampaignID: id,
+				Sponsor:    req.SponsorWallet,
+			}
+		}
+	} else if onChainCampaign != nil {
+		campaign = mergeCampaignWithChainData(campaign, onChainCampaign)
+	}
+
+	campaign.Status = models.StateClosed
+	campaign.State = models.StateCompleted
+	campaign.CloseReason = "refund"
+	if campaign.ClosedAt == nil {
+		now := time.Now().UTC()
+		campaign.ClosedAt = &now
+	}
+	campaign.TxSignature = txSignature
+
+	if err := h.store.Update(campaign); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			if createErr := h.store.Create(campaign); createErr == nil {
+				err = nil
+			} else {
+				err = createErr
+			}
+		}
+		if err != nil {
+			log.Printf("WARNING: refund store update failed after on-chain confirmation (campaign=%s): %v", campaign.CampaignID, err)
+			writeJSON(w, http.StatusAccepted, campaign)
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, campaign)
 }
 
 func (h *Handlers) GetClaims(w http.ResponseWriter, r *http.Request) {

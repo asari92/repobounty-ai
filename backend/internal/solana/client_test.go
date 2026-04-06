@@ -2,11 +2,16 @@ package solana
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
+	"encoding/json"
+	"net/http"
 	"testing"
 	"time"
 
 	gosolana "github.com/gagliardetto/solana-go"
+	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/gagliardetto/solana-go/rpc/jsonrpc"
 	"github.com/repobounty/repobounty-ai/internal/models"
 )
 
@@ -335,6 +340,91 @@ func TestNewClaimInstructionUsesV2PayloadAndAccounts(t *testing.T) {
 	}
 }
 
+func TestNewRefundUnclaimedInstructionUsesV2Accounts(t *testing.T) {
+	programID, err := gosolana.PublicKeyFromBase58("5VdatUgJ6AsZ7RbC8TBz6AxUdBNtQ6MckLsKbxgZQdS6")
+	if err != nil {
+		t.Fatalf("parse program id: %v", err)
+	}
+
+	sponsor := gosolana.PublicKeyFromBytes(bytes.Repeat([]byte{1}, 32))
+	config := gosolana.PublicKeyFromBytes(bytes.Repeat([]byte{2}, 32))
+	campaign := gosolana.PublicKeyFromBytes(bytes.Repeat([]byte{3}, 32))
+	escrow := gosolana.PublicKeyFromBytes(bytes.Repeat([]byte{4}, 32))
+
+	instruction := newRefundUnclaimedInstruction(programID, sponsor, config, campaign, escrow)
+	accounts := instruction.Accounts()
+
+	if len(accounts) != 5 {
+		t.Fatalf("len(accounts) = %d, want 5", len(accounts))
+	}
+	if accounts[0].PublicKey != sponsor || !accounts[0].IsSigner || !accounts[0].IsWritable {
+		t.Fatalf("unexpected sponsor meta: %+v", accounts[0])
+	}
+	if accounts[1].PublicKey != config || accounts[1].IsSigner || accounts[1].IsWritable {
+		t.Fatalf("unexpected config meta: %+v", accounts[1])
+	}
+	if accounts[2].PublicKey != campaign || accounts[2].IsSigner || !accounts[2].IsWritable {
+		t.Fatalf("unexpected campaign meta: %+v", accounts[2])
+	}
+	if accounts[3].PublicKey != escrow || accounts[3].IsSigner || !accounts[3].IsWritable {
+		t.Fatalf("unexpected escrow meta: %+v", accounts[3])
+	}
+}
+
+func TestVerifyRefundTransactionAcceptsMatchingRefundTransaction(t *testing.T) {
+	programID, err := gosolana.PublicKeyFromBase58("5VdatUgJ6AsZ7RbC8TBz6AxUdBNtQ6MckLsKbxgZQdS6")
+	if err != nil {
+		t.Fatalf("parse program id: %v", err)
+	}
+
+	sponsor := gosolana.PublicKeyFromBytes(bytes.Repeat([]byte{1}, 32))
+	tx := mustRefundTransaction(t, programID, sponsor, 42)
+
+	client := &Client{
+		rpcClient: rpc.NewWithCustomRPCClient(&refundTransactionRPCMock{
+			t:       t,
+			payload: refundTransactionRPCPayload(t, tx, nil),
+		}),
+		programID: programID,
+	}
+
+	if err := client.VerifyRefundTransaction(
+		context.Background(),
+		"42",
+		sponsor.String(),
+		gosolana.MustSignatureFromBase58("5yUSwqQqeZLEEYKxnG4JC4XhaaBpV3RS4nQbK8bQTyjLX5btVq9A1Ja5nuJzV7Z3Zq8G6EVKFvN4DKUL6PSAxmTk").String(),
+	); err != nil {
+		t.Fatalf("VerifyRefundTransaction: %v", err)
+	}
+}
+
+func TestVerifyRefundTransactionRejectsWrongCampaign(t *testing.T) {
+	programID, err := gosolana.PublicKeyFromBase58("5VdatUgJ6AsZ7RbC8TBz6AxUdBNtQ6MckLsKbxgZQdS6")
+	if err != nil {
+		t.Fatalf("parse program id: %v", err)
+	}
+
+	sponsor := gosolana.PublicKeyFromBytes(bytes.Repeat([]byte{1}, 32))
+	tx := mustRefundTransaction(t, programID, sponsor, 43)
+
+	client := &Client{
+		rpcClient: rpc.NewWithCustomRPCClient(&refundTransactionRPCMock{
+			t:       t,
+			payload: refundTransactionRPCPayload(t, tx, nil),
+		}),
+		programID: programID,
+	}
+
+	if err := client.VerifyRefundTransaction(
+		context.Background(),
+		"42",
+		sponsor.String(),
+		gosolana.MustSignatureFromBase58("5yUSwqQqeZLEEYKxnG4JC4XhaaBpV3RS4nQbK8bQTyjLX5btVq9A1Ja5nuJzV7Z3Zq8G6EVKFvN4DKUL6PSAxmTk").String(),
+	); err == nil {
+		t.Fatal("VerifyRefundTransaction succeeded for a refund transaction from a different campaign")
+	}
+}
+
 func appendTestU32(data []byte, value uint32) []byte {
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, value)
@@ -349,4 +439,95 @@ func appendTestU64(data []byte, value uint64) []byte {
 
 func appendTestI64(data []byte, value int64) []byte {
 	return appendTestU64(data, uint64(value))
+}
+
+func mustRefundTransaction(t *testing.T, programID gosolana.PublicKey, sponsor gosolana.PublicKey, campaignID uint64) *gosolana.Transaction {
+	t.Helper()
+
+	configPDA, _, err := deriveConfigPDA(programID)
+	if err != nil {
+		t.Fatalf("derive config PDA: %v", err)
+	}
+
+	campaignPDA, _, err := deriveCampaignPDA(programID, sponsor, campaignID)
+	if err != nil {
+		t.Fatalf("derive campaign PDA: %v", err)
+	}
+
+	escrowPDA, _, err := deriveEscrowPDA(programID, campaignPDA)
+	if err != nil {
+		t.Fatalf("derive escrow PDA: %v", err)
+	}
+
+	tx, err := gosolana.NewTransaction(
+		[]gosolana.Instruction{
+			newRefundUnclaimedInstruction(programID, sponsor, configPDA, campaignPDA, escrowPDA),
+		},
+		gosolana.HashFromBytes(bytes.Repeat([]byte{7}, 32)),
+		gosolana.TransactionPayer(sponsor),
+	)
+	if err != nil {
+		t.Fatalf("new transaction: %v", err)
+	}
+
+	return tx
+}
+
+type refundTransactionRPCMock struct {
+	t       *testing.T
+	payload []byte
+}
+
+func (m *refundTransactionRPCMock) CallForInto(ctx context.Context, out interface{}, method string, params []interface{}) error {
+	if method != "getTransaction" {
+		m.t.Fatalf("rpc method = %q, want %q", method, "getTransaction")
+	}
+	if len(params) != 2 {
+		m.t.Fatalf("rpc params length = %d, want 2", len(params))
+	}
+	return json.Unmarshal(m.payload, out)
+}
+
+func (*refundTransactionRPCMock) CallWithCallback(ctx context.Context, method string, params []interface{}, callback func(*http.Request, *http.Response) error) error {
+	return nil
+}
+
+func (*refundTransactionRPCMock) CallBatch(ctx context.Context, requests jsonrpc.RPCRequests) (jsonrpc.RPCResponses, error) {
+	return nil, nil
+}
+
+func refundTransactionRPCPayload(t *testing.T, tx *gosolana.Transaction, metaErr any) []byte {
+	t.Helper()
+
+	txJSON, err := json.Marshal(tx)
+	if err != nil {
+		t.Fatalf("marshal tx: %v", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"slot":        1,
+		"blockTime":   123,
+		"transaction": json.RawMessage(txJSON),
+		"meta": map[string]any{
+			"err":               metaErr,
+			"fee":               5000,
+			"preBalances":       []uint64{},
+			"postBalances":      []uint64{},
+			"innerInstructions": []any{},
+			"preTokenBalances":  []any{},
+			"postTokenBalances": []any{},
+			"logMessages":       []string{},
+			"status":            map[string]any{"Ok": nil},
+			"rewards":           []any{},
+			"loadedAddresses": map[string]any{
+				"readonly": []string{},
+				"writable": []string{},
+			},
+		},
+		"version": "legacy",
+	})
+	if err != nil {
+		t.Fatalf("marshal rpc payload: %v", err)
+	}
+	return payload
 }

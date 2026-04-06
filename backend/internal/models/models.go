@@ -189,6 +189,19 @@ type BuildClaimTxResponse struct {
 	PartialTx string `json:"partial_tx"`
 }
 
+type RefundBuildRequest struct {
+	SponsorWallet string `json:"sponsor_wallet"`
+}
+
+type RefundBuildResponse struct {
+	PartialTx string `json:"partial_tx"`
+}
+
+type RefundConfirmRequest struct {
+	SponsorWallet string `json:"sponsor_wallet"`
+	TxSignature   string `json:"tx_signature,omitempty"`
+}
+
 type ClaimConfirmRequest struct {
 	ContributorGithub string `json:"contributor_github"`
 	WalletAddress     string `json:"wallet_address"`

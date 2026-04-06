@@ -855,6 +855,15 @@ func (*stubSolanaService) BuildClaimTransaction(
 	return "", errors.New("not implemented")
 }
 
+func (*stubSolanaService) VerifyRefundTransaction(
+	ctx context.Context,
+	campaignID string,
+	sponsor string,
+	txSignature string,
+) error {
+	return errors.New("not implemented")
+}
+
 func (*stubSolanaService) GetClaimStatus(
 	ctx context.Context,
 	campaignID string,
