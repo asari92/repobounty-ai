@@ -2,7 +2,7 @@
 
 ## Summary
 
-RepoBounty AI is still a backend-authority MVP, but the live implementation now closes the biggest trust gaps that existed in the first hackathon version:
+Enshor is still a backend-authority MVP, but the live implementation now closes the biggest trust gaps that existed in the first hackathon version:
 
 - Campaign creation requires a backend-issued, single-use, expiring wallet challenge signed by the sponsor wallet.
 - Claims require a backend-issued, single-use, expiring wallet challenge signed by the destination wallet.

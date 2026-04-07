@@ -1,4 +1,4 @@
-# RepoBounty AI — Полная инструкция по запуску и деплою
+# Enshor — Полная инструкция по запуску и деплою
 
 ## Содержание
 
@@ -91,7 +91,7 @@ OPENROUTER_API_KEY=sk-or-...           # Без ключа работает dete
 MODEL=nvidia/nemotron-3-super-120b-a12b:free
 
 # === Storage ===
-DATABASE_PATH=repobounty.db            # Пустое = in-memory
+DATABASE_PATH=enshor.db            # Пустое = in-memory
 ```
 
 > **Без внешних ключей** backend запустится в mock-режиме: mock GitHub data, deterministic AI, mock Solana transactions.
@@ -186,7 +186,7 @@ SERVICE_PRIVATE_KEY=<base58-или-json>
 ### 4.2. GitHub OAuth App (для логина пользователей)
 
 1. https://github.com/settings/developers → **New OAuth App**
-2. Application name: `RepoBounty AI`
+2. Application name: `Enshor`
 3. Homepage URL: `http://localhost:3000`
 4. Authorization callback URL: `http://localhost:3000/auth/callback`
 5. Скопируй Client ID → `GITHUB_CLIENT_ID`

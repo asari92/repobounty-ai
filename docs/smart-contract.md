@@ -2,7 +2,7 @@
 
 ## Overview
 
-The RepoBounty program is an Anchor-based Solana smart contract that manages reward campaign lifecycle.
+The Enshor program is an Anchor-based Solana smart contract that manages reward campaign lifecycle.
 
 The agreed target contract model is:
 

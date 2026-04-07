@@ -2,7 +2,7 @@
 
 ## High-Level Overview
 
-RepoBounty AI connects public GitHub contribution data, AI-based reward allocation, and Solana smart contract state.
+Enshor connects public GitHub contribution data, AI-based reward allocation, and Solana smart contract state.
 
 This document reflects the agreed target architecture for the next contract revision:
 
