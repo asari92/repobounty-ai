@@ -126,7 +126,7 @@ export interface FinalizeWalletRequest {
 
 export interface WalletChallengeResponse {
   challenge_id: string;
-  action: 'create_campaign' | 'claim';
+  action: 'create_campaign' | 'claim' | 'finalize';
   wallet_address: string;
   message: string;
   expires_at: string;
