@@ -179,3 +179,13 @@ export interface HealthResponse {
   ai_model: string;
   store: boolean;
 }
+
+export interface UserSearchResult {
+  login: string;
+  avatar_url: string;
+}
+
+export interface RepoSearchResult {
+  name: string;
+  owner: string;
+}

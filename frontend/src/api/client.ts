@@ -14,6 +14,8 @@ import type {
   MyCampaign,
   BuildClaimTxResponse,
   HealthResponse,
+  UserSearchResult,
+  RepoSearchResult,
 } from '../types';
 
 const API_BASE = '/api';
@@ -163,5 +165,9 @@ export const api = {
   },
   getHealth(): Promise<HealthResponse> {
     return request('/health');
+  },
+
+  searchGitHub(query: string): Promise<(UserSearchResult | RepoSearchResult)[]> {
+    return request(`/github/search?q=${encodeURIComponent(query)}`);
   },
 };
