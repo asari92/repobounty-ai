@@ -479,6 +479,60 @@ func (h *Handlers) FinalizePreview(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// commitFinalize sends the finalization transaction to Solana and persists the
+// result. It is the shared core called by the GitHub-auth Finalize handler,
+// the FinalizeWithWalletProof handler, and the auto-finalize worker.
+func (h *Handlers) commitFinalize(
+	ctx context.Context,
+	campaign *models.Campaign,
+	result *allocationResult,
+) (models.FinalizeResponse, error) {
+	if h.solana == nil || !h.solana.IsConfigured() {
+		return models.FinalizeResponse{}, solana.ErrNotConfigured
+	}
+
+	solanaInputs := make([]solana.AllocationInput, len(result.allocations))
+	for i, a := range result.allocations {
+		if a.GithubUserID == 0 {
+			return models.FinalizeResponse{}, fmt.Errorf("missing github_user_id for allocation %s", a.Contributor)
+		}
+		solanaInputs[i] = solana.AllocationInput{
+			GithubUserID: a.GithubUserID,
+			Amount:       a.Amount,
+		}
+	}
+
+	txSig, err := h.solana.FinalizeCampaign(ctx, campaign.CampaignID, campaign.Sponsor, solanaInputs)
+	if err != nil {
+		return models.FinalizeResponse{}, fmt.Errorf("finalize on-chain: %w", err)
+	}
+
+	now := time.Now()
+	campaign.State = models.StateFinalized
+	campaign.Allocations = result.allocations
+	campaign.FinalizedAt = &now
+	campaign.TxSignature = txSig
+
+	if err := h.store.Update(campaign); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			_ = h.store.Create(campaign)
+		} else {
+			log.Printf("WARNING: store update failed after on-chain finalization (campaign=%s, tx=%s): %v",
+				campaign.CampaignID, txSig, err)
+		}
+	}
+
+	explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
+	return models.FinalizeResponse{
+		CampaignID:        campaign.CampaignID,
+		State:             models.StateFinalized,
+		Allocations:       result.allocations,
+		TxSignature:       txSig,
+		SolanaExplorerURL: explorerURL,
+		AllocationMode:    result.allocationMode,
+	}, nil
+}
+
 func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	user, ok := auth.GetUserFromContext(r.Context())
@@ -524,81 +578,20 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := snapshotToAllocationResult(snapshot)
-	snapshotSummary := snapshot.Summary()
 
-	solanaInputs := make([]solana.AllocationInput, len(result.allocations))
-	for i, a := range result.allocations {
-		if a.GithubUserID == 0 {
-			log.Printf("finalize: missing github_user_id for allocation %s in campaign %s", a.Contributor, campaign.CampaignID)
-			writeError(w, http.StatusInternalServerError, "failed to map contributor identities for on-chain finalization")
-			return
-		}
-		solanaInputs[i] = solana.AllocationInput{
-			GithubUserID: a.GithubUserID,
-			Amount:       a.Amount,
-		}
-	}
-
-	txSig, err := h.solana.FinalizeCampaign(r.Context(), campaign.CampaignID, campaign.Sponsor, solanaInputs)
+	resp, err := h.commitFinalize(r.Context(), campaign, result)
 	if err != nil {
 		if errors.Is(err, solana.ErrNotConfigured) {
 			writeError(w, http.StatusServiceUnavailable, "campaign finalization is unavailable until Solana is configured")
 			return
 		}
-		log.Printf("solana finalize_campaign failed: %v", err)
+		log.Printf("finalize: commitFinalize failed for %s: %v", campaign.CampaignID, err)
 		writeError(w, http.StatusInternalServerError, "failed to finalize on-chain")
 		return
 	}
 
-	now := time.Now()
-	campaign.State = models.StateFinalized
-	campaign.Allocations = result.allocations
-	campaign.FinalizedAt = &now
-	campaign.TxSignature = txSig
-
-	if err := h.store.Update(campaign); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			if createErr := h.store.Create(campaign); createErr != nil {
-				log.Printf("WARNING: store update failed after on-chain finalization (campaign=%s, tx=%s): %v", campaign.CampaignID, txSig, createErr)
-				explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
-				writeJSON(w, http.StatusAccepted, models.FinalizeResponse{
-					CampaignID:        campaign.CampaignID,
-					State:             models.StateFinalized,
-					Allocations:       result.allocations,
-					TxSignature:       txSig,
-					SolanaExplorerURL: explorerURL,
-					AllocationMode:    result.allocationMode,
-					Snapshot:          &snapshotSummary,
-				})
-				return
-			}
-		} else {
-			log.Printf("WARNING: store update failed after on-chain finalization (campaign=%s, tx=%s): %v", campaign.CampaignID, txSig, err)
-			explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
-			writeJSON(w, http.StatusAccepted, models.FinalizeResponse{
-				CampaignID:        campaign.CampaignID,
-				State:             models.StateFinalized,
-				Allocations:       result.allocations,
-				TxSignature:       txSig,
-				SolanaExplorerURL: explorerURL,
-				AllocationMode:    result.allocationMode,
-				Snapshot:          &snapshotSummary,
-			})
-			return
-		}
-	}
-
-	explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
-
-	writeJSON(w, http.StatusOK, models.FinalizeResponse{
-		CampaignID:        campaign.CampaignID,
-		State:             models.StateFinalized,
-		Allocations:       result.allocations,
-		TxSignature:       txSig,
-		SolanaExplorerURL: explorerURL,
-		AllocationMode:    result.allocationMode,
-		Snapshot:          &snapshotSummary,
-	})
+	snapshotSummary := snapshot.Summary()
+	resp.Snapshot = &snapshotSummary
 
 	go func() {
 		defer func() {
@@ -626,6 +619,8 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 			h.config.FrontendURL,
 		)
 	}()
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
