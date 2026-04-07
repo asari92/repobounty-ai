@@ -5,7 +5,8 @@ import "time"
 type WalletChallengeAction string
 
 const (
-	WalletChallengeActionClaim WalletChallengeAction = "claim"
+	WalletChallengeActionClaim    WalletChallengeAction = "claim"
+	WalletChallengeActionFinalize WalletChallengeAction = "finalize"
 )
 
 type WalletChallenge struct {
@@ -22,6 +23,16 @@ type WalletChallenge struct {
 type ClaimChallengeRequest struct {
 	ContributorGithub string `json:"contributor_github"`
 	WalletAddress     string `json:"wallet_address"`
+}
+
+type FinalizeChallengeRequest struct {
+	WalletAddress string `json:"wallet_address"`
+}
+
+type FinalizeWalletRequest struct {
+	WalletAddress string `json:"wallet_address"`
+	ChallengeID   string `json:"challenge_id"`
+	Signature     string `json:"signature"`
 }
 
 type WalletChallengeResponse struct {
