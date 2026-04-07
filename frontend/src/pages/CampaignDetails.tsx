@@ -522,7 +522,7 @@ export default function CampaignDetails() {
                   </div>
                   <AllocationBar percentage={a.percentage} />
                   {a.reasoning && <p className="text-[10px] text-gray-600 mt-1">{a.reasoning}</p>}
-                  {isOwnAllocation && !a.claimed && (
+                  {isOwnAllocation && !a.claimed && !claimedContributors[a.contributor] && (
                     <div className="mt-2 pt-2 border-t border-solana-border/30">
                       {!publicKey ? (
                         <button
@@ -536,12 +536,12 @@ export default function CampaignDetails() {
                           Solana Required
                         </button>
                       ) : (
-                          <button
-                            onClick={() => handleClaim(a.contributor)}
-                            disabled={isCurrentlyClaiming || claimedContributors[a.contributor]}
-                            className="btn-primary text-[10px] !py-1 !px-3"
-                          >
-                            {isCurrentlyClaiming ? 'Claiming...' : `Claim ${formatSOL(a.amount)} SOL`}
+                        <button
+                          onClick={() => handleClaim(a.contributor)}
+                          disabled={isCurrentlyClaiming || a.claimed || claimedContributors[a.contributor]}
+                          className="btn-primary text-[10px] !py-1 !px-3"
+                        >
+                          {isCurrentlyClaiming ? 'Claiming...' : `Claim ${formatSOL(a.amount)} SOL`}
                         </button>
                       )}
                     </div>
