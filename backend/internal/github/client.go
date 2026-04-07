@@ -603,6 +603,112 @@ type ghReview struct {
 	SubmittedAt time.Time `json:"submitted_at"`
 }
 
+type UserSearchResult struct {
+	Login     string `json:"login"`
+	AvatarURL string `json:"avatar_url"`
+}
+
+func (c *Client) SearchUsers(ctx context.Context, query string) ([]UserSearchResult, error) {
+	if len(query) < 3 {
+		return nil, nil
+	}
+
+	url := fmt.Sprintf("https://api.github.com/search/users?q=%s&per_page=10", query)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("search users request %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("search users returned %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		Items []struct {
+			Login     string `json:"login"`
+			AvatarURL string `json:"avatar_url"`
+		} `json:"items"`
+	}
+
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("parse search users: %w", err)
+	}
+
+	results := make([]UserSearchResult, len(payload.Items))
+	for i, item := range payload.Items {
+		results[i] = UserSearchResult{
+			Login:     item.Login,
+			AvatarURL: item.AvatarURL,
+		}
+	}
+
+	return results, nil
+}
+
+type RepoSearchResult struct {
+	Name  string `json:"name"`
+	Owner string `json:"owner"`
+}
+
+func (c *Client) SearchRepositories(ctx context.Context, owner, query string) ([]RepoSearchResult, error) {
+	if len(query) < 2 {
+		return nil, nil
+	}
+
+	url := fmt.Sprintf("https://api.github.com/search/repositories?q=%s/%s&per_page=10", owner, query)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("search repositories request %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("search repositories returned %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		Items []struct {
+			Name  string `json:"name"`
+			Owner struct {
+				Login string `json:"login"`
+			} `json:"owner"`
+		} `json:"items"`
+	}
+
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("parse search repositories: %w", err)
+	}
+
+	results := make([]RepoSearchResult, len(payload.Items))
+	for i, item := range payload.Items {
+		results[i] = RepoSearchResult{
+			Name:  item.Name,
+			Owner: item.Owner.Login,
+		}
+	}
+
+	return results, nil
+}
+
 func mockContributorsDetailed() []ContributorDetailed {
 	return []ContributorDetailed{
 		{Username: "alice-dev", AvatarURL: "https://github.com/alice-dev.png", Contributions: 47},
