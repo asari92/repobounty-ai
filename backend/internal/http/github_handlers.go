@@ -7,9 +7,6 @@ import (
 	"github.com/repobounty/repobounty-ai/internal/github"
 )
 
-var _ = github.UserSearchResult{}
-var _ = github.RepoSearchResult{}
-
 func (h *Handlers) GitHubSearch(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	if query == "" {
@@ -25,12 +22,18 @@ func (h *Handlers) GitHubSearch(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to search users")
 			return
 		}
+		if results == nil {
+			results = []github.UserSearchResult{}
+		}
 		writeJSON(w, http.StatusOK, results)
 	} else if len(parts) == 2 {
 		results, err := h.github.SearchRepositories(r.Context(), parts[0], parts[1])
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to search repositories")
 			return
+		}
+		if results == nil {
+			results = []github.RepoSearchResult{}
 		}
 		writeJSON(w, http.StatusOK, results)
 	} else {

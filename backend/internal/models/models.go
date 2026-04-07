@@ -238,13 +238,3 @@ type SnapshotData struct {
 	TotalPRs          int    `json:"total_prs"`
 	SnapshotTimestamp string `json:"snapshot_timestamp"`
 }
-
-type UserSearchResult struct {
-	Login     string `json:"login"`
-	AvatarURL string `json:"avatar_url"`
-}
-
-type RepoSearchResult struct {
-	Name  string `json:"name"`
-	Owner string `json:"owner"`
-}
