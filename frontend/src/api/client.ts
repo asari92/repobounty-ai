@@ -168,6 +168,8 @@ export const api = {
   },
 
   searchGitHub(query: string): Promise<(UserSearchResult | RepoSearchResult)[]> {
-    return request(`/github/search?q=${encodeURIComponent(query)}`);
+    return request<(UserSearchResult | RepoSearchResult)[] | null>(
+      `/github/search?q=${encodeURIComponent(query)}`
+    ).then((results) => (Array.isArray(results) ? results : []));
   },
 };

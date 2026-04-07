@@ -218,9 +218,7 @@ export default function CampaignDetails() {
             <h1 className="text-xl font-bold">{campaign.repo}</h1>
             <p className="text-[11px] text-gray-600 font-mono mt-1">
               {campaign.campaign_id}
-              {campaign.owner_github_username && (
-                <> · @{campaign.owner_github_username}</>
-              )}
+              {campaign.owner_github_username && <> · @{campaign.owner_github_username}</>}
             </p>
           </div>
           <span className={`badge ${badgeClass} flex-shrink-0`}>{stateConfig.label}</span>
@@ -313,7 +311,8 @@ export default function CampaignDetails() {
           </p>
           {!campaign.owner_github_username ? (
             <p className="text-xs text-yellow-200">
-              Manual finalize unavailable — no creator account stored. The auto-finalize worker will handle it.
+              Manual finalize unavailable — no creator account stored. The auto-finalize worker will
+              handle it.
             </p>
           ) : !user ? (
             <p className="text-xs text-yellow-200">
@@ -327,7 +326,8 @@ export default function CampaignDetails() {
             <div className="space-y-3">
               {!solanaReady && (
                 <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-lg p-2.5 text-xs text-yellow-200">
-                  Backend not connected to Solana. Preview is available but finalization is disabled.
+                  Backend not connected to Solana. Preview is available but finalization is
+                  disabled.
                 </div>
               )}
               <div className="flex gap-2">
@@ -444,7 +444,9 @@ export default function CampaignDetails() {
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs font-medium">@{a.contributor}</span>
-                      {a.claimed && <span className="badge badge-completed text-[10px]">Claimed</span>}
+                      {a.claimed && (
+                        <span className="badge badge-completed text-[10px]">Claimed</span>
+                      )}
                     </div>
                     <span className="text-xs font-bold text-solana-green">
                       {(a.percentage / 100).toFixed(1)}% · {formatSOL(a.amount)} SOL

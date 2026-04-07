@@ -6,18 +6,19 @@ import { Transaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { api } from '../api/client';
 import GitHubAutocomplete from '../components/GitHubAutocomplete';
+import { normalizeGitHubRepoInput } from '../utils/githubRepoInput';
 
 const MIN_CAMPAIGN_POOL_SOL = 0.5;
 const MIN_CAMPAIGN_POOL_LAMPORTS = 500_000_000;
 
 export function getDefaultDeadline(): string {
   const now = new Date();
-  const oneMinuteLater = new Date(now.getTime() + 60000);
-  const year = oneMinuteLater.getFullYear();
-  const month = String(oneMinuteLater.getMonth() + 1).padStart(2, '0');
-  const day = String(oneMinuteLater.getDate()).padStart(2, '0');
-  const hours = String(oneMinuteLater.getHours()).padStart(2, '0');
-  const minutes = String(oneMinuteLater.getMinutes()).padStart(2, '0');
+  const sixMinutesLater = new Date(now.getTime() + 360000);
+  const year = sixMinutesLater.getFullYear();
+  const month = String(sixMinutesLater.getMonth() + 1).padStart(2, '0');
+  const day = String(sixMinutesLater.getDate()).padStart(2, '0');
+  const hours = String(sixMinutesLater.getHours()).padStart(2, '0');
+  const minutes = String(sixMinutesLater.getMinutes()).padStart(2, '0');
 
   return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
@@ -207,7 +208,8 @@ export default function CreateCampaign() {
       return;
     }
 
-    if (!repo.match(/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/)) {
+  const normalizedRepo = normalizeGitHubRepoInput(repo);
+    if (!normalizedRepo.match(/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/)) {
       setError('Repository must be in "owner/repo" format');
       return;
     }
@@ -248,12 +250,12 @@ export default function CreateCampaign() {
 
     setSubmitting(true);
     try {
-      const result = await api.createCampaign({
-        repo,
-        pool_amount: poolLamports,
-        deadline: deadlineRFC3339,
-        sponsor_wallet: publicKey.toBase58(),
-      });
+  const result = await api.createCampaign({
+    repo: normalizedRepo,
+    pool_amount: poolLamports,
+    deadline: deadlineRFC3339,
+    sponsor_wallet: publicKey.toBase58(),
+  });
 
       if (!result.campaign_id?.trim()) {
         throw new Error('Campaign ID was not returned by the backend.');
@@ -285,14 +287,14 @@ export default function CreateCampaign() {
         throw new Error('Failed to send transaction.');
       }
 
-      const pending: PendingCreate = {
-        repo,
-        campaignId: result.campaign_id,
-        sponsorWallet: publicKey.toBase58(),
-        poolLamports,
-        deadlineRFC3339,
-        txSignature,
-      };
+  const pending: PendingCreate = {
+    repo: normalizedRepo,
+    campaignId: result.campaign_id,
+    sponsorWallet: publicKey.toBase58(),
+    poolLamports,
+    deadlineRFC3339,
+    txSignature,
+  };
       setPendingCreate(pending);
       await finalizePendingCreate(pending);
     } catch (err: unknown) {

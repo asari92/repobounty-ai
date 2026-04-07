@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { useWalletModal } from "@solana/wallet-adapter-react-ui";
+import { useEffect, useState } from 'react';
+import { useConnection, useWallet } from '@solana/wallet-adapter-react';
+import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 
 export default function WalletButton() {
   const { connection } = useConnection();
@@ -40,7 +40,7 @@ export default function WalletButton() {
             setBalanceSol((accountInfo.lamports / 1e9).toFixed(2));
           }
         },
-        "confirmed"
+        'confirmed'
       );
     }
 
@@ -71,13 +71,19 @@ export default function WalletButton() {
           {short}
         </span>
         <span className="text-xs text-gray-400">
-          {balanceSol === null ? "..." : `${balanceSol} SOL`}
+          {balanceSol === null ? '...' : `${balanceSol} SOL`}
         </span>
         <button
           onClick={disconnect}
           className="text-xs text-gray-600 hover:text-gray-400 transition-colors p-1"
         >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg
+            className="w-3.5 h-3.5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>

@@ -38,14 +38,15 @@ export default function Home() {
       view === 'mine' && (user || publicKey)
         ? campaigns.filter((campaign) => {
             const walletAddress = publicKey?.toBase58() || user?.wallet_address;
-            const isSponsor = walletAddress && 
-              (campaign.sponsor === walletAddress || 
-               campaign.authority === walletAddress);
-            const isCreator = user?.github_username && 
-              campaign.owner_github_username === user.github_username;
-            const isContributor = user?.github_username && 
-              campaign.allocations?.some(a => a.contributor === user.github_username);
-            
+            const isSponsor =
+              walletAddress &&
+              (campaign.sponsor === walletAddress || campaign.authority === walletAddress);
+            const isCreator =
+              user?.github_username && campaign.owner_github_username === user.github_username;
+            const isContributor =
+              user?.github_username &&
+              campaign.allocations?.some((a) => a.contributor === user.github_username);
+
             return isSponsor || isCreator || isContributor;
           })
         : view === 'mine'
@@ -71,14 +72,15 @@ export default function Home() {
       <div className="mb-8 animate-fade-in-up">
         <div className="flex items-end justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight text-white mb-1">
-              Campaigns
-            </h1>
+            <h1 className="text-3xl font-bold tracking-tight text-white mb-1">Campaigns</h1>
             <p className="text-sm text-gray-500">
               AI-powered reward allocation for open-source contributors on Solana
             </p>
           </div>
-          <Link to="/create" className="btn-primary hidden sm:flex items-center gap-1.5 flex-shrink-0">
+          <Link
+            to="/create"
+            className="btn-primary hidden sm:flex items-center gap-1.5 flex-shrink-0"
+          >
             <span className="text-base leading-none">+</span> New
           </Link>
         </div>
@@ -86,14 +88,15 @@ export default function Home() {
       </div>
 
       {/* Controls */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6 animate-fade-in" style={{ animationDelay: '80ms' }}>
+      <div
+        className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6 animate-fade-in"
+        style={{ animationDelay: '80ms' }}
+      >
         <div className="flex items-center gap-1 bg-solana-card rounded-lg border border-solana-border p-0.5">
           <button
             onClick={() => setView('all')}
             className={`px-4 py-1.5 text-xs font-medium rounded-md transition-all duration-200 ${
-              view === 'all'
-                ? 'bg-solana-purple text-white'
-                : 'text-gray-500 hover:text-gray-300'
+              view === 'all' ? 'bg-solana-purple text-white' : 'text-gray-500 hover:text-gray-300'
             }`}
           >
             All
@@ -101,9 +104,7 @@ export default function Home() {
           <button
             onClick={() => setView('mine')}
             className={`px-4 py-1.5 text-xs font-medium rounded-md transition-all duration-200 ${
-              view === 'mine'
-                ? 'bg-solana-purple text-white'
-                : 'text-gray-500 hover:text-gray-300'
+              view === 'mine' ? 'bg-solana-purple text-white' : 'text-gray-500 hover:text-gray-300'
             }`}
           >
             Mine
@@ -137,20 +138,27 @@ export default function Home() {
 
       {!loading && !error && view === 'mine' && !user && !publicKey && (
         <div className="card text-center py-16">
-          <p className="text-gray-500 text-sm mb-1">Connect GitHub or wallet to see your campaigns.</p>
+          <p className="text-gray-500 text-sm mb-1">
+            Connect GitHub or wallet to see your campaigns.
+          </p>
         </div>
       )}
 
-      {!loading && !error && visibleCampaigns.length === 0 && !(view === 'mine' && !user && !publicKey) && (
-        <div className="card text-center py-16">
-          <p className="text-gray-500 text-sm mb-4">
-            {view === 'mine' ? 'No campaigns found for your connected accounts.' : 'No campaigns yet.'}
-          </p>
-          <Link to="/create" className="btn-primary text-xs">
-            Create Campaign
-          </Link>
-        </div>
-      )}
+      {!loading &&
+        !error &&
+        visibleCampaigns.length === 0 &&
+        !(view === 'mine' && !user && !publicKey) && (
+          <div className="card text-center py-16">
+            <p className="text-gray-500 text-sm mb-4">
+              {view === 'mine'
+                ? 'No campaigns found for your connected accounts.'
+                : 'No campaigns yet.'}
+            </p>
+            <Link to="/create" className="btn-primary text-xs">
+              Create Campaign
+            </Link>
+          </div>
+        )}
 
       {!loading && !error && visibleCampaigns.length > 0 && (
         <>

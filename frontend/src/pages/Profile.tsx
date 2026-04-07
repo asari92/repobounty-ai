@@ -33,7 +33,7 @@ export default function Profile() {
           setClaims([]);
           setErrorClaims(e instanceof Error ? e.message : 'Failed to load claims');
         }
-      })
+      });
     return () => {
       cancelled = true;
     };
@@ -76,9 +76,11 @@ export default function Profile() {
   const totalAvailable = claims.filter((c) => !c.claimed).reduce((sum, c) => sum + c.amount, 0);
   const totalClaimed = claims.filter((c) => c.claimed).reduce((sum, c) => sum + c.amount, 0);
   const claimedCount = claims.filter((c) => c.claimed).length;
-  const activeCampaigns = myCampaigns.filter(c => c.state === 'active').length;
-  const finalizedCampaigns = myCampaigns.filter(c => c.state === 'finalized').length;
-  const closedCampaigns = myCampaigns.filter(c => c.state === 'closed' || c.state === 'completed').length;
+  const activeCampaigns = myCampaigns.filter((c) => c.state === 'active').length;
+  const finalizedCampaigns = myCampaigns.filter((c) => c.state === 'finalized').length;
+  const closedCampaigns = myCampaigns.filter(
+    (c) => c.state === 'closed' || c.state === 'completed'
+  ).length;
   const totalFunded = myCampaigns.reduce((sum, c) => sum + c.pool_amount, 0);
 
   return (
@@ -184,7 +186,10 @@ export default function Profile() {
       </div>
 
       {/* Stats inline */}
-      <div className="grid grid-cols-3 gap-3 mb-5 animate-fade-in-up" style={{ animationDelay: '80ms' }}>
+      <div
+        className="grid grid-cols-3 gap-3 mb-5 animate-fade-in-up"
+        style={{ animationDelay: '80ms' }}
+      >
         <div className="stat-block text-center">
           <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Bounties</p>
           <p className="text-xl font-bold">{claims.length}</p>
@@ -203,7 +208,9 @@ export default function Profile() {
       <div className="card mb-5 animate-fade-in-up" style={{ animationDelay: '200ms' }}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold text-gray-300">My Claims History</h2>
-          <span className="text-2xl font-bold text-solana-green">{formatSOL(totalAvailable)} SOL</span>
+          <span className="text-2xl font-bold text-solana-green">
+            {formatSOL(totalAvailable)} SOL
+          </span>
         </div>
 
         {errorClaims ? (
@@ -248,7 +255,10 @@ export default function Profile() {
       </div>
 
       {/* Quick actions */}
-      <div className="grid grid-cols-2 gap-3 animate-fade-in-up" style={{ animationDelay: '260ms' }}>
+      <div
+        className="grid grid-cols-2 gap-3 animate-fade-in-up"
+        style={{ animationDelay: '260ms' }}
+      >
         <Link
           to="/"
           className="stat-block group hover:border-solana-purple/30 transition-all duration-200 cursor-pointer"
@@ -272,7 +282,11 @@ export default function Profile() {
   );
 }
 
-function CampaignRow({ campaign, user, publicKey }: {
+function CampaignRow({
+  campaign,
+  user,
+  publicKey,
+}: {
   campaign: MyCampaign;
   user: User | null;
   publicKey: PublicKey | null;
@@ -280,14 +294,17 @@ function CampaignRow({ campaign, user, publicKey }: {
   const navigate = useNavigate();
   const walletAddr = publicKey?.toBase58() || user?.wallet_address;
 
-  const isSponsor = walletAddr &&
-    (campaign.sponsor === walletAddr || campaign.authority === walletAddr);
-  const isContributor = user?.github_username &&
-    campaign.allocations?.some(a => a.contributor === user.github_username);
-  const allocation = campaign.allocations?.find(a => a.contributor === user?.github_username);
-  const canClaim = isContributor &&
+  const isSponsor =
+    walletAddr && (campaign.sponsor === walletAddr || campaign.authority === walletAddr);
+  const isContributor =
+    user?.github_username &&
+    campaign.allocations?.some((a) => a.contributor === user.github_username);
+  const allocation = campaign.allocations?.find((a) => a.contributor === user?.github_username);
+  const canClaim =
+    isContributor &&
     (campaign.state === 'finalized' || campaign.state === 'completed') &&
-    allocation && !allocation.claimed;
+    allocation &&
+    !allocation.claimed;
   const canRefund = isSponsor && campaign.can_refund;
 
   const stateColors: Record<string, string> = {
@@ -302,12 +319,18 @@ function CampaignRow({ campaign, user, publicKey }: {
   return (
     <tr className="border-b border-solana-border/30 hover:bg-solana-card-hover/50 transition-colors">
       <td className="py-2.5 px-3 font-mono text-gray-300">
-        <Link to={`/campaign/${campaign.campaign_id}`} className="hover:text-solana-purple transition-colors">
+        <Link
+          to={`/campaign/${campaign.campaign_id}`}
+          className="hover:text-solana-purple transition-colors"
+        >
           {campaign.campaign_id}
         </Link>
       </td>
       <td className="py-2.5 px-3">
-        <Link to={`/campaign/${campaign.campaign_id}`} className="hover:text-solana-purple transition-colors">
+        <Link
+          to={`/campaign/${campaign.campaign_id}`}
+          className="hover:text-solana-purple transition-colors"
+        >
           {campaign.repo}
         </Link>
       </td>
@@ -322,14 +345,16 @@ function CampaignRow({ campaign, user, publicKey }: {
       <td className="py-2.5 px-3 text-gray-400">
         {new Date(campaign.created_at).toLocaleDateString()}
       </td>
-      <td className="py-2.5 px-3 text-gray-400">
-        {deadline.toLocaleDateString()}
-      </td>
+      <td className="py-2.5 px-3 text-gray-400">{deadline.toLocaleDateString()}</td>
       <td className="py-2.5 px-3 text-right">
         <div className="flex items-center justify-end gap-1.5">
           {canClaim && allocation && (
             <button
-              onClick={() => navigate(`/campaign/${campaign.campaign_id}?action=claim&contributor=${allocation.contributor}`)}
+              onClick={() =>
+                navigate(
+                  `/campaign/${campaign.campaign_id}?action=claim&contributor=${allocation.contributor}`
+                )
+              }
               className="btn-primary text-[10px] px-2 py-1"
             >
               Claim {formatSOL(allocation.amount)} SOL

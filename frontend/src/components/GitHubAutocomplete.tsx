@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
+import { getGitHubSearchState, normalizeGitHubRepoInput } from '../utils/githubRepoInput';
 import type { UserSearchResult, RepoSearchResult } from '../types';
 
 interface GitHubAutocompleteProps {
@@ -10,41 +11,76 @@ interface GitHubAutocompleteProps {
 export default function GitHubAutocomplete({ value, onChange }: GitHubAutocompleteProps) {
   const [results, setResults] = useState<(UserSearchResult | RepoSearchResult)[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(-1);
+  const [loading, setLoading] = useState(false);
+  const [dropdownMessage, setDropdownMessage] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
-  const showDropdown = value.length >= 2 && results.length > 0;
+  const searchState = getGitHubSearchState(value);
+  const showDropdown =
+    searchState.mode === 'users' ||
+    searchState.mode === 'repos'
+      ? loading || dropdownMessage !== null || results.length > 0
+      : false;
 
   useEffect(() => {
-    if (value.length < 2) {
-      setResults([]); // eslint-disable-line react-hooks/set-state-in-effect
+    if (searchState.mode !== 'users' && searchState.mode !== 'repos') {
+      setResults([]);
+      setSelectedIndex(-1);
+      setLoading(false);
+      setDropdownMessage(null);
       return;
     }
 
+    const requestId = ++requestIdRef.current;
+    setLoading(true);
+    setDropdownMessage(null);
+
     const timer = setTimeout(async () => {
       try {
-        const searchResults = await api.searchGitHub(value);
-        setResults(searchResults);
-      } catch (err) {
-        console.error('Failed to search GitHub:', err);
+        const searchResults = await api.searchGitHub(searchState.query);
+        if (requestIdRef.current !== requestId) return;
+
+        setResults(Array.isArray(searchResults) ? searchResults : []);
+        setSelectedIndex(-1);
+
+        if (searchResults.length === 0) {
+          setDropdownMessage(
+            searchState.mode === 'repos' && searchState.repoPrefix === ''
+              ? 'No public repositories found'
+              : searchState.mode === 'repos'
+                ? 'No matching repositories'
+                : 'No matching GitHub users'
+          );
+        }
+      } catch {
+        if (requestIdRef.current !== requestId) return;
         setResults([]);
+        setSelectedIndex(-1);
+        setDropdownMessage('Could not load GitHub results');
+      } finally {
+        if (requestIdRef.current === requestId) {
+          setLoading(false);
+        }
       }
     }, 300);
 
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [value]);
+    return () => clearTimeout(timer);
+  }, [searchState.mode, searchState.query, searchState.repoPrefix]);
 
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
-    onChange(e.target.value);
+    onChange(normalizeGitHubRepoInput(e.target.value));
     setSelectedIndex(-1);
   }
 
   function handleSelectResult(result: UserSearchResult | RepoSearchResult) {
-    const login = 'login' in result ? result.login : result.owner;
-    const name = 'name' in result ? result.name : result.login;
-    const newValue = value.endsWith('/') ? `${value}${name}` : `${login}/`;
-    onChange(newValue);
+    if ('login' in result) {
+      onChange(`${result.login}/`);
+    } else {
+      onChange(`${result.owner}/${result.name}`);
+    }
+
     setResults([]);
+    setSelectedIndex(-1);
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -83,38 +119,52 @@ export default function GitHubAutocomplete({ value, onChange }: GitHubAutocomple
         className="input"
         autoFocus={false}
       />
-      {showDropdown && results.length > 0 && (
-        <ul
-          role="listbox"
-          className="absolute z-10 w-full mt-1 bg-solana-card border border-solana-border rounded-lg shadow-lg max-h-60 overflow-y-auto"
-        >
-          {results.map((result, index) => (
-            <li
-              key={'login' in result ? result.login : `${result.owner}/${result.name}`}
-              role="option"
-              aria-selected={selectedIndex === index}
-              className={`px-4 py-2 cursor-pointer hover:bg-solana-green/10 flex items-center gap-3 ${
-                selectedIndex === index ? 'bg-solana-green/20' : ''
-              }`}
-              onClick={() => handleSelectResult(result)}
+      {showDropdown && (
+        <div className="absolute z-10 w-full mt-1 bg-solana-card border border-solana-border rounded-lg shadow-lg max-h-60 overflow-y-auto">
+          {loading && (
+            <div className="px-4 py-2 text-sm text-gray-400">
+              Loading GitHub results...
+            </div>
+          )}
+
+          {!loading && dropdownMessage && (
+            <div className="px-4 py-2 text-sm text-gray-400">{dropdownMessage}</div>
+          )}
+
+          {!loading && results.length > 0 && (
+            <ul
+              role="listbox"
+              className="absolute z-10 w-full mt-1 bg-solana-card border border-solana-border rounded-lg shadow-lg max-h-60 overflow-y-auto"
             >
-              {'login' in result ? (
-                <>
-                  <img
-                    src={result.avatar_url}
-                    alt={result.login}
-                    className="w-6 h-6 rounded-full"
-                  />
-                  <span className="text-gray-300">{result.login}</span>
-                </>
-              ) : (
-                <span className="text-gray-300">
-                  {result.owner}/{result.name}
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
+              {results.map((result, index) => (
+                <li
+                  key={'login' in result ? result.login : `${result.owner}/${result.name}`}
+                  role="option"
+                  aria-selected={selectedIndex === index}
+                  className={`px-4 py-2 cursor-pointer hover:bg-solana-green/10 flex items-center gap-3 ${
+                    selectedIndex === index ? 'bg-solana-green/20' : ''
+                  }`}
+                  onClick={() => handleSelectResult(result)}
+                >
+                  {'login' in result ? (
+                    <>
+                      <img
+                        src={result.avatar_url}
+                        alt={result.login}
+                        className="w-6 h-6 rounded-full"
+                      />
+                      <span className="text-gray-300">{result.login}</span>
+                    </>
+                  ) : (
+                    <span className="text-gray-300">
+                      {result.owner}/{result.name}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
     </div>
   );
