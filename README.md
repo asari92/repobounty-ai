@@ -4,7 +4,7 @@
 
 > AI-powered reward allocation for open-source contributors, with SOL escrow and transparent claims on Solana.
 
-Demo · Video Walkthrough · [Docs](./docs) · Hackathon Submission
+[Live App](https://enshor.duckdns.org/) ·  [Video Walkthrough](https://youtu.be/oIxKo_K1Q0E)  · [Docs](./docs)
 
 ---
 
