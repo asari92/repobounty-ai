@@ -515,7 +515,10 @@ func (h *Handlers) commitFinalize(
 
 	if err := h.store.Update(campaign); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			_ = h.store.Create(campaign)
+			if createErr := h.store.Create(campaign); createErr != nil {
+				log.Printf("WARNING: store create failed after on-chain finalization (campaign=%s, tx=%s): %v",
+					campaign.CampaignID, txSig, createErr)
+			}
 		} else {
 			log.Printf("WARNING: store update failed after on-chain finalization (campaign=%s, tx=%s): %v",
 				campaign.CampaignID, txSig, err)
