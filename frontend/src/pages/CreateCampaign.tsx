@@ -9,6 +9,18 @@ import { api } from '../api/client';
 const MIN_CAMPAIGN_POOL_SOL = 0.5;
 const MIN_CAMPAIGN_POOL_LAMPORTS = 500_000_000;
 
+export function getDefaultDeadline(): string {
+  const now = new Date();
+  const oneMinuteLater = new Date(now.getTime() + 60000);
+  const year = oneMinuteLater.getFullYear();
+  const month = String(oneMinuteLater.getMonth() + 1).padStart(2, '0');
+  const day = String(oneMinuteLater.getDate()).padStart(2, '0');
+  const hours = String(oneMinuteLater.getHours()).padStart(2, '0');
+  const minutes = String(oneMinuteLater.getMinutes()).padStart(2, '0');
+
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
 function toStableRFC3339(value: string): string | null {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -48,7 +60,7 @@ export default function CreateCampaign() {
 
   const [repo, setRepo] = useState('');
   const [poolSol, setPoolSol] = useState('');
-  const [deadline, setDeadline] = useState('');
+  const [deadline, setDeadline] = useState(getDefaultDeadline());
   const [submitting, setSubmitting] = useState(false);
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
