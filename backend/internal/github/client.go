@@ -758,6 +758,49 @@ func mockPRs(repo string) []PullRequest {
 	}
 }
 
+// fetchPRsWithStatsMock returns consistent mock PR data matching mockContributors()
+// Used only in development mode when GitHub API fails
+func (c *Client) fetchPRsWithStatsMock(ctx context.Context, repo string) []PullRequest {
+	return []PullRequest{
+		{
+			ID:           12345,
+			Number:       42,
+			Title:        "Add authentication flow",
+			User:         "alice-dev",
+			State:        "merged",
+			CreatedAt:    "2024-03-15T10:30:00Z",
+			MergedAt:     "2024-03-16T14:20:00Z",
+			Additions:    450,
+			Deletions:    120,
+			ChangedFiles: 8,
+		},
+		{
+			ID:           12346,
+			Number:       43,
+			Title:        "Fix memory leak in scheduler",
+			User:         "bob-builder",
+			State:        "merged",
+			CreatedAt:    "2024-03-17T09:15:00Z",
+			MergedAt:     "2024-03-18T11:45:00Z",
+			Additions:    85,
+			Deletions:    230,
+			ChangedFiles: 3,
+		},
+		{
+			ID:           12347,
+			Number:       44,
+			Title:        "Implement rate limiting",
+			User:         "charlie-fix",
+			State:        "merged",
+			CreatedAt:    "2024-03-19T16:00:00Z",
+			MergedAt:     "2024-03-20T09:30:00Z",
+			Additions:    320,
+			Deletions:    45,
+			ChangedFiles: 5,
+		},
+	}
+}
+
 func mockPRDiff(prNumber int) string {
 	return fmt.Sprintf(`diff --git a/src/auth/auth.go b/src/auth/auth.go
 index 1234567..abcdefg 100644
