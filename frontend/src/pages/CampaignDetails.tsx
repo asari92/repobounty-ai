@@ -182,47 +182,6 @@ export default function CampaignDetails() {
       setClaiming(null);
     }
   }
-    if (!signMessage) {
-      setError('This wallet does not support message signing.');
-      return;
-    }
-    if (!signTransaction) {
-      setError('This wallet does not support transaction signing.');
-      return;
-    }
-    if (!solanaReady) {
-      setError('Claims are unavailable until the backend is connected to Solana.');
-      return;
-    }
-    setClaiming(contributor);
-    setError(null);
-    try {
-      const challenge = await api.claimChallenge(id, {
-        contributor_github: contributor,
-        wallet_address: publicKey.toBase58(),
-      });
-      const signatureBytes = await signMessage(new TextEncoder().encode(challenge.message));
-      const claimTx = await api.claimAllocation(
-        id,
-        contributor,
-        publicKey.toBase58(),
-        challenge.challenge_id,
-        bs58.encode(signatureBytes)
-      );
-      const txBytes = bs58.decode(claimTx.partial_tx);
-      const transaction = Transaction.from(txBytes);
-      const signedTransaction = await signTransaction(transaction);
-      const txSignature = await connection.sendRawTransaction(signedTransaction.serialize());
-      await connection.confirmTransaction(txSignature, 'confirmed');
-      await api.claimConfirm(id, contributor, publicKey.toBase58(), txSignature);
-      const updated = await api.getCampaign(id);
-      setCampaign(updated);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Claim failed');
-    } finally {
-      setClaiming(null);
-    }
-  }
 
   if (loading) {
     return (
