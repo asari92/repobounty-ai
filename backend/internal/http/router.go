@@ -65,6 +65,8 @@ func NewRouter(h *Handlers, env string) http.Handler {
 			r.Post("/{id}/create-confirm", h.CreateCampaignConfirm)
 			r.With(requireAuth).Post("/{id}/finalize-preview", h.FinalizePreview)
 			r.With(requireAuth).Post("/{id}/finalize", h.Finalize)
+			r.Post("/{id}/finalize-challenge", h.FinalizeChallenge)
+			r.Post("/{id}/finalize-wallet", h.FinalizeWithWalletProof)
 			r.With(requireAuth).Post("/{id}/claim-challenge", h.ClaimChallenge)
 			r.With(requireAuth).Post("/{id}/claim", h.ClaimPermit)
 			r.With(requireAuth).Post("/{id}/claim-confirm", h.ClaimConfirm)

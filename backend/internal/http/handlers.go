@@ -28,6 +28,7 @@ import (
 	"github.com/repobounty/repobounty-ai/internal/models"
 	"github.com/repobounty/repobounty-ai/internal/solana"
 	"github.com/repobounty/repobounty-ai/internal/store"
+	"github.com/repobounty/repobounty-ai/internal/walletproof"
 )
 
 var repoPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$`)
@@ -479,6 +480,252 @@ func (h *Handlers) FinalizePreview(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type finalizeChallengePayload struct {
+	CampaignID    string `json:"campaign_id"`
+	SponsorWallet string `json:"sponsor_wallet"`
+}
+
+func (h *Handlers) FinalizeChallenge(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req models.FinalizeChallengeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.WalletAddress == "" {
+		writeError(w, http.StatusBadRequest, "wallet_address is required")
+		return
+	}
+	if !isValidSolanaAddress(req.WalletAddress) {
+		writeError(w, http.StatusBadRequest, "invalid wallet address format")
+		return
+	}
+
+	campaign, err := h.loadCampaign(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "campaign not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	if status, msg := validateFinalizeState(campaign); status != http.StatusOK {
+		writeError(w, status, msg)
+		return
+	}
+
+	if !strings.EqualFold(campaign.Sponsor, req.WalletAddress) {
+		writeError(w, http.StatusForbidden, "only the campaign sponsor can finalize")
+		return
+	}
+
+	issuedAt := time.Now().UTC()
+	expiresAt := issuedAt.Add(walletproof.ChallengeTTL)
+	challengeID := generateState()
+
+	payload := finalizeChallengePayload{
+		CampaignID:    id,
+		SponsorWallet: req.WalletAddress,
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("finalize challenge: marshal payload failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to create wallet challenge")
+		return
+	}
+
+	message := walletproof.BuildFinalizeMessage(walletproof.FinalizeMessageInput{
+		ChallengeID:   challengeID,
+		CampaignID:    id,
+		SponsorWallet: req.WalletAddress,
+		IssuedAt:      issuedAt,
+		ExpiresAt:     expiresAt,
+	})
+
+	challenge := &models.WalletChallenge{
+		ChallengeID:   challengeID,
+		Action:        models.WalletChallengeActionFinalize,
+		WalletAddress: req.WalletAddress,
+		Message:       message,
+		PayloadJSON:   string(payloadJSON),
+		CreatedAt:     issuedAt,
+		ExpiresAt:     expiresAt,
+	}
+
+	if err := h.store.CreateWalletChallenge(challenge); err != nil {
+		log.Printf("finalize challenge: store create failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to create wallet challenge")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, models.WalletChallengeResponse{
+		ChallengeID:   challenge.ChallengeID,
+		Action:        challenge.Action,
+		WalletAddress: challenge.WalletAddress,
+		Message:       challenge.Message,
+		ExpiresAt:     challenge.ExpiresAt,
+	})
+}
+
+func (h *Handlers) FinalizeWithWalletProof(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	if h.solana == nil || !h.solana.IsConfigured() {
+		writeError(w, http.StatusServiceUnavailable, "campaign finalization is unavailable until Solana is configured")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req models.FinalizeWalletRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.WalletAddress == "" || req.ChallengeID == "" || req.Signature == "" {
+		writeError(w, http.StatusBadRequest, "wallet_address, challenge_id, and signature are required")
+		return
+	}
+	if !isValidSolanaAddress(req.WalletAddress) {
+		writeError(w, http.StatusBadRequest, "invalid wallet address format")
+		return
+	}
+
+	campaign, err := h.loadCampaign(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "campaign not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	if status, msg := validateFinalizeState(campaign); status != http.StatusOK {
+		writeError(w, status, msg)
+		return
+	}
+
+	challenge, err := h.loadAndVerifyWalletChallenge(
+		models.WalletChallengeActionFinalize,
+		req.ChallengeID,
+		req.WalletAddress,
+		req.Signature,
+	)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var challengePayload finalizeChallengePayload
+	if err := json.Unmarshal([]byte(challenge.PayloadJSON), &challengePayload); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to parse wallet challenge payload")
+		return
+	}
+	if challengePayload.CampaignID != id ||
+		!strings.EqualFold(challengePayload.SponsorWallet, req.WalletAddress) {
+		writeError(w, http.StatusBadRequest, "wallet proof did not match this finalize request")
+		return
+	}
+
+	if !strings.EqualFold(campaign.Sponsor, req.WalletAddress) {
+		writeError(w, http.StatusForbidden, "only the campaign sponsor can finalize")
+		return
+	}
+
+	if err := h.markWalletChallengeUsed(req.ChallengeID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Load approved snapshot if available; otherwise compute.
+	snapshot, snapshotErr := h.loadFinalizeSnapshot(campaign, true)
+	if snapshotErr != nil {
+		result, calcErr := h.calculateAllocations(r.Context(), campaign, allocationOptions{})
+		if calcErr != nil {
+			log.Printf("finalize wallet: allocation failed for %s: %v", campaign.CampaignID, calcErr)
+			writeError(w, http.StatusInternalServerError, "failed to build allocation snapshot")
+			return
+		}
+		snapshot, snapshotErr = h.createFinalizeSnapshot(campaign, result, "")
+		if snapshotErr != nil {
+			log.Printf("finalize wallet: snapshot persistence failed for %s: %v", campaign.CampaignID, snapshotErr)
+			writeError(w, http.StatusInternalServerError, "failed to save allocation snapshot")
+			return
+		}
+	}
+	result := snapshotToAllocationResult(snapshot)
+
+	resp, err := h.commitFinalize(r.Context(), campaign, result)
+	if err != nil {
+		log.Printf("finalize wallet: commitFinalize failed for %s: %v", campaign.CampaignID, err)
+		writeError(w, http.StatusInternalServerError, "failed to finalize on-chain")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// commitFinalize sends the finalization transaction to Solana and persists the
+// result. It is the shared core called by the GitHub-auth Finalize handler,
+// the FinalizeWithWalletProof handler, and the auto-finalize worker.
+func (h *Handlers) commitFinalize(
+	ctx context.Context,
+	campaign *models.Campaign,
+	result *allocationResult,
+) (models.FinalizeResponse, error) {
+	if h.solana == nil || !h.solana.IsConfigured() {
+		return models.FinalizeResponse{}, solana.ErrNotConfigured
+	}
+
+	solanaInputs := make([]solana.AllocationInput, len(result.allocations))
+	for i, a := range result.allocations {
+		if a.GithubUserID == 0 {
+			return models.FinalizeResponse{}, fmt.Errorf("missing github_user_id for allocation %s", a.Contributor)
+		}
+		solanaInputs[i] = solana.AllocationInput{
+			GithubUserID: a.GithubUserID,
+			Amount:       a.Amount,
+		}
+	}
+
+	txSig, err := h.solana.FinalizeCampaign(ctx, campaign.CampaignID, campaign.Sponsor, solanaInputs)
+	if err != nil {
+		return models.FinalizeResponse{}, fmt.Errorf("finalize on-chain: %w", err)
+	}
+
+	now := time.Now()
+	campaign.State = models.StateFinalized
+	campaign.Allocations = result.allocations
+	campaign.FinalizedAt = &now
+	campaign.TxSignature = txSig
+
+	if err := h.store.Update(campaign); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			if createErr := h.store.Create(campaign); createErr != nil {
+				log.Printf("WARNING: store create failed after on-chain finalization (campaign=%s, tx=%s): %v",
+					campaign.CampaignID, txSig, createErr)
+			}
+		} else {
+			log.Printf("WARNING: store update failed after on-chain finalization (campaign=%s, tx=%s): %v",
+				campaign.CampaignID, txSig, err)
+		}
+	}
+
+	explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
+	return models.FinalizeResponse{
+		CampaignID:        campaign.CampaignID,
+		State:             models.StateFinalized,
+		Allocations:       result.allocations,
+		TxSignature:       txSig,
+		SolanaExplorerURL: explorerURL,
+		AllocationMode:    result.allocationMode,
+	}, nil
+}
+
 func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	user, ok := auth.GetUserFromContext(r.Context())
@@ -524,81 +771,20 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := snapshotToAllocationResult(snapshot)
-	snapshotSummary := snapshot.Summary()
 
-	solanaInputs := make([]solana.AllocationInput, len(result.allocations))
-	for i, a := range result.allocations {
-		if a.GithubUserID == 0 {
-			log.Printf("finalize: missing github_user_id for allocation %s in campaign %s", a.Contributor, campaign.CampaignID)
-			writeError(w, http.StatusInternalServerError, "failed to map contributor identities for on-chain finalization")
-			return
-		}
-		solanaInputs[i] = solana.AllocationInput{
-			GithubUserID: a.GithubUserID,
-			Amount:       a.Amount,
-		}
-	}
-
-	txSig, err := h.solana.FinalizeCampaign(r.Context(), campaign.CampaignID, campaign.Sponsor, solanaInputs)
+	resp, err := h.commitFinalize(r.Context(), campaign, result)
 	if err != nil {
 		if errors.Is(err, solana.ErrNotConfigured) {
 			writeError(w, http.StatusServiceUnavailable, "campaign finalization is unavailable until Solana is configured")
 			return
 		}
-		log.Printf("solana finalize_campaign failed: %v", err)
+		log.Printf("finalize: commitFinalize failed for %s: %v", campaign.CampaignID, err)
 		writeError(w, http.StatusInternalServerError, "failed to finalize on-chain")
 		return
 	}
 
-	now := time.Now()
-	campaign.State = models.StateFinalized
-	campaign.Allocations = result.allocations
-	campaign.FinalizedAt = &now
-	campaign.TxSignature = txSig
-
-	if err := h.store.Update(campaign); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			if createErr := h.store.Create(campaign); createErr != nil {
-				log.Printf("WARNING: store update failed after on-chain finalization (campaign=%s, tx=%s): %v", campaign.CampaignID, txSig, createErr)
-				explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
-				writeJSON(w, http.StatusAccepted, models.FinalizeResponse{
-					CampaignID:        campaign.CampaignID,
-					State:             models.StateFinalized,
-					Allocations:       result.allocations,
-					TxSignature:       txSig,
-					SolanaExplorerURL: explorerURL,
-					AllocationMode:    result.allocationMode,
-					Snapshot:          &snapshotSummary,
-				})
-				return
-			}
-		} else {
-			log.Printf("WARNING: store update failed after on-chain finalization (campaign=%s, tx=%s): %v", campaign.CampaignID, txSig, err)
-			explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
-			writeJSON(w, http.StatusAccepted, models.FinalizeResponse{
-				CampaignID:        campaign.CampaignID,
-				State:             models.StateFinalized,
-				Allocations:       result.allocations,
-				TxSignature:       txSig,
-				SolanaExplorerURL: explorerURL,
-				AllocationMode:    result.allocationMode,
-				Snapshot:          &snapshotSummary,
-			})
-			return
-		}
-	}
-
-	explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
-
-	writeJSON(w, http.StatusOK, models.FinalizeResponse{
-		CampaignID:        campaign.CampaignID,
-		State:             models.StateFinalized,
-		Allocations:       result.allocations,
-		TxSignature:       txSig,
-		SolanaExplorerURL: explorerURL,
-		AllocationMode:    result.allocationMode,
-		Snapshot:          &snapshotSummary,
-	})
+	snapshotSummary := snapshot.Summary()
+	resp.Snapshot = &snapshotSummary
 
 	go func() {
 		defer func() {
@@ -626,6 +812,8 @@ func (h *Handlers) Finalize(w http.ResponseWriter, r *http.Request) {
 			h.config.FrontendURL,
 		)
 	}()
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {

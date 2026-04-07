@@ -114,9 +114,19 @@ export interface ClaimChallengeRequest {
   wallet_address: string;
 }
 
+export interface FinalizeChallengeRequest {
+  wallet_address: string;
+}
+
+export interface FinalizeWalletRequest {
+  wallet_address: string;
+  challenge_id: string;
+  signature: string;
+}
+
 export interface WalletChallengeResponse {
   challenge_id: string;
-  action: 'create_campaign' | 'claim';
+  action: 'create_campaign' | 'claim' | 'finalize';
   wallet_address: string;
   message: string;
   expires_at: string;

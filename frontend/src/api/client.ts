@@ -10,6 +10,8 @@ import type {
   GitHubAuthResponse,
   LinkWalletRequest,
   ClaimChallengeRequest,
+  FinalizeChallengeRequest,
+  FinalizeWalletRequest,
   ClaimItem,
   MyCampaign,
   BuildClaimTxResponse,
@@ -88,6 +90,31 @@ export const api = {
 
   finalize(id: string): Promise<FinalizeResponse> {
     return request(`/campaigns/${id}/finalize`, { method: 'POST' });
+  },
+
+  finalizeChallenge(campaignId: string, walletAddress: string): Promise<WalletChallengeResponse> {
+    const body: FinalizeChallengeRequest = { wallet_address: walletAddress };
+    return request(`/campaigns/${campaignId}/finalize-challenge`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
+
+  finalizeWallet(
+    campaignId: string,
+    walletAddress: string,
+    challengeId: string,
+    signature: string
+  ): Promise<FinalizeResponse> {
+    const body: FinalizeWalletRequest = {
+      wallet_address: walletAddress,
+      challenge_id: challengeId,
+      signature,
+    };
+    return request(`/campaigns/${campaignId}/finalize-wallet`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
   },
 
   claimChallenge(

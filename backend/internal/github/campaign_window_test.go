@@ -28,6 +28,11 @@ func TestFetchContributionWindowDataUsesRepositoryHistoryInMVP(t *testing.T) {
 				{"id": 101, "login": "alice", "avatar_url": "https://example.com/alice.png", "contributions": 8},
 				{"id": 202, "login": "bob", "avatar_url": "https://example.com/bob.png", "contributions": 5},
 			})
+		case r.URL.Path == "/repos/acme/repo/pulls" && r.URL.Query().Get("state") == "all":
+			_ = json.NewEncoder(&recorder).Encode([]map[string]any{
+				{"user": map[string]any{"login": "alice"}},
+				{"user": map[string]any{"login": "bob"}},
+			})
 		case r.URL.Path == "/repos/acme/repo/pulls" && r.URL.Query().Get("page") == "1":
 			_ = json.NewEncoder(&recorder).Encode([]map[string]any{
 				{
@@ -58,11 +63,6 @@ func TestFetchContributionWindowDataUsesRepositoryHistoryInMVP(t *testing.T) {
 					"changed_files": 3,
 					"user":          map[string]any{"login": "alice"},
 				},
-			})
-		case r.URL.Path == "/repos/acme/repo/pulls" && r.URL.Query().Get("state") == "all":
-			_ = json.NewEncoder(&recorder).Encode([]map[string]any{
-				{"user": map[string]any{"login": "alice"}},
-				{"user": map[string]any{"login": "bob"}},
 			})
 		case r.URL.Path == "/repos/acme/repo/pulls" && r.URL.Query().Get("page") == "2":
 			_ = json.NewEncoder(&recorder).Encode([]map[string]any{})
@@ -127,6 +127,67 @@ func TestFetchContributionWindowDataUsesRepositoryHistoryInMVP(t *testing.T) {
 	}
 	if len(data.ContributorPRDiffs["alice"]) == 0 {
 		t.Fatal("expected recent contributor alice to remain visible in MVP whole-repository mode")
+	}
+}
+
+func TestFetchContributionWindowDataUsesFullHistoryEvenForProductionClient(t *testing.T) {
+	now := time.Now().UTC()
+	windowStart := now.Add(-24 * time.Hour)
+	windowEnd := now
+
+	// Production client — should still use full history in MVP.
+	client := NewClientWithEnv("", true)
+	client.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		recorder := responseRecorder{header: make(http.Header)}
+		switch {
+		case r.URL.Path == "/repos/acme/repo/contributors":
+			_ = json.NewEncoder(&recorder).Encode([]map[string]any{
+				{"id": 1, "login": "alice", "contributions": 5},
+			})
+		case r.URL.Path == "/repos/acme/repo/pulls" && r.URL.Query().Get("state") == "all":
+			_ = json.NewEncoder(&recorder).Encode([]map[string]any{
+				{"user": map[string]any{"login": "alice"}},
+			})
+		case r.URL.Path == "/repos/acme/repo/pulls" && r.URL.Query().Get("page") == "1":
+			_ = json.NewEncoder(&recorder).Encode([]map[string]any{
+				{
+					"id":            1,
+					"number":        1,
+					"title":         "alice feature",
+					"state":         "closed",
+					"created_at":    now.Add(-2 * time.Hour).Format(time.RFC3339),
+					"merged_at":     now.Add(-1 * time.Hour).Format(time.RFC3339),
+					"merged":        true,
+					"commits":       1,
+					"additions":     10,
+					"deletions":     2,
+					"changed_files": 1,
+					"user":          map[string]any{"login": "alice"},
+				},
+			})
+		case r.URL.Path == "/repos/acme/repo/pulls" && r.URL.Query().Get("page") == "2":
+			_ = json.NewEncoder(&recorder).Encode([]map[string]any{})
+		case r.URL.Path == "/repos/acme/repo/pulls/1":
+			if r.Header.Get("Accept") == "application/vnd.github.v3.diff" {
+				_, _ = recorder.Write([]byte("diff --git a/file.txt b/file.txt\n+alice change\n"))
+				break
+			}
+			_ = json.NewEncoder(&recorder).Encode(map[string]any{
+				"id": 1, "number": 1, "title": "alice feature", "state": "closed",
+				"merged": true, "user": map[string]any{"login": "alice"},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		return recorder.Response(), nil
+	})}
+
+	data, err := client.FetchContributionWindowData(context.Background(), "acme/repo", windowStart, windowEnd)
+	if err != nil {
+		t.Fatalf("FetchContributionWindowData: %v", err)
+	}
+	if data.ContributorSource != "repository_history_mvp" {
+		t.Fatalf("ContributorSource = %q, want repository_history_mvp", data.ContributorSource)
 	}
 }
 

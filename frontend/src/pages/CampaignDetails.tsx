@@ -33,6 +33,7 @@ export default function CampaignDetails() {
   const [finalizing, setFinalizing] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [claiming, setClaiming] = useState<string | null>(null);
+  const [sponsorFinalizing, setSponsorFinalizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [solanaReady, setSolanaReady] = useState(true);
 
@@ -98,6 +99,28 @@ export default function CampaignDetails() {
       setError(e instanceof Error ? e.message : 'Finalization failed');
     } finally {
       setFinalizing(false);
+    }
+  }
+
+  async function handleSponsorFinalize() {
+    if (!id || !publicKey || !signMessage) return;
+    setSponsorFinalizing(true);
+    setError(null);
+    try {
+      const challenge = await api.finalizeChallenge(id, publicKey.toBase58());
+      const signatureBytes = await signMessage(new TextEncoder().encode(challenge.message));
+      await api.finalizeWallet(
+        id,
+        publicKey.toBase58(),
+        challenge.challenge_id,
+        bs58.encode(signatureBytes)
+      );
+      const updated = await api.getCampaign(id);
+      setCampaign(updated);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Finalization failed');
+    } finally {
+      setSponsorFinalizing(false);
     }
   }
 
@@ -171,6 +194,8 @@ export default function CampaignDetails() {
   const isCompleted = campaign.state === 'completed';
   const isPastDeadline = new Date(campaign.deadline) < new Date();
   const isOwner = user?.github_username === campaign.owner_github_username;
+  const isSponsor = !!publicKey && publicKey.toBase58() === campaign.sponsor;
+  const canSponsorFinalize = campaign.state === 'funded' && isPastDeadline && isSponsor;
   const canShowFinalizeCard = campaign.state === 'funded' && isPastDeadline;
   const stateConfig = getStateConfig(campaign.state, isPastDeadline);
 
@@ -354,6 +379,37 @@ export default function CampaignDetails() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Sponsor wallet-proof fallback */}
+      {canSponsorFinalize && (
+        <div
+          className="card mb-5 animate-fade-in-up !border-solana-purple/20"
+          style={{ animationDelay: '120ms' }}
+        >
+          <h2 className="text-sm font-semibold mb-2">Sponsor Finalize</h2>
+          <p className="text-xs text-gray-500 mb-3">
+            The auto-finalize worker usually handles this automatically. If it hasn&apos;t run yet,
+            you can finalize now by signing a proof with your wallet.
+          </p>
+          {!solanaReady && (
+            <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-lg p-2.5 text-xs text-yellow-200 mb-3">
+              Backend not connected to Solana — finalization is disabled.
+            </div>
+          )}
+          {!signMessage && (
+            <p className="text-xs text-yellow-200 mb-2">
+              Your wallet does not support message signing.
+            </p>
+          )}
+          <button
+            onClick={handleSponsorFinalize}
+            disabled={sponsorFinalizing || !solanaReady || !signMessage}
+            className="btn-primary text-xs"
+          >
+            {sponsorFinalizing ? 'Finalizing...' : 'Finalize now'}
+          </button>
         </div>
       )}
 

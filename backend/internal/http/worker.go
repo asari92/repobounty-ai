@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/repobounty/repobounty-ai/internal/ai"
@@ -80,6 +79,7 @@ func autoFinalize(
 		store:  campaignStore,
 		github: ghClient,
 		ai:     allocator,
+		solana: solClient,
 	}
 	if solClient != nil && solClient.IsConfigured() {
 		onChainCampaigns, err := solClient.ListCampaigns(ctx)
@@ -159,67 +159,21 @@ func autoFinalize(
 		}
 		result := snapshotToAllocationResult(snapshot)
 
-		solanaInputs := make([]solana.AllocationInput, len(result.allocations))
-		for i, a := range result.allocations {
-			if a.GithubUserID == 0 {
-				retries[c.CampaignID]++
-				logger.Error("auto-finalize: allocation missing github user id",
-					zap.String("campaign_id", c.CampaignID),
-					zap.String("contributor", a.Contributor),
-				)
-				solanaInputs = nil
-				break
-			}
-			solanaInputs[i] = solana.AllocationInput{
-				GithubUserID: a.GithubUserID,
-				Amount:       a.Amount,
-			}
-		}
-		if solanaInputs == nil {
-			continue
-		}
-
-		txSig, err := solClient.FinalizeCampaign(ctx, c.CampaignID, c.Sponsor, solanaInputs)
-		if err != nil {
+		resp, finalizeErr := helper.commitFinalize(ctx, c, result)
+		if finalizeErr != nil {
 			retries[c.CampaignID]++
-			logger.Error("auto-finalize: solana finalize failed",
+			logger.Error("auto-finalize: commitFinalize failed",
 				zap.String("campaign_id", c.CampaignID),
 				zap.Int("attempt", retries[c.CampaignID]),
-				zap.Error(err),
+				zap.Error(finalizeErr),
 			)
 			continue
 		}
 
-		finalizedAt := time.Now()
-		c.State = models.StateFinalized
-		c.Allocations = result.allocations
-		c.FinalizedAt = &finalizedAt
-		c.TxSignature = txSig
-
-		if err := campaignStore.Update(c); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				if createErr := campaignStore.Create(c); createErr != nil {
-					logger.Error("auto-finalize: store create failed after on-chain finalization",
-						zap.String("campaign_id", c.CampaignID),
-						zap.Error(createErr),
-					)
-					continue
-				}
-			} else {
-				logger.Error("auto-finalize: store update failed",
-					zap.String("campaign_id", c.CampaignID),
-					zap.Error(err),
-				)
-				continue
-			}
-		}
-
-		delete(retries, c.CampaignID) // clear retry counter on success
-
-		explorerURL := fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", txSig)
+		delete(retries, c.CampaignID)
 		logger.Info("auto-finalize: campaign finalized",
 			zap.String("campaign_id", c.CampaignID),
-			zap.String("tx", explorerURL),
+			zap.String("tx", resp.SolanaExplorerURL),
 			zap.Int("allocations", len(result.allocations)),
 		)
 	}

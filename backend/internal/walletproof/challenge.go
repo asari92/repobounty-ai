@@ -54,6 +54,30 @@ func BuildCreateCampaignMessage(input CreateCampaignMessageInput) string {
 	return strings.Join(lines, "\n")
 }
 
+type FinalizeMessageInput struct {
+	ChallengeID   string
+	CampaignID    string
+	SponsorWallet string
+	IssuedAt      time.Time
+	ExpiresAt     time.Time
+}
+
+func BuildFinalizeMessage(input FinalizeMessageInput) string {
+	lines := []string{
+		"RepoBounty AI Wallet Proof",
+		"",
+		"Action: finalize_campaign",
+		fmt.Sprintf("Challenge ID: %s", input.ChallengeID),
+		fmt.Sprintf("Campaign ID: %s", input.CampaignID),
+		fmt.Sprintf("Sponsor wallet: %s", input.SponsorWallet),
+		fmt.Sprintf("Issued at (UTC): %s", input.IssuedAt.UTC().Format(time.RFC3339)),
+		fmt.Sprintf("Expires at (UTC): %s", input.ExpiresAt.UTC().Format(time.RFC3339)),
+		"",
+		"Only sign this message to authorize finalization of this campaign as the sponsor.",
+	}
+	return strings.Join(lines, "\n")
+}
+
 func BuildClaimMessage(input ClaimMessageInput) string {
 	lines := []string{
 		"RepoBounty AI Wallet Proof",
