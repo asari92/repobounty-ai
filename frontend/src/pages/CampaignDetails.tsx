@@ -524,12 +524,12 @@ export default function CampaignDetails() {
                           Solana Required
                         </button>
                       ) : (
-                        <button
-                          onClick={() => handleClaim(a.contributor)}
-                          disabled={isCurrentlyClaiming}
-                          className="btn-primary text-[10px] !py-1 !px-3"
-                        >
-                          {isCurrentlyClaiming ? 'Claiming...' : `Claim ${formatSOL(a.amount)} SOL`}
+                          <button
+                            onClick={() => handleClaim(a.contributor)}
+                            disabled={isCurrentlyClaiming || a.claimed}
+                            className="btn-primary text-[10px] !py-1 !px-3"
+                          >
+                            {isCurrentlyClaiming ? 'Claiming...' : `Claim ${formatSOL(a.amount)} SOL`}
                         </button>
                       )}
                     </div>
