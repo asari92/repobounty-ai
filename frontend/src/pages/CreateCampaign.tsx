@@ -5,6 +5,7 @@ import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { Transaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { api } from '../api/client';
+import GitHubAutocomplete from '../components/GitHubAutocomplete';
 
 const MIN_CAMPAIGN_POOL_SOL = 0.5;
 const MIN_CAMPAIGN_POOL_LAMPORTS = 500_000_000;
@@ -110,7 +111,7 @@ export default function CreateCampaign() {
           await delay(1500);
           continue;
         }
-        throw (err instanceof Error ? err : new Error(message));
+        throw err instanceof Error ? err : new Error(message);
       }
     }
 
@@ -329,15 +330,7 @@ export default function CreateCampaign() {
             <label className="block text-xs font-medium text-gray-400 mb-1.5">
               GitHub Repository
             </label>
-            <input
-              type="text"
-              value={repo}
-              onChange={(e) => setRepo(e.target.value)}
-              placeholder="owner/repo"
-              className="input"
-              disabled={submitting || pendingCreate !== null}
-              required
-            />
+            <GitHubAutocomplete value={repo} onChange={setRepo} />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -359,9 +352,7 @@ export default function CreateCampaign() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1.5">
-                Deadline
-              </label>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Deadline</label>
               <input
                 type="datetime-local"
                 value={deadline}
