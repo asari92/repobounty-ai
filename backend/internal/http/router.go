@@ -52,6 +52,11 @@ func NewRouter(h *Handlers, env string) http.Handler {
 			r.With(optionalAuth).Get("/my-campaigns", h.GetMyCampaigns)
 		})
 
+		r.Route("/github", func(r chi.Router) {
+			r.Use(optionalAuth)
+			r.Get("/search", h.GitHubSearch)
+		})
+
 		r.Route("/campaigns", func(r chi.Router) {
 			r.Use(optionalAuth)
 			r.Get("/", h.ListCampaigns)

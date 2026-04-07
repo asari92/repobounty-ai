@@ -60,6 +60,8 @@ type githubService interface {
 		windowStart time.Time,
 		windowEnd time.Time,
 	) (*github.ContributionWindowData, error)
+	SearchUsers(ctx context.Context, query string) ([]github.UserSearchResult, error)
+	SearchRepositories(ctx context.Context, owner, query string) ([]github.RepoSearchResult, error)
 }
 
 type solanaService interface {

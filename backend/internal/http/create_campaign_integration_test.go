@@ -860,6 +860,18 @@ func (stubGitHubService) FetchContributionWindowData(
 	return &github.ContributionWindowData{}, nil
 }
 
+func (stubGitHubService) SearchUsers(ctx context.Context, query string) ([]github.UserSearchResult, error) {
+	return []github.UserSearchResult{
+		{Login: "testuser", AvatarURL: "https://github.com/testuser.png"},
+	}, nil
+}
+
+func (stubGitHubService) SearchRepositories(ctx context.Context, owner, query string) ([]github.RepoSearchResult, error) {
+	return []github.RepoSearchResult{
+		{Name: "testrepo", Owner: owner},
+	}, nil
+}
+
 type stubSolanaService struct {
 	onChainCampaign      *models.Campaign
 	campaigns            []*models.Campaign
