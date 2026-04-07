@@ -343,8 +343,8 @@ func (c *Client) FetchPRsWithDiffs(ctx context.Context, repo string, mergedSince
 		return mockPRs(repo), nil
 	}
 	if len(prs) == 0 {
-		log.Printf("github: no PRs found, using mock data")
-		return mockPRs(repo), nil
+		log.Printf("github: no merged PRs found, skipping mock fallback")
+		return prs, nil
 	}
 
 	return prs, nil
