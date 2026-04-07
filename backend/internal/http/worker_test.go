@@ -48,7 +48,7 @@ func TestMergeAutoFinalizeCampaignsIncludesOnChainFundedCampaigns(t *testing.T) 
 	}
 }
 
-func TestMergeAutoFinalizeCampaignsSkipsAlreadyFinalizedCampaigns(t *testing.T) {
+func TestMergeAutoFinalizeCampaignsDoesNotCountFinalizedAsFunded(t *testing.T) {
 	now := time.Now()
 	onChain := []*models.Campaign{
 		{CampaignID: "chain-2", State: models.StateFinalized, Deadline: now.Add(-time.Minute)},
