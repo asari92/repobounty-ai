@@ -1596,6 +1596,12 @@ func (h *Handlers) calculateAllocations(
 	// Empty PR diffs mean "no merged PRs available", not "try mock fallback"
 	hasRealPRs := len(windowData.ContributorPRDiffs) > 0
 
+	if hasRealPRs {
+		log.Printf("Allocation: using code impact path (found %d merged PRs)", len(windowData.ContributorPRDiffs))
+	} else {
+		log.Printf("Allocation: using metric-based path (no merged PRs)")
+	}
+
 	var allocations []models.Allocation
 	allocationMode := models.AllocationModeMetrics
 	if hasRealPRs {
