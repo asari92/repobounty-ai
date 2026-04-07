@@ -36,6 +36,7 @@ export default function CampaignDetails() {
   const [sponsorFinalizing, setSponsorFinalizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [solanaReady, setSolanaReady] = useState(true);
+  const [claimedContributors, setClaimedContributors] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!id) return;
@@ -43,7 +44,17 @@ export default function CampaignDetails() {
     api
       .getCampaign(id)
       .then((data) => {
-        if (!cancelled) setCampaign(data);
+        if (!cancelled) {
+          setCampaign(data);
+          // Track which contributors have already claimed their rewards
+          const claimedMap: Record<string, boolean> = {};
+          data.allocations.forEach((a) => {
+            if (a.claimed) {
+              claimedMap[a.contributor] = true;
+            }
+          });
+          setClaimedContributors(claimedMap);
+        }
       })
       .catch((e) => {
         if (!cancelled) setError(e.message);
@@ -129,6 +140,48 @@ export default function CampaignDetails() {
       if (!publicKey) setError('Connect wallet first');
       return;
     }
+    if (!signMessage) {
+      setError('This wallet does not support message signing.');
+      return;
+    }
+    if (!signTransaction) {
+      setError('This wallet does not support transaction signing.');
+      return;
+    }
+    if (!solanaReady) {
+      setError('Claims are unavailable until backend is connected to Solana.');
+      return;
+    }
+    setClaiming(contributor);
+    setError(null);
+    try {
+      const challenge = await api.claimChallenge(id, {
+        contributor_github: contributor,
+        wallet_address: publicKey.toBase58(),
+      });
+      const signatureBytes = await signMessage(new TextEncoder().encode(challenge.message));
+      const claimTx = await api.claimAllocation(
+        id,
+        contributor,
+        publicKey.toBase58(),
+        challenge.challenge_id,
+        bs58.encode(signatureBytes)
+      );
+      const txBytes = bs58.decode(claimTx.partial_tx);
+      const transaction = Transaction.from(txBytes);
+      const signedTransaction = await signTransaction(transaction);
+      const txSignature = await connection.sendRawTransaction(signedTransaction.serialize());
+      await connection.confirmTransaction(txSignature, 'confirmed');
+      await api.claimConfirm(id, contributor, publicKey.toBase58(), txSignature);
+      const updated = await api.getCampaign(id);
+      setCampaign(updated);
+      setClaimedContributors(prev => ({...prev, [contributor]: true}));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Claim failed');
+    } finally {
+      setClaiming(null);
+    }
+  }
     if (!signMessage) {
       setError('This wallet does not support message signing.');
       return;
@@ -526,7 +579,7 @@ export default function CampaignDetails() {
                       ) : (
                           <button
                             onClick={() => handleClaim(a.contributor)}
-                            disabled={isCurrentlyClaiming || a.claimed}
+                            disabled={isCurrentlyClaiming || claimedContributors[a.contributor]}
                             className="btn-primary text-[10px] !py-1 !px-3"
                           >
                             {isCurrentlyClaiming ? 'Claiming...' : `Claim ${formatSOL(a.amount)} SOL`}
