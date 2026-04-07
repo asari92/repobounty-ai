@@ -524,27 +524,19 @@ func truncateDiff(diff string, maxLinesPerFile int) string {
 	return strings.Join(result, "\n")
 }
 
-func (c *Client) FetchContributorsPRDiffs(ctx context.Context, repo string, mergedSinceUnix int64) (map[string][]string, error) {
-	prs, err := c.FetchPRsWithDiffs(ctx, repo, mergedSinceUnix)
-	if err != nil {
-		return nil, err
-	}
-
-	contributorPRs := make(map[string][]PullRequest)
-	for _, pr := range prs {
-		contributorPRs[pr.User] = append(contributorPRs[pr.User], pr)
-	}
-
+// buildPRDiffMap fetches diffs for PRs and builds contributor->diffs map
+func (c *Client) buildPRDiffMap(prs []PullRequest, ctx context.Context, repo string) map[string][]string {
 	type diffJob struct {
 		contributor string
 		prNumber    int
 	}
 
 	var jobs []diffJob
-	for contributor, prList := range contributorPRs {
-		for _, pr := range prList {
-			jobs = append(jobs, diffJob{contributor: contributor, prNumber: pr.Number})
+	for _, pr := range prs {
+		if pr.User == "" {
+			continue
 		}
+		jobs = append(jobs, diffJob{contributor: pr.User, prNumber: pr.Number})
 	}
 
 	sort.Slice(jobs, func(i, j int) bool {
@@ -581,8 +573,26 @@ func (c *Client) FetchContributorsPRDiffs(ctx context.Context, repo string, merg
 	}
 
 	wg.Wait()
+	return result
+}
 
-	return result, nil
+func (c *Client) FetchContributorsPRDiffs(ctx context.Context, repo string, mergedSinceUnix int64) (map[string][]string, error) {
+	prs, err := c.FetchPRsWithDiffs(ctx, repo, mergedSinceUnix)
+	if err != nil {
+		// API error (not empty result) - use mock in dev mode
+		if c.isProduction {
+			return nil, fmt.Errorf("github API failed and mock data is disabled in production: %w", err)
+		}
+		log.Printf("github: PR API failed (%v), using mock data for dev testing", err)
+		mockPRs := c.fetchPRsWithStatsMock(ctx, repo)
+		return c.buildPRDiffMap(mockPRs, ctx, repo), nil
+	}
+	if len(prs) == 0 {
+		log.Printf("github: no merged PRs, skipping code impact evaluation")
+		return map[string][]string{}, nil // No real PRs, skip diff fetching
+	}
+
+	return c.buildPRDiffMap(prs, ctx, repo), nil
 }
 
 type Review struct {
