@@ -130,6 +130,38 @@ func TestFetchContributionWindowDataUsesRepositoryHistoryInMVP(t *testing.T) {
 	}
 }
 
+func TestFetchContributionWindowDataUsesFullHistoryEvenForProductionClient(t *testing.T) {
+	now := time.Now().UTC()
+	windowStart := now.Add(-24 * time.Hour)
+	windowEnd := now
+
+	// Production client — should still use full history in MVP.
+	client := NewClientWithEnv("", true)
+	client.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		recorder := responseRecorder{header: make(http.Header)}
+		switch {
+		case r.URL.Path == "/repos/acme/repo/contributors":
+			_ = json.NewEncoder(&recorder).Encode([]map[string]any{
+				{"id": 1, "login": "alice", "contributions": 5},
+			})
+		case r.URL.Path == "/repos/acme/repo/pulls":
+			_ = json.NewEncoder(&recorder).Encode([]map[string]any{})
+		default:
+			t.Logf("unexpected request: %s %s", r.Method, r.URL.String())
+			_ = json.NewEncoder(&recorder).Encode([]map[string]any{})
+		}
+		return recorder.Response(), nil
+	})}
+
+	data, err := client.FetchContributionWindowData(context.Background(), "acme/repo", windowStart, windowEnd)
+	if err != nil {
+		t.Fatalf("FetchContributionWindowData: %v", err)
+	}
+	if data.ContributorSource != "repository_history_mvp" {
+		t.Fatalf("ContributorSource = %q, want repository_history_mvp", data.ContributorSource)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {

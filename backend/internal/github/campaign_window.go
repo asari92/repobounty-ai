@@ -23,35 +23,40 @@ type ContributionWindowData struct {
 }
 
 // FetchContributionWindowData returns contributor data for allocation.
-// In MVP/demo mode we analyze the full repository history.
-// In production we fall back to campaign-window-only analysis.
+// MVP default: always analyzes full repository history, regardless of environment.
+// The window-based path is preserved below for future use but is not active.
 func (c *Client) FetchContributionWindowData(
 	ctx context.Context,
 	repo string,
 	windowStart time.Time,
 	windowEnd time.Time,
 ) (*ContributionWindowData, error) {
-	if !c.isProduction {
-		contributors, err := c.FetchContributors(ctx, repo)
-		if err != nil {
-			return nil, err
-		}
-
-		contributorPRDiffs, err := c.FetchContributorsPRDiffs(ctx, repo, 0)
-		if err != nil {
-			return nil, err
-		}
-
-		return &ContributionWindowData{
-			Contributors:       contributors,
-			ContributorPRDiffs: contributorPRDiffs,
-			WindowStart:        windowStart.UTC(),
-			WindowEnd:          windowEnd.UTC(),
-			ContributorSource:  "repository_history_mvp",
-			ContributorNotes:   "MVP/demo mode analyzes the full available repository history. A future production flow will restrict analysis to activity inside the campaign window.",
-		}, nil
+	contributors, err := c.FetchContributors(ctx, repo)
+	if err != nil {
+		return nil, err
 	}
 
+	contributorPRDiffs, err := c.FetchContributorsPRDiffs(ctx, repo, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ContributionWindowData{
+		Contributors:       contributors,
+		ContributorPRDiffs: contributorPRDiffs,
+		WindowStart:        windowStart.UTC(),
+		WindowEnd:          windowEnd.UTC(),
+		ContributorSource:  "repository_history_mvp",
+		ContributorNotes:   "MVP analyzes the full available repository history. A future production flow will restrict analysis to activity inside the campaign window.",
+	}, nil
+}
+
+func (c *Client) fetchContributionWindowDataByWindow(
+	ctx context.Context,
+	repo string,
+	windowStart time.Time,
+	windowEnd time.Time,
+) (*ContributionWindowData, error) {
 	parts := strings.SplitN(repo, "/", 2)
 	if len(parts) != 2 {
 		return nil, fmt.Errorf("invalid repo format, expected owner/repo: %s", repo)
