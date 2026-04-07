@@ -1592,9 +1592,13 @@ func (h *Handlers) calculateAllocations(
 		return nil, fmt.Errorf("fetch contribution window: %w", err)
 	}
 
+	// Check if PR diffs contain real data
+	// Empty PR diffs mean "no merged PRs available", not "try mock fallback"
+	hasRealPRs := len(windowData.ContributorPRDiffs) > 0
+
 	var allocations []models.Allocation
 	allocationMode := models.AllocationModeMetrics
-	if len(windowData.ContributorPRDiffs) > 0 {
+	if hasRealPRs {
 		if options.forceDeterministic {
 			allocations, err = h.ai.EvaluateCodeImpactDeterministic(windowData.ContributorPRDiffs, campaign.PoolAmount)
 		} else {
@@ -1608,6 +1612,7 @@ func (h *Handlers) calculateAllocations(
 		}
 	}
 
+	// Always attempt metric-based allocation as fallback
 	if allocations == nil {
 		if options.forceDeterministic {
 			allocations, err = h.ai.AllocateDeterministic(windowData.Contributors, campaign.PoolAmount)
