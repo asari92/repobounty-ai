@@ -64,7 +64,7 @@ export default function Home() {
     }
 
     return filtered;
-  }, [campaigns, user, view, search]);
+  }, [campaigns, user, view, search, publicKey]);
 
   return (
     <div>

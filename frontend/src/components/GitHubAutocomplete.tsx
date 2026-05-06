@@ -17,8 +17,7 @@ export default function GitHubAutocomplete({ value, onChange }: GitHubAutocomple
 
   const searchState = getGitHubSearchState(value);
   const showDropdown =
-    searchState.mode === 'users' ||
-    searchState.mode === 'repos'
+    searchState.mode === 'users' || searchState.mode === 'repos'
       ? loading || dropdownMessage !== null || results.length > 0
       : false;
 
@@ -122,9 +121,7 @@ export default function GitHubAutocomplete({ value, onChange }: GitHubAutocomple
       {showDropdown && (
         <div className="absolute z-10 w-full mt-1 bg-solana-card border border-solana-border rounded-lg shadow-lg max-h-60 overflow-y-auto">
           {loading && (
-            <div className="px-4 py-2 text-sm text-gray-400">
-              Loading GitHub results...
-            </div>
+            <div className="px-4 py-2 text-sm text-gray-400">Loading GitHub results...</div>
           )}
 
           {!loading && dropdownMessage && (

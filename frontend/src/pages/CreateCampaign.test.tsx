@@ -8,10 +8,12 @@ const setVisible = vi.fn();
 vi.mock('../api/client', () => ({
   api: {
     getHealth: vi.fn(() => Promise.resolve({ solana: true })),
-    createCampaign: vi.fn(() => Promise.resolve({
-      campaign_id: 'test-campaign-123',
-      unsigned_tx: 'test-unsigned-tx',
-    })),
+    createCampaign: vi.fn(() =>
+      Promise.resolve({
+        campaign_id: 'test-campaign-123',
+        unsigned_tx: 'test-unsigned-tx',
+      })
+    ),
   },
 }));
 

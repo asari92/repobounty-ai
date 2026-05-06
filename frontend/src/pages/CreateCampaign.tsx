@@ -250,12 +250,12 @@ export default function CreateCampaign() {
 
     setSubmitting(true);
     try {
-  const result = await api.createCampaign({
-    repo: normalizedRepo,
-    pool_amount: poolLamports,
-    deadline: deadlineRFC3339,
-    sponsor_wallet: publicKey.toBase58(),
-  });
+      const result = await api.createCampaign({
+        repo: normalizedRepo,
+        pool_amount: poolLamports,
+        deadline: deadlineRFC3339,
+        sponsor_wallet: publicKey.toBase58(),
+      });
 
       if (!result.campaign_id?.trim()) {
         throw new Error('Campaign ID was not returned by the backend.');
@@ -287,14 +287,14 @@ export default function CreateCampaign() {
         throw new Error('Failed to send transaction.');
       }
 
-  const pending: PendingCreate = {
-    repo: normalizedRepo,
-    campaignId: result.campaign_id,
-    sponsorWallet: publicKey.toBase58(),
-    poolLamports,
-    deadlineRFC3339,
-    txSignature,
-  };
+      const pending: PendingCreate = {
+        repo: normalizedRepo,
+        campaignId: result.campaign_id,
+        sponsorWallet: publicKey.toBase58(),
+        poolLamports,
+        deadlineRFC3339,
+        txSignature,
+      };
       setPendingCreate(pending);
       await finalizePendingCreate(pending);
     } catch (err: unknown) {

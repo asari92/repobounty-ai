@@ -48,7 +48,7 @@ export default function CampaignDetails() {
           setCampaign(data);
           // Track which contributors have already claimed their rewards
           const claimedMap: Record<string, boolean> = {};
-          data.allocations.forEach((a) => {
+          (data.allocations || []).forEach((a) => {
             if (a.claimed) {
               claimedMap[a.contributor] = true;
             }
@@ -175,7 +175,7 @@ export default function CampaignDetails() {
       await api.claimConfirm(id, contributor, publicKey.toBase58(), txSignature);
       const updated = await api.getCampaign(id);
       setCampaign(updated);
-      setClaimedContributors(prev => ({...prev, [contributor]: true}));
+      setClaimedContributors((prev) => ({ ...prev, [contributor]: true }));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Claim failed');
     } finally {
@@ -538,7 +538,9 @@ export default function CampaignDetails() {
                       ) : (
                         <button
                           onClick={() => handleClaim(a.contributor)}
-                          disabled={isCurrentlyClaiming || a.claimed || claimedContributors[a.contributor]}
+                          disabled={
+                            isCurrentlyClaiming || a.claimed || claimedContributors[a.contributor]
+                          }
                           className="btn-primary text-[10px] !py-1 !px-3"
                         >
                           {isCurrentlyClaiming ? 'Claiming...' : `Claim ${formatSOL(a.amount)} SOL`}
