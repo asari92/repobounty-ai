@@ -163,7 +163,7 @@ type FinalizePreviewResponse struct {
 	CampaignID     string          `json:"campaign_id"`
 	Repo           string          `json:"repo"`
 	Contributors   []Contributor   `json:"contributors"`
-	Allocations    interface{}     `json:"allocations"`
+	Allocations    []Allocation    `json:"allocations"`
 	AIModel        string          `json:"ai_model"`
 	AllocationMode AllocationMode  `json:"allocation_mode,omitempty"`
 	Snapshot       SnapshotSummary `json:"snapshot,omitempty"`
@@ -173,7 +173,7 @@ type FinalizeResponse struct {
 	CampaignID        string           `json:"campaign_id"`
 	State             CampaignState    `json:"state,omitempty"`
 	Status            string           `json:"status,omitempty"`
-	Allocations       interface{}      `json:"allocations"`
+	Allocations       []Allocation     `json:"allocations"`
 	TxSignature       string           `json:"tx_signature,omitempty"`
 	TxSignatures      []string         `json:"tx_signatures,omitempty"`
 	TotalBatches      int              `json:"total_batches,omitempty"`
