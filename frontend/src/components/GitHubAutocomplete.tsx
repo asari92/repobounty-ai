@@ -119,49 +119,50 @@ export default function GitHubAutocomplete({ value, onChange }: GitHubAutocomple
         autoFocus={false}
       />
       {showDropdown && (
-        <div className="absolute z-10 w-full mt-1 bg-solana-card border border-solana-border rounded-lg shadow-lg max-h-60 overflow-y-auto">
+        <ul
+          role="listbox"
+          className="absolute z-10 w-full mt-1 bg-solana-card border border-solana-border rounded-lg shadow-lg max-h-60 overflow-y-auto"
+        >
           {loading && (
-            <div className="px-4 py-2 text-sm text-gray-400">Loading GitHub results...</div>
+            <li className="px-4 py-2 text-sm text-gray-400" aria-disabled="true">
+              Loading GitHub results...
+            </li>
           )}
 
           {!loading && dropdownMessage && (
-            <div className="px-4 py-2 text-sm text-gray-400">{dropdownMessage}</div>
+            <li className="px-4 py-2 text-sm text-gray-400" aria-disabled="true">
+              {dropdownMessage}
+            </li>
           )}
 
-          {!loading && results.length > 0 && (
-            <ul
-              role="listbox"
-              className="absolute z-10 w-full mt-1 bg-solana-card border border-solana-border rounded-lg shadow-lg max-h-60 overflow-y-auto"
-            >
-              {results.map((result, index) => (
-                <li
-                  key={'login' in result ? result.login : `${result.owner}/${result.name}`}
-                  role="option"
-                  aria-selected={selectedIndex === index}
-                  className={`px-4 py-2 cursor-pointer hover:bg-solana-green/10 flex items-center gap-3 ${
-                    selectedIndex === index ? 'bg-solana-green/20' : ''
-                  }`}
-                  onClick={() => handleSelectResult(result)}
-                >
-                  {'login' in result ? (
-                    <>
-                      <img
-                        src={result.avatar_url}
-                        alt={result.login}
-                        className="w-6 h-6 rounded-full"
-                      />
-                      <span className="text-gray-300">{result.login}</span>
-                    </>
-                  ) : (
-                    <span className="text-gray-300">
-                      {result.owner}/{result.name}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+          {!loading &&
+            results.map((result, index) => (
+              <li
+                key={'login' in result ? result.login : `${result.owner}/${result.name}`}
+                role="option"
+                aria-selected={selectedIndex === index}
+                className={`px-4 py-2 cursor-pointer hover:bg-solana-green/10 flex items-center gap-3 ${
+                  selectedIndex === index ? 'bg-solana-green/20' : ''
+                }`}
+                onClick={() => handleSelectResult(result)}
+              >
+                {'login' in result ? (
+                  <>
+                    <img
+                      src={result.avatar_url}
+                      alt={result.login}
+                      className="w-6 h-6 rounded-full"
+                    />
+                    <span className="text-gray-300">{result.login}</span>
+                  </>
+                ) : (
+                  <span className="text-gray-300">
+                    {result.owner}/{result.name}
+                  </span>
+                )}
+              </li>
+            ))}
+        </ul>
       )}
     </div>
   );

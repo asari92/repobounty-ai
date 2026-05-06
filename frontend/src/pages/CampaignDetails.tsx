@@ -318,27 +318,6 @@ export default function CampaignDetails() {
         )}
       </div>
 
-      {/* GitHub App Install Banner */}
-      {!isFinalized && !isCompleted && (
-        <div className="card !border-blue-500/15 !bg-blue-500/[0.02] mb-5 flex items-center gap-3 !p-3">
-          <span className="text-sm">🔔</span>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs text-blue-300 font-medium">Auto-notify contributors</p>
-            <p className="text-[10px] text-gray-600 mt-0.5">
-              Install the GitHub App to post reward notifications on PRs.
-            </p>
-          </div>
-          <a
-            href="https://github.com/apps/repobounty-ai/installations/new"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 px-2.5 py-1 rounded-md transition-colors border border-blue-500/15 flex-shrink-0"
-          >
-            Install
-          </a>
-        </div>
-      )}
-
       {/* Finalize Actions */}
       {canShowFinalizeCard && (
         <div className="card mb-5 animate-fade-in-up" style={{ animationDelay: '100ms' }}>
