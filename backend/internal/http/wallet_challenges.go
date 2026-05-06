@@ -73,7 +73,11 @@ func (h *Handlers) ClaimChallenge(w http.ResponseWriter, r *http.Request) {
 
 	issuedAt := time.Now().UTC()
 	expiresAt := issuedAt.Add(walletproof.ChallengeTTL)
-	challengeID := generateState()
+	challengeID, err := generateState()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate challenge id")
+		return
+	}
 	payload := claimChallengePayload{
 		GitHubUsername:    user.GitHubUsername,
 		CampaignID:        id,

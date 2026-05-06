@@ -530,7 +530,11 @@ func (h *Handlers) FinalizeChallenge(w http.ResponseWriter, r *http.Request) {
 
 	issuedAt := time.Now().UTC()
 	expiresAt := issuedAt.Add(walletproof.ChallengeTTL)
-	challengeID := generateState()
+	challengeID, err := generateState()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate challenge id")
+		return
+	}
 
 	payload := finalizeChallengePayload{
 		CampaignID:    id,
@@ -1678,7 +1682,11 @@ func (h *Handlers) calculateAllocations(
 }
 
 func (h *Handlers) GetGitHubAuthURL(w http.ResponseWriter, r *http.Request) {
-	state := generateState()
+	state, err := generateState()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate state")
+		return
+	}
 
 	h.oauthStatesMu.Lock()
 	// Clean expired states
@@ -1759,7 +1767,7 @@ func (h *Handlers) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 		existingUser = newUser
 	}
 
-	token, err := h.jwt.GenerateToken(existingUser.GitHubUsername)
+	token, err := h.jwt.GenerateToken(existingUser.GitHubID, existingUser.GitHubUsername)
 	if err != nil {
 		log.Printf("github oauth: generate token failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to generate session token")
@@ -1840,10 +1848,10 @@ func (h *Handlers) LinkWallet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, user)
 }
 
-func generateState() string {
+func generateState() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+		return "", fmt.Errorf("crypto/rand: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }

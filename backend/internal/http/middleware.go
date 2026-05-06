@@ -90,6 +90,7 @@ func RecoveryMiddleware(next http.Handler) http.Handler {
 					zap.String("path", r.URL.Path),
 					zap.String("method", r.Method),
 				)
+				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
 				w.Write([]byte(`{"error":"Internal server error"}`))
 			}

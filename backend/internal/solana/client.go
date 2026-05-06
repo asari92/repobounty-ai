@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -55,8 +56,12 @@ func NewClient(rpcURL, privateKeyBase58, programIDStr string) (*Client, error) {
 		return nil, fmt.Errorf("parse program ID: %w", err)
 	}
 
+	rpcClient := rpc.NewWithCustomRPCClient(rpcjson.NewClientWithOpts(rpcURL, &rpcjson.RPCClientOpts{
+		HTTPClient: &http.Client{Timeout: 15 * time.Second},
+	}))
+
 	return &Client{
-		rpcClient:  rpc.New(rpcURL),
+		rpcClient:  rpcClient,
 		privateKey: privKey,
 		programID:  programID,
 	}, nil

@@ -321,7 +321,7 @@ func performAuthedJSONRequest(
 		t.Fatal("handlers.jwt must be configured for authenticated test requests")
 	}
 
-	token, err := handlers.jwt.GenerateToken(user.GitHubUsername)
+	token, err := handlers.jwt.GenerateToken(user.GitHubID, user.GitHubUsername)
 	if err != nil {
 		t.Fatalf("GenerateToken: %v", err)
 	}

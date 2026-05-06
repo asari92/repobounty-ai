@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	openai "github.com/sashabaranov/go-openai"
 
@@ -28,6 +30,7 @@ func NewAllocator(apiKey, model string) *Allocator {
 	if apiKey != "" {
 		config := openai.DefaultConfig(apiKey)
 		config.BaseURL = openrouterBaseURL
+		config.HTTPClient = &http.Client{Timeout: 30 * time.Second}
 		a.client = openai.NewClientWithConfig(config)
 	}
 	return a

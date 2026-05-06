@@ -103,6 +103,19 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 
+	indexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_campaigns_sponsor ON campaigns(sponsor)`,
+		`CREATE INDEX IF NOT EXISTS idx_campaigns_state ON campaigns(state)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_wallet ON users(wallet_address)`,
+		`CREATE INDEX IF NOT EXISTS idx_wallet_challenges_wallet ON wallet_challenges(wallet_address)`,
+		`CREATE INDEX IF NOT EXISTS idx_wallet_challenges_expires ON wallet_challenges(expires_at)`,
+	}
+	for _, idx := range indexes {
+		if _, err := db.Exec(idx); err != nil {
+			return err
+		}
+	}
+
 	for _, stmt := range []string{
 		`ALTER TABLE campaigns ADD COLUMN owner_github_username TEXT NOT NULL DEFAULT ''`,
 	} {
@@ -195,7 +208,7 @@ func (s *SQLiteStore) List() []*models.Campaign {
 		FROM campaigns ORDER BY created_at DESC`)
 	if err != nil {
 		log.Printf("sqlite: list campaigns query failed: %v", err)
-		return nil
+		return []*models.Campaign{}
 	}
 	defer rows.Close()
 
@@ -226,6 +239,26 @@ func (s *SQLiteStore) GetUser(username string) (*User, error) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("get user: %w", err)
+	}
+	u.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		u.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	}
+	return &u, nil
+}
+
+func (s *SQLiteStore) GetUserByGitHubID(id int) (*User, error) {
+	var u User
+	var createdAt string
+	err := s.db.QueryRow(`
+		SELECT github_username, github_id, email, avatar_url, wallet_address, created_at
+		FROM users WHERE github_id = ?`, id,
+	).Scan(&u.GitHubUsername, &u.GitHubID, &u.Email, &u.AvatarURL, &u.WalletAddress, &createdAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get user by github id: %w", err)
 	}
 	u.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
 	if err != nil {
@@ -376,14 +409,7 @@ func (s *SQLiteStore) MarkWalletChallengeUsed(id string, usedAt time.Time) error
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		challenge, getErr := s.GetWalletChallenge(id)
-		if getErr != nil {
-			return getErr
-		}
-		if challenge.UsedAt != nil {
-			return ErrAlreadyUsed
-		}
-		return ErrNotFound
+		return ErrAlreadyUsed
 	}
 	return nil
 }
@@ -567,7 +593,7 @@ func (s *SQLiteStore) scanCampaign(scanner interface{ Scan(...interface{}) error
 
 	if allocJSON != "" && allocJSON != "[]" {
 		if err := json.Unmarshal([]byte(allocJSON), &c.Allocations); err != nil {
-			log.Printf("sqlite: unmarshal allocations for %s failed: %v", c.CampaignID, err)
+			return nil, fmt.Errorf("unmarshal allocations for %s: %w", c.CampaignID, err)
 		}
 	}
 
