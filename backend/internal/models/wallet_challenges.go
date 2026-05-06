@@ -7,6 +7,7 @@ type WalletChallengeAction string
 const (
 	WalletChallengeActionClaim    WalletChallengeAction = "claim"
 	WalletChallengeActionFinalize WalletChallengeAction = "finalize"
+	WalletChallengeActionLink     WalletChallengeAction = "link"
 )
 
 type WalletChallenge struct {

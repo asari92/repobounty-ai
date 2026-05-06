@@ -316,6 +316,10 @@ func (h *Handlers) CreateCampaignConfirm(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "tx_signature is required")
 		return
 	}
+	if !isValidTxSignature(req.TxSignature) {
+		writeError(w, http.StatusBadRequest, "invalid tx_signature format")
+		return
+	}
 
 	deadline, err := normalizeCreateCampaignConfirmRequest(
 		req.Repo,
@@ -323,6 +327,7 @@ func (h *Handlers) CreateCampaignConfirm(w http.ResponseWriter, r *http.Request)
 		req.Deadline,
 		req.SponsorWallet,
 		h.minCampaignAmount(),
+		h.minCampaignLeadTime(),
 	)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -1048,7 +1053,11 @@ func (h *Handlers) ClaimConfirm(w http.ResponseWriter, r *http.Request) {
 		TxSignature: req.TxSignature,
 	}
 	if req.TxSignature != "" {
-		response.SolanaExplorerURL = fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", req.TxSignature)
+		if !isValidTxSignature(req.TxSignature) {
+			req.TxSignature = ""
+		} else {
+			response.SolanaExplorerURL = fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", req.TxSignature)
+		}
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -1140,6 +1149,10 @@ func (h *Handlers) RefundConfirm(w http.ResponseWriter, r *http.Request) {
 	txSignature := strings.TrimSpace(req.TxSignature)
 	if txSignature == "" {
 		writeError(w, http.StatusBadRequest, "tx_signature is required")
+		return
+	}
+	if !isValidTxSignature(txSignature) {
+		writeError(w, http.StatusBadRequest, "invalid tx_signature format")
 		return
 	}
 
@@ -1270,6 +1283,11 @@ func (h *Handlers) GetMyCampaigns(w http.ResponseWriter, r *http.Request) {
 	walletAddress := r.URL.Query().Get("wallet")
 	user, _ := auth.GetUserFromContext(r.Context())
 
+	if walletAddress != "" && (user == nil || user.WalletAddress != walletAddress) {
+		writeJSON(w, http.StatusForbidden, models.ErrorResponse{Error: "wallet query parameter requires authenticated matching wallet"})
+		return
+	}
+
 	if (user == nil || user.WalletAddress == "") && walletAddress == "" {
 		writeJSON(w, http.StatusOK, []map[string]any{})
 		return
@@ -1370,6 +1388,18 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, models.ErrorResponse{Error: msg})
+}
+
+func isValidTxSignature(s string) bool {
+	if len(s) < 2 || len(s) > 512 {
+		return false
+	}
+	for _, c := range s {
+		if c < 32 || c > 126 {
+			return false
+		}
+	}
+	return true
 }
 
 type healthResponse struct {
@@ -1773,8 +1803,30 @@ func (h *Handlers) LinkWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.WalletAddress != "" && !isValidSolanaAddress(req.WalletAddress) {
+	if req.WalletAddress == "" {
+		writeError(w, http.StatusBadRequest, "wallet_address is required")
+		return
+	}
+
+	if !isValidSolanaAddress(req.WalletAddress) {
 		writeError(w, http.StatusBadRequest, "invalid wallet address format")
+		return
+	}
+
+	challenge, err := h.loadAndVerifyWalletChallenge(
+		models.WalletChallengeActionLink,
+		req.ChallengeID,
+		req.WalletAddress,
+		req.Signature,
+	)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.markWalletChallengeUsed(challenge.ChallengeID); err != nil {
+		log.Printf("wallet link: mark challenge used failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to verify wallet proof")
 		return
 	}
 

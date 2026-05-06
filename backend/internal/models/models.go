@@ -222,6 +222,8 @@ type GitHubAuthResponse struct {
 
 type LinkWalletRequest struct {
 	WalletAddress string `json:"wallet_address"`
+	ChallengeID   string `json:"challenge_id"`
+	Signature     string `json:"signature"`
 }
 
 type ClaimAllocationRequest struct {

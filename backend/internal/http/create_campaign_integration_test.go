@@ -101,7 +101,7 @@ func TestCreateCampaignConfirmAllowsDelayedConfirmationWithinMinimumLeadWindow(t
 
 	campaignID := "123"
 	walletAddress := testWalletAddress(t)
-	deadline := time.Now().UTC().Add(2 * time.Minute).Format(time.RFC3339)
+	deadline := time.Now().UTC().Add(16 * time.Minute).Format(time.RFC3339)
 	onChainDeadline := deadlineTime(deadline)
 
 	handlers := NewHandlers(
