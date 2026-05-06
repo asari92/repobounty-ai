@@ -71,10 +71,13 @@ func Load() (*Config, error) {
 		FinalizeBatchSize:           envOrDefaultInt("FINALIZE_BATCH_SIZE", 5),
 		AutoFinalizeIntervalSeconds: envOrDefaultInt("AUTO_FINALIZE_INTERVAL_SECONDS", 60),
 	}
+	if cfg.JWTSecret != "" && len(cfg.JWTSecret) < 16 {
+		return nil, fmt.Errorf("JWT_SECRET must be at least 16 characters")
+	}
 	if cfg.Env == "production" && cfg.JWTSecret == "" {
 		return nil, fmt.Errorf("JWT_SECRET is required in production")
 	}
-	if cfg.Env == "production" && cfg.JWTSecret != "" && len(cfg.JWTSecret) < 32 {
+	if cfg.Env == "production" && len(cfg.JWTSecret) < 32 {
 		return nil, fmt.Errorf("JWT_SECRET must be at least 32 characters in production")
 	}
 	return cfg, nil

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -623,7 +624,7 @@ func (c *Client) SearchUsers(ctx context.Context, query string) ([]UserSearchRes
 		return nil, nil
 	}
 
-	url := fmt.Sprintf("https://api.github.com/search/users?q=%s&per_page=10", query)
+	url := "https://api.github.com/search/users?q=" + url.QueryEscape(query) + "&per_page=10"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -675,7 +676,7 @@ func (c *Client) SearchRepositories(ctx context.Context, owner, query string) ([
 		return nil, nil
 	}
 
-	url := fmt.Sprintf("https://api.github.com/search/repositories?q=%s/%s&per_page=10", owner, query)
+	url := "https://api.github.com/search/repositories?q=" + url.QueryEscape(owner+"/"+query) + "&per_page=10"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err

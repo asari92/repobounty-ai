@@ -66,6 +66,53 @@ func TestResolveDatabasePathUsesStableBackendRoot(t *testing.T) {
 	}
 }
 
+func TestJWTSecretTooShort(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("JWT_SECRET", "short")
+	t.Setenv("ENV", "development")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for short JWT_SECRET")
+	}
+}
+
+func TestJWTSecretValidInDevelopment(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("JWT_SECRET", "at-least-sixteen-chars")
+	t.Setenv("ENV", "development")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.JWTSecret != "at-least-sixteen-chars" {
+		t.Fatalf("JWTSecret = %q, want %q", cfg.JWTSecret, "at-least-sixteen-chars")
+	}
+}
+
+func TestJWTSecretRequiredInProduction(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("JWT_SECRET", "")
+	t.Setenv("ENV", "production")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for empty JWT_SECRET in production")
+	}
+}
+
+func TestJWTSecretTooShortForProduction(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("JWT_SECRET", "only-twenty-nine-chars-long")
+	t.Setenv("ENV", "production")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for <32 char JWT_SECRET in production")
+	}
+}
+
 func testFilePath(t *testing.T) string {
 	t.Helper()
 
