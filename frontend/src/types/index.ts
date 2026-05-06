@@ -75,11 +75,6 @@ export interface FinalizeResponse {
   snapshot?: SnapshotSummary;
 }
 
-export interface ApiError {
-  error: string;
-  details?: string;
-}
-
 export interface User {
   github_username: string;
   github_id: number;
@@ -100,13 +95,6 @@ export interface GitHubAuthResponse {
 
 export interface LinkWalletRequest {
   wallet_address: string;
-}
-
-export interface WalletChallengeRequest {
-  repo: string;
-  pool_amount: number;
-  deadline: string;
-  sponsor_wallet: string;
 }
 
 export interface ClaimChallengeRequest {
@@ -157,7 +145,7 @@ export interface ClaimItem {
   amount_sol: string;
   claimed: boolean;
   claimant_wallet?: string;
-  state: string;
+  state: 'active' | 'finalized' | 'closed' | 'created' | 'funded' | 'completed';
 }
 
 export interface MyCampaign {
@@ -165,7 +153,7 @@ export interface MyCampaign {
   campaign_pda?: string;
   repo: string;
   pool_amount: number;
-  state: string;
+  state: 'active' | 'finalized' | 'closed' | 'created' | 'funded' | 'completed';
   status?: string;
   sponsor: string;
   authority: string;
@@ -174,12 +162,6 @@ export interface MyCampaign {
   created_at: string;
   deadline: string;
   can_refund: boolean;
-}
-
-export interface FundTransactionResponse {
-  transaction: string;
-  campaign_pda: string;
-  vault_address: string;
 }
 
 export interface HealthResponse {

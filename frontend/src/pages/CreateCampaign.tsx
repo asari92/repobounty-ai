@@ -208,7 +208,7 @@ export default function CreateCampaign() {
       return;
     }
 
-  const normalizedRepo = normalizeGitHubRepoInput(repo);
+    const normalizedRepo = normalizeGitHubRepoInput(repo);
     if (!normalizedRepo.match(/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/)) {
       setError('Repository must be in "owner/repo" format');
       return;
