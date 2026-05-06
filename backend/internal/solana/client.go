@@ -784,6 +784,57 @@ func (c *Client) CreateCampaign(ctx context.Context, campaignID, repo string, po
 	return txSig, campaignPDA.String(), vaultPDA.String(), nil
 }
 
+type FinalizeBatchPlan struct {
+	BatchIndex int
+	Allocations []AllocationInput
+	HasMore     bool
+}
+
+func BuildFinalizeBatches(allocations []AllocationInput, batchSize int, totalRewardAmount uint64) ([]FinalizeBatchPlan, error) {
+	if len(allocations) == 0 {
+		return nil, fmt.Errorf("allocations must not be empty")
+	}
+	if batchSize < 1 {
+		batchSize = 1
+	}
+
+	var batches []FinalizeBatchPlan
+	for i := 0; i < len(allocations); i += batchSize {
+		end := i + batchSize
+		if end > len(allocations) {
+			end = len(allocations)
+		}
+		batch := allocations[i:end]
+
+		var runningTotal uint64
+		for _, b := range allocations[:end] {
+			runningTotal += b.Amount
+		}
+
+		isLast := end >= len(allocations)
+		hasMore := !isLast
+
+		if runningTotal == totalRewardAmount && hasMore {
+			return nil, fmt.Errorf("batch plan invariant violation: allocated amount equals total reward but has_more would be true")
+		}
+
+		batches = append(batches, FinalizeBatchPlan{
+			BatchIndex:  len(batches),
+			Allocations: batch,
+			HasMore:     hasMore,
+		})
+	}
+
+	if len(batches) > 0 {
+		last := &batches[len(batches)-1]
+		if last.HasMore {
+			last.HasMore = false
+		}
+	}
+
+	return batches, nil
+}
+
 type AllocationInput struct {
 	GithubUserID uint64
 	Amount       uint64
