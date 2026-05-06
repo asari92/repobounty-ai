@@ -672,8 +672,12 @@ type RepoSearchResult struct {
 }
 
 func (c *Client) SearchRepositories(ctx context.Context, owner, query string) ([]RepoSearchResult, error) {
-	if len(query) < 2 {
+	if len(owner) < 2 {
 		return nil, nil
+	}
+
+	if len(query) == 0 {
+		return c.ListUserRepos(ctx, owner)
 	}
 
 	url := "https://api.github.com/search/repositories?q=" + url.QueryEscape(owner+"/"+query) + "&per_page=10"
@@ -711,6 +715,49 @@ func (c *Client) SearchRepositories(ctx context.Context, owner, query string) ([
 
 	results := make([]RepoSearchResult, len(payload.Items))
 	for i, item := range payload.Items {
+		results[i] = RepoSearchResult{
+			Name:  item.Name,
+			Owner: item.Owner.Login,
+		}
+	}
+
+	return results, nil
+}
+
+func (c *Client) ListUserRepos(ctx context.Context, owner string) ([]RepoSearchResult, error) {
+	url := "https://api.github.com/users/" + url.QueryEscape(owner) + "/repos?type=public&sort=updated&per_page=30"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list user repos request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list user repos returned %d", resp.StatusCode)
+	}
+
+	var payload []struct {
+		Name  string `json:"name"`
+		Owner struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+	}
+
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("parse user repos: %w", err)
+	}
+
+	results := make([]RepoSearchResult, len(payload))
+	for i, item := range payload {
 		results[i] = RepoSearchResult{
 			Name:  item.Name,
 			Owner: item.Owner.Login,

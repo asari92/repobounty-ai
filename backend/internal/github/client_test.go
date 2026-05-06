@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestClient_SearchRepositories_ReturnsEmptyForShortQuery(t *testing.T) {
+func TestClient_SearchRepositories_ListsReposForEmptyQuery(t *testing.T) {
 	client := NewClientWithEnv("", false)
 
 	results, err := client.SearchRepositories(context.Background(), "octocat", "")
@@ -15,8 +15,14 @@ func TestClient_SearchRepositories_ReturnsEmptyForShortQuery(t *testing.T) {
 		t.Fatalf("SearchRepositories returned error: %v", err)
 	}
 
-	if len(results) != 0 {
-		t.Fatalf("expected empty results for short query, got %d", len(results))
+	if len(results) == 0 {
+		t.Fatalf("expected repos for known owner, got 0")
+	}
+
+	for _, r := range results {
+		if r.Owner != "octocat" {
+			t.Fatalf("expected owner octocat, got %s", r.Owner)
+		}
 	}
 }
 
