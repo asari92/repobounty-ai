@@ -65,18 +65,10 @@ func (c *Client) fetchContributionWindowDataByWindow(
 
 	prs, err := c.fetchMergedPRDetailsInWindow(ctx, owner, name, windowStart, windowEnd)
 	if err != nil {
-		if c.isProduction {
-			return nil, fmt.Errorf("github API failed and mock data is disabled in production: %w", err)
-		}
-		log.Printf("github: contribution window fetch failed (%v), using mock data", err)
-		return mockContributionWindowData(repo, windowStart, windowEnd), nil
+		return nil, fmt.Errorf("github API failed: %w", err)
 	}
 	if len(prs) == 0 {
-		if c.isProduction {
-			return nil, fmt.Errorf("no merged PRs found inside the campaign window")
-		}
-		log.Printf("github: no merged PRs found in campaign window, using mock data")
-		return mockContributionWindowData(repo, windowStart, windowEnd), nil
+		return nil, fmt.Errorf("no merged PRs found inside the campaign window for %s", repo)
 	}
 
 	contributorMap := make(map[string]*models.Contributor)
@@ -253,21 +245,4 @@ func (c *Client) fetchPRDiffsForWindow(
 	wg.Wait()
 
 	return result
-}
-
-func mockContributionWindowData(repo string, windowStart time.Time, windowEnd time.Time) *ContributionWindowData {
-	contributors := mockContributors()
-	prs := mockPRs(repo)
-	contributorPRDiffs := make(map[string][]string)
-	for _, pr := range prs {
-		contributorPRDiffs[pr.User] = append(contributorPRDiffs[pr.User], mockPRDiff(pr.Number))
-	}
-	return &ContributionWindowData{
-		Contributors:       contributors,
-		ContributorPRDiffs: contributorPRDiffs,
-		WindowStart:        windowStart.UTC(),
-		WindowEnd:          windowEnd.UTC(),
-		ContributorSource:  "merged_pr_window",
-		ContributorNotes:   "Contributor metrics are approximated from merged PRs inside the campaign window. Direct pushes and review-only activity outside merged PRs are not captured by the current GitHub API flow.",
-	}
 }

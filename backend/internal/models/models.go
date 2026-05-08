@@ -17,6 +17,15 @@ const (
 	StateCompleted CampaignState = "completed"
 )
 
+const (
+	MinAllocationLamports uint64 = 50_000_000
+
+	FinalizationStatusPending     = "pending"
+	FinalizationStatusAnalyzing   = "analyzing"
+	FinalizationStatusNeedsReview = "needs_manual_review"
+	FinalizationStatusFinalized   = "finalized"
+)
+
 type AllocationMode = string
 
 const (
@@ -62,6 +71,8 @@ type Campaign struct {
 	CreatedAt           time.Time     `json:"created_at"`
 	FinalizedAt         *time.Time    `json:"finalized_at,omitempty"`
 	TxSignature         string        `json:"tx_signature,omitempty"`
+	FinalizationStatus  string        `json:"finalization_status,omitempty"`
+	FinalizationError   string        `json:"finalization_error,omitempty"`
 }
 
 // Allocation holds both V2 and V1 fields.

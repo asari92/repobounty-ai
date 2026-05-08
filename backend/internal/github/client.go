@@ -18,9 +18,8 @@ import (
 )
 
 type Client struct {
-	token        string
-	httpClient   *http.Client
-	isProduction bool
+	token      string
+	httpClient *http.Client
 }
 
 type RepositoryMetadata struct {
@@ -31,11 +30,7 @@ type RepositoryMetadata struct {
 }
 
 func NewClient(token string) *Client {
-	return NewClientWithEnv(token, false)
-}
-
-func NewClientWithEnv(token string, isProduction bool) *Client {
-	return &Client{token: token, httpClient: &http.Client{Timeout: 30 * time.Second}, isProduction: isProduction}
+	return &Client{token: token, httpClient: &http.Client{Timeout: 30 * time.Second}}
 }
 
 func (c *Client) RepositoryExists(ctx context.Context, repo string) (bool, error) {
@@ -112,18 +107,10 @@ func (c *Client) FetchContributors(ctx context.Context, repo string) ([]models.C
 
 	contributors, err := c.fetchContributorStats(ctx, owner, name)
 	if err != nil {
-		if c.isProduction {
-			return nil, fmt.Errorf("github API failed and mock data is disabled in production: %w", err)
-		}
-		log.Printf("github: API failed (%v), using mock data", err)
-		return mockContributors(), nil
+		return nil, fmt.Errorf("github API failed: %w", err)
 	}
 	if len(contributors) == 0 {
-		if c.isProduction {
-			return nil, fmt.Errorf("no contributors found for %s/%s", owner, name)
-		}
-		log.Printf("github: no contributors found, using mock data")
-		return mockContributors(), nil
+		return nil, fmt.Errorf("no contributors found for %s/%s", owner, name)
 	}
 
 	prCounts, err := c.fetchPRCounts(ctx, owner, name)
@@ -249,14 +236,6 @@ func (c *Client) doGet(ctx context.Context, url string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 }
 
-func mockContributors() []models.Contributor {
-	return []models.Contributor{
-		{GithubUserID: 101, Username: "alice-dev", Commits: 47, PullRequests: 12, Reviews: 8, LinesAdded: 3200, LinesDeleted: 980},
-		{GithubUserID: 202, Username: "bob-builder", Commits: 31, PullRequests: 8, Reviews: 15, LinesAdded: 2100, LinesDeleted: 650},
-		{GithubUserID: 303, Username: "charlie-fix", Commits: 19, PullRequests: 5, Reviews: 3, LinesAdded: 890, LinesDeleted: 420},
-	}
-}
-
 type ContributorDetailed struct {
 	Username      string `json:"username"`
 	AvatarURL     string `json:"avatar_url"`
@@ -285,12 +264,10 @@ func (c *Client) FetchContributorsDetailed(ctx context.Context, repo string) ([]
 
 	contributors, err := c.fetchContributorStatsDetailed(ctx, owner, name)
 	if err != nil {
-		log.Printf("github: API failed (%v), using mock data", err)
-		return mockContributorsDetailed(), nil
+		return nil, fmt.Errorf("github API failed: %w", err)
 	}
 	if len(contributors) == 0 {
-		log.Printf("github: no contributors found, using mock data")
-		return mockContributorsDetailed(), nil
+		return nil, fmt.Errorf("no contributors found for %s/%s", owner, name)
 	}
 
 	return contributors, nil
@@ -340,11 +317,9 @@ func (c *Client) FetchPRsWithDiffs(ctx context.Context, repo string, mergedSince
 
 	prs, err := c.fetchPRsWithStats(ctx, owner, name, mergedSince)
 	if err != nil {
-		log.Printf("github: PR fetch failed (%v), using mock data", err)
-		return mockPRs(repo), nil
+		return nil, fmt.Errorf("github PR API failed: %w", err)
 	}
 	if len(prs) == 0 {
-		log.Printf("github: no merged PRs found, skipping mock fallback")
 		return prs, nil
 	}
 
@@ -426,8 +401,7 @@ func (c *Client) FetchPRDiff(ctx context.Context, repo string, prNumber int) (st
 
 	diff, err := c.fetchPRDiff(ctx, owner, name, prNumber)
 	if err != nil {
-		log.Printf("github: PR diff fetch failed (%v), using mock data", err)
-		return mockPRDiff(prNumber), nil
+		return "", fmt.Errorf("github PR diff API failed: %w", err)
 	}
 
 	return diff, nil
@@ -468,8 +442,7 @@ func (c *Client) FetchReviews(ctx context.Context, repo string, prNumber int) ([
 
 	reviews, err := c.fetchReviews(ctx, owner, name, prNumber)
 	if err != nil {
-		log.Printf("github: Reviews fetch failed (%v), using mock data", err)
-		return mockReviews(prNumber), nil
+		return nil, fmt.Errorf("github reviews API failed: %w", err)
 	}
 
 	return reviews, nil
@@ -580,17 +553,10 @@ func (c *Client) buildPRDiffMap(prs []PullRequest, ctx context.Context, repo str
 func (c *Client) FetchContributorsPRDiffs(ctx context.Context, repo string, mergedSinceUnix int64) (map[string][]string, error) {
 	prs, err := c.FetchPRsWithDiffs(ctx, repo, mergedSinceUnix)
 	if err != nil {
-		// API error (not empty result) - use mock in dev mode
-		if c.isProduction {
-			return nil, fmt.Errorf("github API failed and mock data is disabled in production: %w", err)
-		}
-		log.Printf("github: PR API failed (%v), using mock data for dev testing", err)
-		mockPRs := c.fetchPRsWithStatsMock(ctx, repo)
-		return c.buildPRDiffMap(mockPRs, ctx, repo), nil
+		return nil, fmt.Errorf("github PR API failed: %w", err)
 	}
 	if len(prs) == 0 {
-		log.Printf("github: no merged PRs, skipping code impact evaluation")
-		return map[string][]string{}, nil // No real PRs, skip diff fetching
+		return map[string][]string{}, nil
 	}
 
 	return c.buildPRDiffMap(prs, ctx, repo), nil
@@ -765,124 +731,4 @@ func (c *Client) ListUserRepos(ctx context.Context, owner string) ([]RepoSearchR
 	}
 
 	return results, nil
-}
-
-func mockContributorsDetailed() []ContributorDetailed {
-	return []ContributorDetailed{
-		{Username: "alice-dev", AvatarURL: "https://github.com/alice-dev.png", Contributions: 47},
-		{Username: "bob-builder", AvatarURL: "https://github.com/bob-builder.png", Contributions: 31},
-		{Username: "charlie-fix", AvatarURL: "https://github.com/charlie-fix.png", Contributions: 19},
-	}
-}
-
-func mockPRs(repo string) []PullRequest {
-	return []PullRequest{
-		{
-			ID:           12345,
-			Number:       42,
-			Title:        "Add authentication flow",
-			User:         "alice-dev",
-			State:        "merged",
-			CreatedAt:    "2024-03-15T10:30:00Z",
-			MergedAt:     "2024-03-16T14:20:00Z",
-			Additions:    450,
-			Deletions:    120,
-			ChangedFiles: 8,
-		},
-		{
-			ID:           12346,
-			Number:       43,
-			Title:        "Fix memory leak in scheduler",
-			User:         "bob-builder",
-			State:        "merged",
-			CreatedAt:    "2024-03-17T09:15:00Z",
-			MergedAt:     "2024-03-18T11:45:00Z",
-			Additions:    85,
-			Deletions:    230,
-			ChangedFiles: 3,
-		},
-		{
-			ID:           12347,
-			Number:       44,
-			Title:        "Add unit tests for auth module",
-			User:         "alice-dev",
-			State:        "merged",
-			CreatedAt:    "2024-03-21T11:00:00Z",
-			MergedAt:     "2024-03-22T15:30:00Z",
-			Additions:    180,
-			Deletions:    25,
-			ChangedFiles: 4,
-		},
-		{
-			ID:           12348,
-			Number:       45,
-			Title:        "Implement rate limiting",
-			User:         "charlie-fix",
-			State:        "merged",
-			CreatedAt:    "2024-03-19T16:00:00Z",
-			MergedAt:     "2024-03-20T09:30:00Z",
-			Additions:    320,
-			Deletions:    45,
-			ChangedFiles: 5,
-		},
-	}
-}
-
-// fetchPRsWithStatsMock returns consistent mock PR data matching mockContributors()
-// Used only in development mode when GitHub API fails
-func (c *Client) fetchPRsWithStatsMock(_ context.Context, repo string) []PullRequest {
-	return mockPRs(repo)
-}
-
-func mockPRDiff(prNumber int) string {
-	return fmt.Sprintf(`diff --git a/src/auth/auth.go b/src/auth/auth.go
-index 1234567..abcdefg 100644
---- a/src/auth/auth.go
-+++ b/src/auth/auth.go
-@@ -10,6 +10,12 @@ import (
- 	"time"
- )
- 
-+// JWTManager handles JWT token generation and validation
-+type JWTManager struct {
-+	secret string
-+}
-+
- func NewJWTManager(secret string) *JWTManager {
- 	return &JWTManager{secret: secret}
- }
-@@ -45,7 +51,15 @@ func (m *JWTManager) Validate(token string) (*Claims, error) {
- 		return nil, err
- 	}
- 	
--	// TODO: validate claims
-+	if claims.ExpiresAt < time.Now().Unix() {
-+		return nil, errors.New("token expired")
-+	}
-+	
-+	if claims.Issuer != "repobounty" {
-+		return nil, errors.New("invalid issuer")
-+	}
-+	
- 	return claims, nil
- }`)
-}
-
-func mockReviews(prNumber int) []Review {
-	return []Review{
-		{
-			ID:          789,
-			User:        "bob-builder",
-			State:       "APPROVED",
-			Body:        "Looks good! The token validation is more robust now.",
-			SubmittedAt: "2024-03-16T15:00:00Z",
-		},
-		{
-			ID:          790,
-			User:        "charlie-fix",
-			State:       "COMMENTED",
-			Body:        "Consider adding rate limiting for the token refresh endpoint.",
-			SubmittedAt: "2024-03-16T15:30:00Z",
-		},
-	}
 }

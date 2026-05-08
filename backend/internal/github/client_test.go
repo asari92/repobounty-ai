@@ -8,7 +8,7 @@ import (
 )
 
 func TestClient_SearchRepositories_ListsReposForEmptyQuery(t *testing.T) {
-	client := NewClientWithEnv("", false)
+	client := NewClient("")
 
 	results, err := client.SearchRepositories(context.Background(), "octocat", "")
 	if err != nil {
@@ -27,7 +27,7 @@ func TestClient_SearchRepositories_ListsReposForEmptyQuery(t *testing.T) {
 }
 
 func TestClient_SearchRepositories_FiltersByPrefix(t *testing.T) {
-	client := NewClientWithEnv("", false)
+	client := NewClient("")
 	client.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		recorder := responseRecorder{header: make(http.Header)}
 

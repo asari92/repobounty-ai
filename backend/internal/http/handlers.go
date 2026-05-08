@@ -678,6 +678,56 @@ func (h *Handlers) FinalizeWithWalletProof(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func validateAllocationsPreFinalize(allocations []models.Allocation, contributorIDs map[uint64]bool, poolAmount uint64) error {
+	if len(allocations) == 0 {
+		return fmt.Errorf("allocation validation failed: no allocations")
+	}
+
+	var sum uint64
+	for i, a := range allocations {
+		if a.GithubUserID == 0 {
+			return fmt.Errorf("allocation validation failed: allocation %d has github_user_id=0", i)
+		}
+		if !contributorIDs[a.GithubUserID] {
+			return fmt.Errorf("allocation validation failed: github_user_id %d not in repository identity set", a.GithubUserID)
+		}
+		if a.Amount < models.MinAllocationLamports {
+			return fmt.Errorf("allocation validation failed: allocation for github_user_id %d has amount %d below minimum %d",
+				a.GithubUserID, a.Amount, models.MinAllocationLamports)
+		}
+		sum += a.Amount
+	}
+
+	if sum != poolAmount {
+		return fmt.Errorf("allocation validation failed: sum %d != pool %d", sum, poolAmount)
+	}
+
+	return nil
+}
+
+func distributeRoundingRemainder(allocations []models.Allocation, poolAmount uint64) {
+	var sum uint64
+	for _, a := range allocations {
+		sum += a.Amount
+	}
+	if sum == poolAmount {
+		return
+	}
+	diff := int64(poolAmount) - int64(sum)
+	if diff == 0 {
+		return
+	}
+
+	sort.Slice(allocations, func(i, j int) bool {
+		if allocations[i].Amount != allocations[j].Amount {
+			return allocations[i].Amount > allocations[j].Amount
+		}
+		return allocations[i].GithubUserID < allocations[j].GithubUserID
+	})
+
+	allocations[0].Amount = uint64(int64(allocations[0].Amount) + diff)
+}
+
 // commitFinalize sends the finalization transaction to Solana and persists the
 // result. It is the shared core called by the GitHub-auth Finalize handler,
 // the FinalizeWithWalletProof handler, and the auto-finalize worker.
@@ -690,11 +740,26 @@ func (h *Handlers) commitFinalize(
 		return models.FinalizeResponse{}, solana.ErrNotConfigured
 	}
 
+	contributorIDs := make(map[uint64]bool, len(result.contributors))
+	for _, c := range result.contributors {
+		if c.GithubUserID != 0 {
+			contributorIDs[c.GithubUserID] = true
+		}
+	}
+
+	distributeRoundingRemainder(result.allocations, campaign.PoolAmount)
+
+	if err := validateAllocationsPreFinalize(result.allocations, contributorIDs, campaign.PoolAmount); err != nil {
+		campaign.FinalizationStatus = models.FinalizationStatusNeedsReview
+		campaign.FinalizationError = err.Error()
+		if updateErr := h.store.Update(campaign); updateErr != nil {
+			log.Printf("WARNING: failed to persist finalization failure for %s: %v", campaign.CampaignID, updateErr)
+		}
+		return models.FinalizeResponse{}, err
+	}
+
 	solanaInputs := make([]solana.AllocationInput, len(result.allocations))
 	for i, a := range result.allocations {
-		if a.GithubUserID == 0 {
-			return models.FinalizeResponse{}, fmt.Errorf("missing github_user_id for allocation %s", a.Contributor)
-		}
 		solanaInputs[i] = solana.AllocationInput{
 			GithubUserID: a.GithubUserID,
 			Amount:       a.Amount,
@@ -711,6 +776,8 @@ func (h *Handlers) commitFinalize(
 	campaign.Allocations = result.allocations
 	campaign.FinalizedAt = &now
 	campaign.TxSignature = txSig
+	campaign.FinalizationStatus = models.FinalizationStatusFinalized
+	campaign.FinalizationError = ""
 
 	if err := h.store.Update(campaign); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -1624,14 +1691,24 @@ func (h *Handlers) calculateAllocations(
 	campaign *models.Campaign,
 	options allocationOptions,
 ) (*allocationResult, error) {
+	campaign.FinalizationStatus = models.FinalizationStatusAnalyzing
+	campaign.FinalizationError = ""
+	if err := h.store.Update(campaign); err != nil {
+		log.Printf("WARNING: failed to persist analyzing status for %s: %v", campaign.CampaignID, err)
+	}
+
 	windowStart, windowEnd := campaignContributionWindow(campaign)
 	windowData, err := h.github.FetchContributionWindowData(ctx, campaign.Repo, windowStart, windowEnd)
 	if err != nil {
-		return nil, fmt.Errorf("fetch contribution window: %w", err)
+		failMsg := fmt.Sprintf("fetch contribution window: %v", err)
+		campaign.FinalizationStatus = models.FinalizationStatusNeedsReview
+		campaign.FinalizationError = failMsg
+		if updateErr := h.store.Update(campaign); updateErr != nil {
+			log.Printf("WARNING: failed to persist finalization failure for %s: %v", campaign.CampaignID, updateErr)
+		}
+		return nil, fmt.Errorf("%s", failMsg)
 	}
 
-	// Check if PR diffs contain real data
-	// Empty PR diffs mean "no merged PRs available", not "try mock fallback"
 	hasRealPRs := len(windowData.ContributorPRDiffs) > 0
 
 	if hasRealPRs {

@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/repobounty/repobounty-ai/internal/ai"
@@ -98,7 +99,23 @@ func autoFinalize(
 		if now.Before(c.Deadline) {
 			continue
 		}
+		if c.FinalizationStatus == models.FinalizationStatusNeedsReview ||
+			c.FinalizationStatus == models.FinalizationStatusFinalized {
+			continue
+		}
 		if retries[c.CampaignID] >= maxAutoFinalizeRetries {
+			c.FinalizationStatus = models.FinalizationStatusNeedsReview
+			c.FinalizationError = fmt.Sprintf("auto-finalize exhausted %d retries", maxAutoFinalizeRetries)
+			if updateErr := campaignStore.Update(c); updateErr != nil {
+				logger.Error("auto-finalize: failed to persist needs_manual_review status",
+					zap.String("campaign_id", c.CampaignID),
+					zap.Error(updateErr),
+				)
+			} else {
+				logger.Warn("auto-finalize: marked campaign as needs_manual_review after exhausting retries",
+					zap.String("campaign_id", c.CampaignID),
+				)
+			}
 			delete(retries, c.CampaignID)
 			continue
 		}

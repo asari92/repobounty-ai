@@ -59,7 +59,9 @@ func migrate(db *sql.DB) error {
 		allocations TEXT NOT NULL DEFAULT '[]',
 		created_at TEXT NOT NULL,
 		finalized_at TEXT,
-		tx_signature TEXT NOT NULL DEFAULT ''
+		tx_signature TEXT NOT NULL DEFAULT '',
+		finalization_status TEXT NOT NULL DEFAULT 'pending',
+		finalization_error TEXT NOT NULL DEFAULT ''
 	);
 
 	CREATE TABLE IF NOT EXISTS users (
@@ -118,10 +120,16 @@ func migrate(db *sql.DB) error {
 
 	for _, stmt := range []string{
 		`ALTER TABLE campaigns ADD COLUMN owner_github_username TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE campaigns ADD COLUMN finalization_status TEXT NOT NULL DEFAULT 'pending'`,
+		`ALTER TABLE campaigns ADD COLUMN finalization_error TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return err
 		}
+	}
+
+	if _, err := db.Exec(`UPDATE campaigns SET finalization_status = 'needs_manual_review' WHERE finalization_status = 'failed'`); err != nil {
+		log.Printf("sqlite: migration: failed -> needs_manual_review: %v", err)
 	}
 
 	return nil
@@ -135,11 +143,13 @@ func (s *SQLiteStore) Create(c *models.Campaign) error {
 
 	_, err = s.db.Exec(`
 		INSERT INTO campaigns (campaign_id, campaign_pda, vault_address, repo, pool_amount, total_claimed,
-			deadline, state, authority, sponsor, owner_github_username, allocations, created_at, finalized_at, tx_signature)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			deadline, state, authority, sponsor, owner_github_username, allocations, created_at, finalized_at, tx_signature,
+			finalization_status, finalization_error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.CampaignID, c.CampaignPDA, c.VaultAddress, c.Repo, c.PoolAmount, c.TotalClaimed,
 		c.Deadline.Format(time.RFC3339Nano), string(c.State), c.Authority, c.Sponsor, c.OwnerGitHubUsername,
 		string(allocs), c.CreatedAt.Format(time.RFC3339Nano), nullableTime(c.FinalizedAt), c.TxSignature,
+		c.FinalizationStatus, c.FinalizationError,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
@@ -165,7 +175,8 @@ func (s *SQLiteStore) DeleteCampaign(id string) error {
 func (s *SQLiteStore) Get(id string) (*models.Campaign, error) {
 	c, err := s.scanCampaign(s.db.QueryRow(`
 		SELECT campaign_id, campaign_pda, vault_address, repo, pool_amount, total_claimed,
-			deadline, state, authority, sponsor, owner_github_username, allocations, created_at, finalized_at, tx_signature
+			deadline, state, authority, sponsor, owner_github_username, allocations, created_at, finalized_at, tx_signature,
+			finalization_status, finalization_error
 		FROM campaigns WHERE campaign_id = ?`, id))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -184,12 +195,14 @@ func (s *SQLiteStore) Update(c *models.Campaign) error {
 
 	res, err := s.db.Exec(`
 		UPDATE campaigns SET campaign_pda=?, vault_address=?, repo=?, pool_amount=?, total_claimed=?,
-			deadline=?, state=?, authority=?, sponsor=?, owner_github_username=?, allocations=?, created_at=?, finalized_at=?, tx_signature=?
+			deadline=?, state=?, authority=?, sponsor=?, owner_github_username=?, allocations=?, created_at=?, finalized_at=?, tx_signature=?,
+			finalization_status=?, finalization_error=?
 		WHERE campaign_id=?`,
 		c.CampaignPDA, c.VaultAddress, c.Repo, c.PoolAmount, c.TotalClaimed,
 		c.Deadline.Format(time.RFC3339Nano), string(c.State), c.Authority, c.Sponsor, c.OwnerGitHubUsername,
 		string(allocs), c.CreatedAt.Format(time.RFC3339Nano), nullableTime(c.FinalizedAt),
-		c.TxSignature, c.CampaignID,
+		c.TxSignature, c.FinalizationStatus, c.FinalizationError,
+		c.CampaignID,
 	)
 	if err != nil {
 		return fmt.Errorf("update campaign: %w", err)
@@ -204,7 +217,8 @@ func (s *SQLiteStore) Update(c *models.Campaign) error {
 func (s *SQLiteStore) List() []*models.Campaign {
 	rows, err := s.db.Query(`
 		SELECT campaign_id, campaign_pda, vault_address, repo, pool_amount, total_claimed,
-			deadline, state, authority, sponsor, owner_github_username, allocations, created_at, finalized_at, tx_signature
+			deadline, state, authority, sponsor, owner_github_username, allocations, created_at, finalized_at, tx_signature,
+			finalization_status, finalization_error
 		FROM campaigns ORDER BY created_at DESC`)
 	if err != nil {
 		log.Printf("sqlite: list campaigns query failed: %v", err)
@@ -551,12 +565,14 @@ func (s *SQLiteStore) GetLatestFinalizeSnapshot(campaignID string) (*models.Fina
 
 func (s *SQLiteStore) scanCampaign(scanner interface{ Scan(...interface{}) error }) (*models.Campaign, error) {
 	var (
-		c              models.Campaign
-		allocJSON      string
-		deadlineStr    string
-		createdAtStr   string
-		finalizedAtStr sql.NullString
-		txSigStr       sql.NullString
+		c                  models.Campaign
+		allocJSON          string
+		deadlineStr        string
+		createdAtStr       string
+		finalizedAtStr     sql.NullString
+		txSigStr           sql.NullString
+		finalizationStatus sql.NullString
+		finalizationError  sql.NullString
 	)
 
 	err := scanner.Scan(
@@ -564,6 +580,7 @@ func (s *SQLiteStore) scanCampaign(scanner interface{ Scan(...interface{}) error
 		&c.PoolAmount, &c.TotalClaimed, &deadlineStr, &c.State,
 		&c.Authority, &c.Sponsor, &c.OwnerGitHubUsername, &allocJSON, &createdAtStr,
 		&finalizedAtStr, &txSigStr,
+		&finalizationStatus, &finalizationError,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan campaign: %w", err)
@@ -589,6 +606,13 @@ func (s *SQLiteStore) scanCampaign(scanner interface{ Scan(...interface{}) error
 
 	if txSigStr.Valid {
 		c.TxSignature = txSigStr.String
+	}
+
+	if finalizationStatus.Valid {
+		c.FinalizationStatus = finalizationStatus.String
+	}
+	if finalizationError.Valid {
+		c.FinalizationError = finalizationError.String
 	}
 
 	if allocJSON != "" && allocJSON != "[]" {

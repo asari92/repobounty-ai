@@ -57,7 +57,7 @@ func main() {
 		campaignStore = store.New()
 		logger.Info("using in-memory storage", zap.String("store_type", "memory"))
 	}
-	ghClient := github.NewClientWithEnv(cfg.GitHubToken, env == "production")
+	ghClient := github.NewClient(cfg.GitHubToken)
 	aiAllocator := ai.NewAllocator(cfg.OpenRouterAPIKey, cfg.Model)
 
 	solClient, err := solana.NewClient(cfg.SolanaRPCURL, cfg.ServicePrivateKey, cfg.ProgramID)
