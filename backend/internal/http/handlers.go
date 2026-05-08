@@ -863,14 +863,16 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 
 	if err := validateClaimInputs(user.GitHubUsername, campaign, req.ContributorGithub, req.WalletAddress); err != nil {
 		switch err.Error() {
-		case "campaign is not finalized", "allocation already claimed":
-			writeError(w, http.StatusConflict, err.Error())
+		case "allocation already claimed":
+			writeCodedError(w, http.StatusConflict, "You have already claimed your reward for this campaign.", "CLAIM_ALREADY_CLAIMED")
+		case "campaign is not finalized":
+			writeCodedError(w, http.StatusConflict, err.Error(), "CAMPAIGN_NOT_FINALIZED")
 		case "can only claim your own allocation":
-			writeError(w, http.StatusForbidden, err.Error())
+			writeCodedError(w, http.StatusForbidden, err.Error(), "CLAIM_NOT_YOUR_OWN")
 		case "contributor not found in allocations":
-			writeError(w, http.StatusNotFound, err.Error())
+			writeCodedError(w, http.StatusNotFound, err.Error(), "CONTRIBUTOR_NOT_FOUND")
 		default:
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeCodedError(w, http.StatusBadRequest, err.Error(), "BAD_REQUEST")
 		}
 		return
 	}
@@ -909,6 +911,18 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to map contributor identities for on-chain claim")
 		return
 	}
+
+	claimStatus, err := h.solana.GetClaimStatus(r.Context(), campaign.CampaignID, campaign.Sponsor, matchedAlloc.GithubUserID)
+	if err == nil && claimStatus.Claimed {
+		if !matchedAlloc.Claimed {
+			matchedAlloc.Claimed = true
+			matchedAlloc.ClaimantWallet = claimStatus.RecipientWallet
+			_ = h.store.Update(campaign)
+		}
+		writeCodedError(w, http.StatusConflict, "You have already claimed your reward for this campaign.", "CLAIM_ALREADY_CLAIMED")
+		return
+	}
+
 	if err := h.markWalletChallengeUsed(req.ChallengeID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1330,26 +1344,12 @@ func (h *Handlers) GetMyCampaigns(w http.ResponseWriter, r *http.Request) {
 		isSponsor := filterWallet != "" &&
 			(campaign.Sponsor == filterWallet || campaign.Authority == filterWallet)
 
-		isContributor := false
-		if user != nil && user.GitHubUsername != "" {
-			if campaign.OwnerGitHubUsername == user.GitHubUsername {
-				isContributor = true
-			} else if campaign.Allocations != nil {
-				for _, alloc := range campaign.Allocations {
-					if alloc.Contributor == user.GitHubUsername {
-						isContributor = true
-						break
-					}
-				}
-			}
-		}
-
-		if !isSponsor && !isContributor {
+		if !isSponsor {
 			continue
 		}
 
 		refundDeadline := campaign.Deadline.AddDate(0, 0, 365)
-		canRefund := isSponsor && now.After(refundDeadline)
+		canRefund := now.After(refundDeadline)
 
 		myCampaigns = append(myCampaigns, myCampaign{
 			CampaignID:  campaign.CampaignID,
@@ -1392,6 +1392,15 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, models.ErrorResponse{Error: msg})
+}
+
+type codedErrorResponse struct {
+	Error string `json:"error"`
+	Code  string `json:"code"`
+}
+
+func writeCodedError(w http.ResponseWriter, status int, msg, code string) {
+	writeJSON(w, status, codedErrorResponse{Error: msg, Code: code})
 }
 
 func isValidTxSignature(s string) bool {
