@@ -1301,11 +1301,6 @@ func (h *Handlers) GetMyCampaigns(w http.ResponseWriter, r *http.Request) {
 	walletAddress := r.URL.Query().Get("wallet")
 	user, _ := auth.GetUserFromContext(r.Context())
 
-	if walletAddress != "" && user != nil && user.WalletAddress != walletAddress {
-		writeJSON(w, http.StatusForbidden, models.ErrorResponse{Error: "wallet query parameter does not match authenticated user wallet"})
-		return
-	}
-
 	if (user == nil || user.WalletAddress == "") && walletAddress == "" {
 		writeJSON(w, http.StatusOK, []map[string]any{})
 		return

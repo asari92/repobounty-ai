@@ -15,11 +15,6 @@ export default function Profile() {
   const [errorClaims, setErrorClaims] = useState<string | null>(null);
   const [errorCampaigns, setErrorCampaigns] = useState<string | null>(null);
 
-  const connectedWallet = publicKey?.toBase58() || undefined;
-  const linkedWallet = user?.wallet_address || undefined;
-  const walletMismatch =
-    user && connectedWallet && linkedWallet && connectedWallet !== linkedWallet;
-
   useEffect(() => {
     if (!user) {
       return;
@@ -45,20 +40,11 @@ export default function Profile() {
   }, [user]);
 
   useEffect(() => {
-    if (!connectedWallet && !linkedWallet) {
-      return;
-    }
-
-    let cancelled = false;
-    const walletAddr = connectedWallet || linkedWallet;
+    const walletAddr = publicKey?.toBase58();
     if (!walletAddr) {
       return;
     }
-
-    if (walletMismatch) {
-      return;
-    }
-
+    let cancelled = false;
     api
       .getMyCampaigns(walletAddr)
       .then((data) => {
@@ -76,7 +62,7 @@ export default function Profile() {
     return () => {
       cancelled = true;
     };
-  }, [user, publicKey, connectedWallet, linkedWallet, walletMismatch]);
+  }, [publicKey]);
 
   if (!user && !publicKey) {
     return (
@@ -86,7 +72,7 @@ export default function Profile() {
     );
   }
 
-  const walletAddr = connectedWallet || linkedWallet;
+  const walletAddr = publicKey?.toBase58() || user?.wallet_address;
   const totalAllocated = claims.reduce((sum, c) => sum + c.amount, 0);
   const totalAvailable = claims.filter((c) => !c.claimed).reduce((sum, c) => sum + c.amount, 0);
   const totalClaimed = claims.filter((c) => c.claimed).reduce((sum, c) => sum + c.amount, 0);
@@ -215,79 +201,65 @@ export default function Profile() {
       )}
 
       {/* Sponsored Campaigns */}
-      {(connectedWallet || linkedWallet) && (
+      {publicKey && (
         <div className="mb-5 animate-fade-in-up" style={{ animationDelay: '160ms' }}>
           <h2 className="text-sm font-semibold text-gray-300 mb-3">Sponsored Campaigns</h2>
 
-          {walletMismatch ? (
-            <div className="card">
-              <div className="bg-yellow-500/5 border border-yellow-500/15 rounded-lg p-4 text-xs text-yellow-300">
-                <p className="font-medium mb-1">Connected wallet does not match your account</p>
-                <p className="text-yellow-300/70">
-                  This connected wallet is not linked to your GitHub account. Link it to view
-                  sponsored campaigns while logged in.
-                </p>
-              </div>
+          <div className="grid grid-cols-3 gap-3 mb-3">
+            <div className="stat-block text-center">
+              <p className="text-[10px] text-gray-600 uppercase">Campaigns</p>
+              <p className="text-xl font-bold">{myCampaigns.length}</p>
             </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-3 gap-3 mb-3">
-                <div className="stat-block text-center">
-                  <p className="text-[10px] text-gray-600 uppercase">Campaigns</p>
-                  <p className="text-xl font-bold">{myCampaigns.length}</p>
-                </div>
-                <div className="stat-block text-center">
-                  <p className="text-[10px] text-gray-600 uppercase">Active</p>
-                  <p className="text-xl font-bold">
-                    {myCampaigns.filter((c) => c.state === 'active' || c.state === 'funded').length}
-                  </p>
-                </div>
-                <div className="stat-block text-center">
-                  <p className="text-[10px] text-gray-600 uppercase">Total Funded</p>
-                  <p className="text-xl font-bold text-solana-green">{formatSOL(totalFunded)}</p>
-                </div>
-              </div>
+            <div className="stat-block text-center">
+              <p className="text-[10px] text-gray-600 uppercase">Active</p>
+              <p className="text-xl font-bold">
+                {myCampaigns.filter((c) => c.state === 'active' || c.state === 'funded').length}
+              </p>
+            </div>
+            <div className="stat-block text-center">
+              <p className="text-[10px] text-gray-600 uppercase">Total Funded</p>
+              <p className="text-xl font-bold text-solana-green">{formatSOL(totalFunded)}</p>
+            </div>
+          </div>
 
-              <div className="card">
-                {errorCampaigns && (
-                  <div className="bg-red-500/5 border border-red-500/15 rounded-lg p-3 text-xs text-red-400 mb-4">
-                    {errorCampaigns}
-                  </div>
-                )}
-
-                {myCampaigns.length === 0 ? (
-                  <p className="text-xs text-gray-600 text-center py-4">
-                    No sponsored campaigns yet.
-                  </p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-solana-border/50">
-                          <th className="text-left py-2 px-3 text-gray-500">Campaign</th>
-                          <th className="text-left py-2 px-3 text-gray-500">Repo</th>
-                          <th className="text-left py-2 px-3 text-gray-500">State</th>
-                          <th className="text-left py-2 px-3 text-gray-500">Amount</th>
-                          <th className="text-left py-2 px-3 text-gray-500">Deadline</th>
-                          <th className="text-right py-2 px-3 text-gray-500">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {myCampaigns.map((c) => (
-                          <SponsoredCampaignRow
-                            key={c.campaign_id}
-                            campaign={c}
-                            publicKey={publicKey}
-                            user={user}
-                          />
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+          <div className="card">
+            {errorCampaigns && (
+              <div className="bg-red-500/5 border border-red-500/15 rounded-lg p-3 text-xs text-red-400 mb-4">
+                {errorCampaigns}
               </div>
-            </>
-          )}
+            )}
+
+            {myCampaigns.length === 0 ? (
+              <p className="text-xs text-gray-600 text-center py-4">
+                No sponsored campaigns yet for this wallet.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-solana-border/50">
+                      <th className="text-left py-2 px-3 text-gray-500">Campaign</th>
+                      <th className="text-left py-2 px-3 text-gray-500">Repo</th>
+                      <th className="text-left py-2 px-3 text-gray-500">State</th>
+                      <th className="text-left py-2 px-3 text-gray-500">Amount</th>
+                      <th className="text-left py-2 px-3 text-gray-500">Deadline</th>
+                      <th className="text-right py-2 px-3 text-gray-500">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {myCampaigns.map((c) => (
+                      <SponsoredCampaignRow
+                        key={c.campaign_id}
+                        campaign={c}
+                        publicKey={publicKey}
+                        user={user}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
