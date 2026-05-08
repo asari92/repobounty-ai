@@ -52,7 +52,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
         window.dispatchEvent(new Event('auth-expired'));
       }
       const body = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(body.error || `Request failed: ${res.status}`);
+      const err = new Error(body.error || `Request failed: ${res.status}`);
+      if (body.code) {
+        (err as Error & { code?: string }).code = body.code;
+      }
+      throw err;
     }
     return res.json();
   } catch (err) {

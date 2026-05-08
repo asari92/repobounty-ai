@@ -177,7 +177,29 @@ export default function CampaignDetails() {
       setCampaign(updated);
       setClaimedContributors((prev) => ({ ...prev, [contributor]: true }));
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Claim failed');
+      let msg = 'Claim failed';
+      if (e instanceof Error) {
+        const code = (e as Error & { code?: string }).code;
+        if (code === 'CLAIM_ALREADY_CLAIMED') {
+          msg = 'You have already claimed your reward for this campaign.';
+          try {
+            const updated = await api.getCampaign(id);
+            setCampaign(updated);
+          } catch {
+            // ignore refresh error
+          }
+          setClaimedContributors((prev) => ({ ...prev, [contributor]: true }));
+        } else if (
+          e.message.includes('ClaimAlreadyClaimed') ||
+          e.message.includes('already claimed')
+        ) {
+          msg = 'You have already claimed your reward for this campaign.';
+          setClaimedContributors((prev) => ({ ...prev, [contributor]: true }));
+        } else {
+          msg = e.message;
+        }
+      }
+      setError(msg);
     } finally {
       setClaiming(null);
     }
