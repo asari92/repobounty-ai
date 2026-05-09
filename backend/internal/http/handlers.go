@@ -705,17 +705,9 @@ func validateAllocationsPreFinalize(allocations []models.Allocation, contributor
 	return nil
 }
 
-func distributeRoundingRemainder(allocations []models.Allocation, poolAmount uint64) {
-	var sum uint64
-	for _, a := range allocations {
-		sum += a.Amount
-	}
-	if sum == poolAmount {
-		return
-	}
-	diff := int64(poolAmount) - int64(sum)
-	if diff == 0 {
-		return
+func redistributeBelowMinimum(allocations []models.Allocation, poolAmount uint64) []models.Allocation {
+	if len(allocations) == 0 {
+		return allocations
 	}
 
 	sort.Slice(allocations, func(i, j int) bool {
@@ -725,7 +717,42 @@ func distributeRoundingRemainder(allocations []models.Allocation, poolAmount uin
 		return allocations[i].GithubUserID < allocations[j].GithubUserID
 	})
 
-	allocations[0].Amount = uint64(int64(allocations[0].Amount) + diff)
+	originalTop1 := allocations[0]
+
+	var kept []models.Allocation
+	var filteredSum uint64
+	for _, a := range allocations {
+		if a.Amount >= models.MinAllocationLamports {
+			kept = append(kept, a)
+		} else {
+			filteredSum += a.Amount
+		}
+	}
+
+	if len(kept) == 0 {
+		return []models.Allocation{
+			{
+				GithubUserID:   originalTop1.GithubUserID,
+				GithubUsername: originalTop1.GithubUsername,
+				Contributor:    originalTop1.Contributor,
+				Percentage:     10000,
+				Amount:         poolAmount,
+				Reasoning:      "TOR 13.6: all other contributors below MIN_ALLOCATION, entire pool assigned to top-1 contributor",
+			},
+		}
+	}
+
+	var keptSum uint64
+	for _, a := range kept {
+		keptSum += a.Amount
+	}
+
+	remainder := poolAmount - keptSum
+	if remainder > 0 {
+		kept[0].Amount += remainder
+	}
+
+	return kept
 }
 
 // commitFinalize sends the finalization transaction to Solana and persists the
@@ -747,7 +774,7 @@ func (h *Handlers) commitFinalize(
 		}
 	}
 
-	distributeRoundingRemainder(result.allocations, campaign.PoolAmount)
+	result.allocations = redistributeBelowMinimum(result.allocations, campaign.PoolAmount)
 
 	if err := validateAllocationsPreFinalize(result.allocations, contributorIDs, campaign.PoolAmount); err != nil {
 		campaign.FinalizationStatus = models.FinalizationStatusNeedsReview

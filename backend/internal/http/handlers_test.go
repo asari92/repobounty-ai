@@ -230,32 +230,119 @@ func TestValidateAllocationsPreFinalize_AcceptsValidData(t *testing.T) {
 	}
 }
 
-func TestDistributeRoundingRemainder_AddsToTopContributor(t *testing.T) {
+func TestRedistributeBelowMinimum_FiltersAndRedistributesToTop1(t *testing.T) {
 	allocs := []models.Allocation{
-		{GithubUserID: 123, Amount: 59999999},
-		{GithubUserID: 456, Amount: 50000000},
+		{GithubUserID: 123, Contributor: "alice", Amount: 60000000},
+		{GithubUserID: 456, Contributor: "bob", Amount: 50000000},
+		{GithubUserID: 789, Contributor: "charlie", Amount: 30000000},
 	}
-	distributeRoundingRemainder(allocs, 110000000)
-	if allocs[0].Amount != 60000000 {
-		t.Fatalf("expected top contributor to get remainder, got allocation amounts: %d, %d", allocs[0].Amount, allocs[1].Amount)
+	result := redistributeBelowMinimum(allocs, 140000000)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 allocations after filtering, got %d", len(result))
 	}
 	var sum uint64
-	for _, a := range allocs {
+	for _, a := range result {
+		sum += a.Amount
+		if a.Amount < models.MinAllocationLamports {
+			t.Fatalf("allocation for %s has amount %d below minimum", a.Contributor, a.Amount)
+		}
+	}
+	if sum != 140000000 {
+		t.Fatalf("expected sum 140000000, got %d", sum)
+	}
+	if result[0].Contributor != "alice" {
+		t.Fatalf("expected top-1 to be alice, got %s", result[0].Contributor)
+	}
+	if result[0].Amount != 90000000 {
+		t.Fatalf("expected alice to get 90000000 (60000000 + 30000000 + rounding), got %d", result[0].Amount)
+	}
+}
+
+func TestRedistributeBelowMinimum_MultipleBelowMinimum(t *testing.T) {
+	allocs := []models.Allocation{
+		{GithubUserID: 123, Contributor: "alice", Amount: 80000000},
+		{GithubUserID: 456, Contributor: "bob", Amount: 20000000},
+		{GithubUserID: 789, Contributor: "charlie", Amount: 10000000},
+	}
+	result := redistributeBelowMinimum(allocs, 110000000)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 allocation after filtering, got %d", len(result))
+	}
+	if result[0].Amount != 110000000 {
+		t.Fatalf("expected alice to get entire pool 110000000, got %d", result[0].Amount)
+	}
+}
+
+func TestRedistributeBelowMinimum_FloorRoundingRedistributed(t *testing.T) {
+	allocs := []models.Allocation{
+		{GithubUserID: 123, Contributor: "alice", Amount: 59999999},
+		{GithubUserID: 456, Contributor: "bob", Amount: 50000000},
+	}
+	result := redistributeBelowMinimum(allocs, 110000000)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 allocations, got %d", len(result))
+	}
+	var sum uint64
+	for _, a := range result {
 		sum += a.Amount
 	}
 	if sum != 110000000 {
 		t.Fatalf("expected sum 110000000, got %d", sum)
 	}
+	if result[0].Amount != 60000000 {
+		t.Fatalf("expected top-1 to get remainder, got %d", result[0].Amount)
+	}
 }
 
-func TestDistributeRoundingRemainder_NoOpWhenExact(t *testing.T) {
+func TestRedistributeBelowMinimum_AllBelowMinimum_Top1GetsAll(t *testing.T) {
 	allocs := []models.Allocation{
-		{GithubUserID: 123, Amount: 60000000},
-		{GithubUserID: 456, Amount: 50000000},
+		{GithubUserID: 123, Contributor: "alice", Amount: 30000000},
+		{GithubUserID: 456, Contributor: "bob", Amount: 20000000},
 	}
-	distributeRoundingRemainder(allocs, 110000000)
-	if allocs[0].Amount != 60000000 || allocs[1].Amount != 50000000 {
-		t.Fatal("expected no change when sum is exact")
+	result := redistributeBelowMinimum(allocs, 50000000)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 allocation, got %d", len(result))
+	}
+	if result[0].Amount != 50000000 {
+		t.Fatalf("expected alice to get entire pool, got %d", result[0].Amount)
+	}
+	if result[0].Contributor != "alice" {
+		t.Fatalf("expected top-1 to be alice, got %s", result[0].Contributor)
+	}
+}
+
+func TestRedistributeBelowMinimum_NoOpWhenAllAboveMinimum(t *testing.T) {
+	allocs := []models.Allocation{
+		{GithubUserID: 123, Contributor: "alice", Amount: 60000000},
+		{GithubUserID: 456, Contributor: "bob", Amount: 50000000},
+	}
+	result := redistributeBelowMinimum(allocs, 110000000)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 allocations, got %d", len(result))
+	}
+	if result[0].Amount != 60000000 || result[1].Amount != 50000000 {
+		t.Fatal("expected no change when all above minimum and sum exact")
+	}
+}
+
+func TestRedistributeBelowMinimum_SumEqualsPoolExactly(t *testing.T) {
+	allocs := []models.Allocation{
+		{GithubUserID: 123, Contributor: "alice", Amount: 70000000},
+		{GithubUserID: 456, Contributor: "bob", Amount: 50000000},
+		{GithubUserID: 789, Contributor: "charlie", Amount: 20000000},
+	}
+	result := redistributeBelowMinimum(allocs, 140000000)
+	var sum uint64
+	for _, a := range result {
+		sum += a.Amount
+	}
+	if sum != 140000000 {
+		t.Fatalf("expected sum 140000000, got %d", sum)
+	}
+	for _, a := range result {
+		if a.Amount < models.MinAllocationLamports {
+			t.Fatalf("allocation for %s has amount %d below minimum", a.Contributor, a.Amount)
+		}
 	}
 }
 
