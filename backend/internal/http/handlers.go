@@ -463,7 +463,7 @@ func (h *Handlers) FinalizePreview(w http.ResponseWriter, r *http.Request) {
 	result, err := h.calculateAllocations(r.Context(), campaign, allocationOptions{})
 	if err != nil {
 		log.Printf("finalize preview: allocation failed for %s: %v", campaign.CampaignID, err)
-		writeError(w, http.StatusInternalServerError, "failed to build allocation snapshot")
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to build allocation snapshot: %v", err))
 		return
 	}
 
@@ -656,7 +656,7 @@ func (h *Handlers) FinalizeWithWalletProof(w http.ResponseWriter, r *http.Reques
 		result, calcErr := h.calculateAllocations(r.Context(), campaign, allocationOptions{})
 		if calcErr != nil {
 			log.Printf("finalize wallet: allocation failed for %s: %v", campaign.CampaignID, calcErr)
-			writeError(w, http.StatusInternalServerError, "failed to build allocation snapshot")
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to build allocation snapshot: %v", calcErr))
 			return
 		}
 		snapshot, snapshotErr = h.createFinalizeSnapshot(campaign, result, "")

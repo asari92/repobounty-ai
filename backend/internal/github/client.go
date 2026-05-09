@@ -23,10 +23,11 @@ type Client struct {
 }
 
 type RepositoryMetadata struct {
-	ID      uint64
-	Owner   string
-	Name    string
-	HTMLURL string
+	ID            uint64
+	Owner         string
+	Name          string
+	HTMLURL       string
+	DefaultBranch string
 }
 
 func NewClient(token string) *Client {
@@ -47,6 +48,55 @@ func (c *Client) RepositoryID(ctx context.Context, repo string) (uint64, error) 
 		return 0, fmt.Errorf("repository was not found or is not public")
 	}
 	return metadata.ID, nil
+}
+
+func (c *Client) GetDefaultBranch(ctx context.Context, repo string) (string, error) {
+	meta, found, err := c.fetchRepositoryMetadata(ctx, repo)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", fmt.Errorf("repository %s not found", repo)
+	}
+	if meta.DefaultBranch != "" {
+		return meta.DefaultBranch, nil
+	}
+
+	branches, err := c.listBranches(ctx, repo)
+	if err != nil {
+		return "", fmt.Errorf("cannot determine default branch for %s: %w", repo, err)
+	}
+	if len(branches) == 1 {
+		return branches[0], nil
+	}
+	return "", fmt.Errorf("cannot determine default branch for %s: %d branches found and no default_branch from GitHub API", repo, len(branches))
+}
+
+func (c *Client) listBranches(ctx context.Context, repo string) ([]string, error) {
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid repo format: %s", repo)
+	}
+	u := fmt.Sprintf("https://api.github.com/repos/%s/%s/branches?per_page=100", parts[0], parts[1])
+	body, err := c.doGet(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parse branches: %w", err)
+	}
+
+	names := make([]string, 0, len(result))
+	for _, b := range result {
+		if b.Name != "" {
+			names = append(names, b.Name)
+		}
+	}
+	return names, nil
 }
 
 func (c *Client) fetchRepositoryMetadata(ctx context.Context, repo string) (*RepositoryMetadata, bool, error) {
@@ -74,10 +124,11 @@ func (c *Client) fetchRepositoryMetadata(ctx context.Context, repo string) (*Rep
 	switch resp.StatusCode {
 	case http.StatusOK:
 		var payload struct {
-			ID      uint64 `json:"id"`
-			Name    string `json:"name"`
-			HTMLURL string `json:"html_url"`
-			Owner   struct {
+			ID            uint64 `json:"id"`
+			Name          string `json:"name"`
+			HTMLURL       string `json:"html_url"`
+			DefaultBranch string `json:"default_branch"`
+			Owner         struct {
 				Login string `json:"login"`
 			} `json:"owner"`
 		}
@@ -85,10 +136,11 @@ func (c *Client) fetchRepositoryMetadata(ctx context.Context, repo string) (*Rep
 			return nil, false, fmt.Errorf("parse github repository metadata: %w", err)
 		}
 		return &RepositoryMetadata{
-			ID:      payload.ID,
-			Owner:   payload.Owner.Login,
-			Name:    payload.Name,
-			HTMLURL: payload.HTMLURL,
+			ID:            payload.ID,
+			Owner:         payload.Owner.Login,
+			Name:          payload.Name,
+			HTMLURL:       payload.HTMLURL,
+			DefaultBranch: payload.DefaultBranch,
 		}, true, nil
 	case http.StatusNotFound:
 		return nil, false, nil
@@ -560,6 +612,65 @@ func (c *Client) FetchContributorsPRDiffs(ctx context.Context, repo string, merg
 	}
 
 	return c.buildPRDiffMap(prs, ctx, repo), nil
+}
+
+func (c *Client) FetchBranchCommits(ctx context.Context, repo string, branch string) ([]models.Contributor, error) {
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid repo format, expected owner/repo: %s", repo)
+	}
+	owner, name := parts[0], parts[1]
+
+	params := url.Values{}
+	params.Set("sha", branch)
+	params.Set("per_page", "100")
+	u := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits?%s", owner, name, params.Encode())
+
+	body, err := c.doGet(ctx, u)
+	if err != nil {
+		return nil, fmt.Errorf("github commits API failed for branch %s: %w", branch, err)
+	}
+
+	var ghCommits []struct {
+		Author struct {
+			ID    uint64 `json:"id"`
+			Login string `json:"login"`
+		} `json:"author"`
+	}
+	if err := json.Unmarshal(body, &ghCommits); err != nil {
+		return nil, fmt.Errorf("parse commits: %w", err)
+	}
+
+	type authorKey struct {
+		id    uint64
+		login string
+	}
+	counts := make(map[authorKey]int)
+	for _, cm := range ghCommits {
+		if cm.Author.ID == 0 || cm.Author.Login == "" {
+			continue
+		}
+		counts[authorKey{id: cm.Author.ID, login: cm.Author.Login}]++
+	}
+
+	if len(counts) == 0 {
+		return nil, fmt.Errorf("no valid commits with real GitHub author identity on branch %s", branch)
+	}
+
+	result := make([]models.Contributor, 0, len(counts))
+	for k, count := range counts {
+		result = append(result, models.Contributor{
+			GithubUserID: k.id,
+			Username:     k.login,
+			Commits:      count,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Commits > result[j].Commits
+	})
+
+	return result, nil
 }
 
 type Review struct {

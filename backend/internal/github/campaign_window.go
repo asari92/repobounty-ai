@@ -33,7 +33,17 @@ func (c *Client) FetchContributionWindowData(
 ) (*ContributionWindowData, error) {
 	contributors, err := c.FetchContributors(ctx, repo)
 	if err != nil {
-		return nil, err
+		defaultBranch, branchErr := c.GetDefaultBranch(ctx, repo)
+		if branchErr != nil {
+			return nil, fmt.Errorf("contributors empty for %s and cannot determine default branch: %s: %v", repo, branchErr, err)
+		}
+
+		commitContributors, commitErr := c.FetchBranchCommits(ctx, repo, defaultBranch)
+		if commitErr != nil {
+			return nil, fmt.Errorf("contributors empty and commits fallback empty for %s on branch %s: contributor error: %v, commit error: %v", repo, defaultBranch, err, commitErr)
+		}
+
+		contributors = commitContributors
 	}
 
 	contributorPRDiffs, err := c.FetchContributorsPRDiffs(ctx, repo, 0)
