@@ -208,7 +208,7 @@ export default function CreateCampaign() {
       return;
     }
 
-  const normalizedRepo = normalizeGitHubRepoInput(repo);
+    const normalizedRepo = normalizeGitHubRepoInput(repo);
     if (!normalizedRepo.match(/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/)) {
       setError('Repository must be in "owner/repo" format');
       return;
@@ -250,12 +250,12 @@ export default function CreateCampaign() {
 
     setSubmitting(true);
     try {
-  const result = await api.createCampaign({
-    repo: normalizedRepo,
-    pool_amount: poolLamports,
-    deadline: deadlineRFC3339,
-    sponsor_wallet: publicKey.toBase58(),
-  });
+      const result = await api.createCampaign({
+        repo: normalizedRepo,
+        pool_amount: poolLamports,
+        deadline: deadlineRFC3339,
+        sponsor_wallet: publicKey.toBase58(),
+      });
 
       if (!result.campaign_id?.trim()) {
         throw new Error('Campaign ID was not returned by the backend.');
@@ -287,14 +287,14 @@ export default function CreateCampaign() {
         throw new Error('Failed to send transaction.');
       }
 
-  const pending: PendingCreate = {
-    repo: normalizedRepo,
-    campaignId: result.campaign_id,
-    sponsorWallet: publicKey.toBase58(),
-    poolLamports,
-    deadlineRFC3339,
-    txSignature,
-  };
+      const pending: PendingCreate = {
+        repo: normalizedRepo,
+        campaignId: result.campaign_id,
+        sponsorWallet: publicKey.toBase58(),
+        poolLamports,
+        deadlineRFC3339,
+        txSignature,
+      };
       setPendingCreate(pending);
       await finalizePendingCreate(pending);
     } catch (err: unknown) {
@@ -381,8 +381,8 @@ export default function CreateCampaign() {
               {MIN_CAMPAIGN_POOL_SOL} SOL
             </p>
             <p>
-              <span className="text-solana-green font-medium">Merged code only</span> - only main
-              branch contributions qualify
+              <span className="text-solana-green font-medium">Repository activity</span> - commits
+              and PRs from the repository are analyzed automatically
             </p>
           </div>
 

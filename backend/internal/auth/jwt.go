@@ -2,6 +2,7 @@ package auth
 
 import (
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -27,14 +28,15 @@ func NewJWTManager(secret string) *JWTManager {
 	}
 }
 
-func (j *JWTManager) GenerateToken(githubUsername string) (string, error) {
+func (j *JWTManager) GenerateToken(githubID int, githubUsername string) (string, error) {
 	claims := &Claims{
-		Sub:  githubUsername,
+		Sub:  strconv.Itoa(githubID),
 		Name: githubUsername,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Issuer:    j.issuer,
+			Audience:  []string{"enshor-api"},
 		},
 	}
 

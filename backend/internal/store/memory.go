@@ -19,6 +19,7 @@ type CampaignStore interface {
 	Update(c *models.Campaign) error
 	List() []*models.Campaign
 	GetUser(username string) (*User, error)
+	GetUserByGitHubID(id int) (*User, error)
 	CreateUser(u *User) error
 	UpdateUser(u *User) error
 	GetWalletForGitHub(githubUsername string) (string, error)
@@ -158,6 +159,18 @@ func (s *Store) GetUser(username string) (*User, error) {
 	}
 	cp := *u
 	return &cp, nil
+}
+
+func (s *Store) GetUserByGitHubID(id int) (*User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, u := range s.users {
+		if u.GitHubID == id {
+			cp := *u
+			return &cp, nil
+		}
+	}
+	return nil, ErrNotFound
 }
 
 func (s *Store) CreateUser(u *User) error {

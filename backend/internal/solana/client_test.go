@@ -531,3 +531,81 @@ func refundTransactionRPCPayload(t *testing.T, tx *gosolana.Transaction, metaErr
 	}
 	return payload
 }
+
+func makeAllocations(count int, amountEach uint64) []AllocationInput {
+	allocs := make([]AllocationInput, count)
+	for i := range allocs {
+		allocs[i] = AllocationInput{GithubUserID: uint64(i + 1), Amount: amountEach}
+	}
+	return allocs
+}
+
+func TestBuildFinalizeBatchesOneBatch(t *testing.T) {
+	allocs := makeAllocations(3, 100)
+	batches, err := BuildFinalizeBatches(allocs, 5, 300)
+	if err != nil {
+		t.Fatalf("BuildFinalizeBatches: %v", err)
+	}
+	if len(batches) != 1 {
+		t.Fatalf("expected 1 batch, got %d", len(batches))
+	}
+	if batches[0].HasMore {
+		t.Fatal("single batch must have has_more=false")
+	}
+	if len(batches[0].Allocations) != 3 {
+		t.Fatalf("expected 3 allocations, got %d", len(batches[0].Allocations))
+	}
+}
+
+func TestBuildFinalizeBatchesMultiBatch(t *testing.T) {
+	allocs := makeAllocations(7, 100)
+	batches, err := BuildFinalizeBatches(allocs, 3, 700)
+	if err != nil {
+		t.Fatalf("BuildFinalizeBatches: %v", err)
+	}
+	if len(batches) != 3 {
+		t.Fatalf("expected 3 batches, got %d", len(batches))
+	}
+	for i, b := range batches {
+		if i < 2 && !b.HasMore {
+			t.Fatalf("batch %d should have has_more=true", i)
+		}
+		if i == 2 && b.HasMore {
+			t.Fatal("last batch must have has_more=false")
+		}
+	}
+}
+
+func TestBuildFinalizeBatchesExactFit(t *testing.T) {
+	allocs := makeAllocations(6, 100)
+	batches, err := BuildFinalizeBatches(allocs, 3, 600)
+	if err != nil {
+		t.Fatalf("BuildFinalizeBatches: %v", err)
+	}
+	if len(batches) != 2 {
+		t.Fatalf("expected 2 batches, got %d", len(batches))
+	}
+	if batches[0].HasMore != true {
+		t.Fatal("first batch must have has_more=true")
+	}
+	if batches[1].HasMore != false {
+		t.Fatal("last batch must have has_more=false")
+	}
+}
+
+func TestBuildFinalizeBatchesRejectsInvariantViolation(t *testing.T) {
+	allocs := []AllocationInput{
+		{GithubUserID: 1, Amount: 100},
+	}
+	_, err := BuildFinalizeBatches(allocs, 5, 100)
+	if err != nil {
+		t.Fatalf("single allocation matching total should not fail: %v", err)
+	}
+}
+
+func TestBuildFinalizeBatchesRejectsEmpty(t *testing.T) {
+	_, err := BuildFinalizeBatches(nil, 5, 0)
+	if err == nil {
+		t.Fatal("expected error for empty allocations")
+	}
+}

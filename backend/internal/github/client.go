@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -17,24 +18,20 @@ import (
 )
 
 type Client struct {
-	token        string
-	httpClient   *http.Client
-	isProduction bool
+	token      string
+	httpClient *http.Client
 }
 
 type RepositoryMetadata struct {
-	ID      uint64
-	Owner   string
-	Name    string
-	HTMLURL string
+	ID            uint64
+	Owner         string
+	Name          string
+	HTMLURL       string
+	DefaultBranch string
 }
 
 func NewClient(token string) *Client {
-	return NewClientWithEnv(token, false)
-}
-
-func NewClientWithEnv(token string, isProduction bool) *Client {
-	return &Client{token: token, httpClient: &http.Client{Timeout: 30 * time.Second}, isProduction: isProduction}
+	return &Client{token: token, httpClient: &http.Client{Timeout: 30 * time.Second}}
 }
 
 func (c *Client) RepositoryExists(ctx context.Context, repo string) (bool, error) {
@@ -51,6 +48,55 @@ func (c *Client) RepositoryID(ctx context.Context, repo string) (uint64, error) 
 		return 0, fmt.Errorf("repository was not found or is not public")
 	}
 	return metadata.ID, nil
+}
+
+func (c *Client) GetDefaultBranch(ctx context.Context, repo string) (string, error) {
+	meta, found, err := c.fetchRepositoryMetadata(ctx, repo)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", fmt.Errorf("repository %s not found", repo)
+	}
+	if meta.DefaultBranch != "" {
+		return meta.DefaultBranch, nil
+	}
+
+	branches, err := c.listBranches(ctx, repo)
+	if err != nil {
+		return "", fmt.Errorf("cannot determine default branch for %s: %w", repo, err)
+	}
+	if len(branches) == 1 {
+		return branches[0], nil
+	}
+	return "", fmt.Errorf("cannot determine default branch for %s: %d branches found and no default_branch from GitHub API", repo, len(branches))
+}
+
+func (c *Client) listBranches(ctx context.Context, repo string) ([]string, error) {
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid repo format: %s", repo)
+	}
+	u := fmt.Sprintf("https://api.github.com/repos/%s/%s/branches?per_page=100", parts[0], parts[1])
+	body, err := c.doGet(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parse branches: %w", err)
+	}
+
+	names := make([]string, 0, len(result))
+	for _, b := range result {
+		if b.Name != "" {
+			names = append(names, b.Name)
+		}
+	}
+	return names, nil
 }
 
 func (c *Client) fetchRepositoryMetadata(ctx context.Context, repo string) (*RepositoryMetadata, bool, error) {
@@ -78,10 +124,11 @@ func (c *Client) fetchRepositoryMetadata(ctx context.Context, repo string) (*Rep
 	switch resp.StatusCode {
 	case http.StatusOK:
 		var payload struct {
-			ID      uint64 `json:"id"`
-			Name    string `json:"name"`
-			HTMLURL string `json:"html_url"`
-			Owner   struct {
+			ID            uint64 `json:"id"`
+			Name          string `json:"name"`
+			HTMLURL       string `json:"html_url"`
+			DefaultBranch string `json:"default_branch"`
+			Owner         struct {
 				Login string `json:"login"`
 			} `json:"owner"`
 		}
@@ -89,10 +136,11 @@ func (c *Client) fetchRepositoryMetadata(ctx context.Context, repo string) (*Rep
 			return nil, false, fmt.Errorf("parse github repository metadata: %w", err)
 		}
 		return &RepositoryMetadata{
-			ID:      payload.ID,
-			Owner:   payload.Owner.Login,
-			Name:    payload.Name,
-			HTMLURL: payload.HTMLURL,
+			ID:            payload.ID,
+			Owner:         payload.Owner.Login,
+			Name:          payload.Name,
+			HTMLURL:       payload.HTMLURL,
+			DefaultBranch: payload.DefaultBranch,
 		}, true, nil
 	case http.StatusNotFound:
 		return nil, false, nil
@@ -111,18 +159,10 @@ func (c *Client) FetchContributors(ctx context.Context, repo string) ([]models.C
 
 	contributors, err := c.fetchContributorStats(ctx, owner, name)
 	if err != nil {
-		if c.isProduction {
-			return nil, fmt.Errorf("github API failed and mock data is disabled in production: %w", err)
-		}
-		log.Printf("github: API failed (%v), using mock data", err)
-		return mockContributors(), nil
+		return nil, fmt.Errorf("github API failed: %w", err)
 	}
 	if len(contributors) == 0 {
-		if c.isProduction {
-			return nil, fmt.Errorf("no contributors found for %s/%s", owner, name)
-		}
-		log.Printf("github: no contributors found, using mock data")
-		return mockContributors(), nil
+		return nil, fmt.Errorf("no contributors found for %s/%s", owner, name)
 	}
 
 	prCounts, err := c.fetchPRCounts(ctx, owner, name)
@@ -248,14 +288,6 @@ func (c *Client) doGet(ctx context.Context, url string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 }
 
-func mockContributors() []models.Contributor {
-	return []models.Contributor{
-		{GithubUserID: 101, Username: "alice-dev", Commits: 47, PullRequests: 12, Reviews: 8, LinesAdded: 3200, LinesDeleted: 980},
-		{GithubUserID: 202, Username: "bob-builder", Commits: 31, PullRequests: 8, Reviews: 15, LinesAdded: 2100, LinesDeleted: 650},
-		{GithubUserID: 303, Username: "charlie-fix", Commits: 19, PullRequests: 5, Reviews: 3, LinesAdded: 890, LinesDeleted: 420},
-	}
-}
-
 type ContributorDetailed struct {
 	Username      string `json:"username"`
 	AvatarURL     string `json:"avatar_url"`
@@ -284,12 +316,10 @@ func (c *Client) FetchContributorsDetailed(ctx context.Context, repo string) ([]
 
 	contributors, err := c.fetchContributorStatsDetailed(ctx, owner, name)
 	if err != nil {
-		log.Printf("github: API failed (%v), using mock data", err)
-		return mockContributorsDetailed(), nil
+		return nil, fmt.Errorf("github API failed: %w", err)
 	}
 	if len(contributors) == 0 {
-		log.Printf("github: no contributors found, using mock data")
-		return mockContributorsDetailed(), nil
+		return nil, fmt.Errorf("no contributors found for %s/%s", owner, name)
 	}
 
 	return contributors, nil
@@ -339,11 +369,9 @@ func (c *Client) FetchPRsWithDiffs(ctx context.Context, repo string, mergedSince
 
 	prs, err := c.fetchPRsWithStats(ctx, owner, name, mergedSince)
 	if err != nil {
-		log.Printf("github: PR fetch failed (%v), using mock data", err)
-		return mockPRs(repo), nil
+		return nil, fmt.Errorf("github PR API failed: %w", err)
 	}
 	if len(prs) == 0 {
-		log.Printf("github: no merged PRs found, skipping mock fallback")
 		return prs, nil
 	}
 
@@ -425,8 +453,7 @@ func (c *Client) FetchPRDiff(ctx context.Context, repo string, prNumber int) (st
 
 	diff, err := c.fetchPRDiff(ctx, owner, name, prNumber)
 	if err != nil {
-		log.Printf("github: PR diff fetch failed (%v), using mock data", err)
-		return mockPRDiff(prNumber), nil
+		return "", fmt.Errorf("github PR diff API failed: %w", err)
 	}
 
 	return diff, nil
@@ -467,8 +494,7 @@ func (c *Client) FetchReviews(ctx context.Context, repo string, prNumber int) ([
 
 	reviews, err := c.fetchReviews(ctx, owner, name, prNumber)
 	if err != nil {
-		log.Printf("github: Reviews fetch failed (%v), using mock data", err)
-		return mockReviews(prNumber), nil
+		return nil, fmt.Errorf("github reviews API failed: %w", err)
 	}
 
 	return reviews, nil
@@ -579,20 +605,72 @@ func (c *Client) buildPRDiffMap(prs []PullRequest, ctx context.Context, repo str
 func (c *Client) FetchContributorsPRDiffs(ctx context.Context, repo string, mergedSinceUnix int64) (map[string][]string, error) {
 	prs, err := c.FetchPRsWithDiffs(ctx, repo, mergedSinceUnix)
 	if err != nil {
-		// API error (not empty result) - use mock in dev mode
-		if c.isProduction {
-			return nil, fmt.Errorf("github API failed and mock data is disabled in production: %w", err)
-		}
-		log.Printf("github: PR API failed (%v), using mock data for dev testing", err)
-		mockPRs := c.fetchPRsWithStatsMock(ctx, repo)
-		return c.buildPRDiffMap(mockPRs, ctx, repo), nil
+		return nil, fmt.Errorf("github PR API failed: %w", err)
 	}
 	if len(prs) == 0 {
-		log.Printf("github: no merged PRs, skipping code impact evaluation")
-		return map[string][]string{}, nil // No real PRs, skip diff fetching
+		return map[string][]string{}, nil
 	}
 
 	return c.buildPRDiffMap(prs, ctx, repo), nil
+}
+
+func (c *Client) FetchBranchCommits(ctx context.Context, repo string, branch string) ([]models.Contributor, error) {
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid repo format, expected owner/repo: %s", repo)
+	}
+	owner, name := parts[0], parts[1]
+
+	params := url.Values{}
+	params.Set("sha", branch)
+	params.Set("per_page", "100")
+	u := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits?%s", owner, name, params.Encode())
+
+	body, err := c.doGet(ctx, u)
+	if err != nil {
+		return nil, fmt.Errorf("github commits API failed for branch %s: %w", branch, err)
+	}
+
+	var ghCommits []struct {
+		Author struct {
+			ID    uint64 `json:"id"`
+			Login string `json:"login"`
+		} `json:"author"`
+	}
+	if err := json.Unmarshal(body, &ghCommits); err != nil {
+		return nil, fmt.Errorf("parse commits: %w", err)
+	}
+
+	type authorKey struct {
+		id    uint64
+		login string
+	}
+	counts := make(map[authorKey]int)
+	for _, cm := range ghCommits {
+		if cm.Author.ID == 0 || cm.Author.Login == "" {
+			continue
+		}
+		counts[authorKey{id: cm.Author.ID, login: cm.Author.Login}]++
+	}
+
+	if len(counts) == 0 {
+		return nil, fmt.Errorf("no valid commits with real GitHub author identity on branch %s", branch)
+	}
+
+	result := make([]models.Contributor, 0, len(counts))
+	for k, count := range counts {
+		result = append(result, models.Contributor{
+			GithubUserID: k.id,
+			Username:     k.login,
+			Commits:      count,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Commits > result[j].Commits
+	})
+
+	return result, nil
 }
 
 type Review struct {
@@ -623,7 +701,7 @@ func (c *Client) SearchUsers(ctx context.Context, query string) ([]UserSearchRes
 		return nil, nil
 	}
 
-	url := fmt.Sprintf("https://api.github.com/search/users?q=%s&per_page=10", query)
+	url := "https://api.github.com/search/users?q=" + url.QueryEscape(query) + "&per_page=10"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -671,11 +749,15 @@ type RepoSearchResult struct {
 }
 
 func (c *Client) SearchRepositories(ctx context.Context, owner, query string) ([]RepoSearchResult, error) {
-	if len(query) < 2 {
+	if len(owner) < 2 {
 		return nil, nil
 	}
 
-	url := fmt.Sprintf("https://api.github.com/search/repositories?q=%s/%s&per_page=10", owner, query)
+	if len(query) == 0 {
+		return c.ListUserRepos(ctx, owner)
+	}
+
+	url := "https://api.github.com/search/repositories?q=" + url.QueryEscape(owner+"/"+query) + "&per_page=10"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -719,159 +801,45 @@ func (c *Client) SearchRepositories(ctx context.Context, owner, query string) ([
 	return results, nil
 }
 
-func mockContributorsDetailed() []ContributorDetailed {
-	return []ContributorDetailed{
-		{Username: "alice-dev", AvatarURL: "https://github.com/alice-dev.png", Contributions: 47},
-		{Username: "bob-builder", AvatarURL: "https://github.com/bob-builder.png", Contributions: 31},
-		{Username: "charlie-fix", AvatarURL: "https://github.com/charlie-fix.png", Contributions: 19},
+func (c *Client) ListUserRepos(ctx context.Context, owner string) ([]RepoSearchResult, error) {
+	url := "https://api.github.com/users/" + url.QueryEscape(owner) + "/repos?type=public&sort=updated&per_page=30"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
 	}
-}
-
-func mockPRs(repo string) []PullRequest {
-	return []PullRequest{
-		{
-			ID:           12345,
-			Number:       42,
-			Title:        "Add authentication flow",
-			User:         "alice-dev",
-			State:        "merged",
-			CreatedAt:    "2024-03-15T10:30:00Z",
-			MergedAt:     "2024-03-16T14:20:00Z",
-			Additions:    450,
-			Deletions:    120,
-			ChangedFiles: 8,
-		},
-		{
-			ID:           12346,
-			Number:       43,
-			Title:        "Fix memory leak in scheduler",
-			User:         "bob-builder",
-			State:        "merged",
-			CreatedAt:    "2024-03-17T09:15:00Z",
-			MergedAt:     "2024-03-18T11:45:00Z",
-			Additions:    85,
-			Deletions:    230,
-			ChangedFiles: 3,
-		},
-		{
-			ID:           12347,
-			Number:       44,
-			Title:        "Add unit tests for auth module",
-			User:         "alice-dev",
-			State:        "merged",
-			CreatedAt:    "2024-03-21T11:00:00Z",
-			MergedAt:     "2024-03-22T15:30:00Z",
-			Additions:    180,
-			Deletions:    25,
-			ChangedFiles: 4,
-		},
-		{
-			ID:           12348,
-			Number:       45,
-			Title:        "Implement rate limiting",
-			User:         "charlie-fix",
-			State:        "merged",
-			CreatedAt:    "2024-03-19T16:00:00Z",
-			MergedAt:     "2024-03-20T09:30:00Z",
-			Additions:    320,
-			Deletions:    45,
-			ChangedFiles: 5,
-		},
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
-}
 
-// fetchPRsWithStatsMock returns consistent mock PR data matching mockContributors()
-// Used only in development mode when GitHub API fails
-func (c *Client) fetchPRsWithStatsMock(ctx context.Context, repo string) []PullRequest {
-	return []PullRequest{
-		{
-			ID:           12345,
-			Number:       42,
-			Title:        "Add authentication flow",
-			User:         "alice-dev",
-			State:        "merged",
-			CreatedAt:    "2024-03-15T10:30:00Z",
-			MergedAt:     "2024-03-16T14:20:00Z",
-			Additions:    450,
-			Deletions:    120,
-			ChangedFiles: 8,
-		},
-		{
-			ID:           12346,
-			Number:       43,
-			Title:        "Fix memory leak in scheduler",
-			User:         "bob-builder",
-			State:        "merged",
-			CreatedAt:    "2024-03-17T09:15:00Z",
-			MergedAt:     "2024-03-18T11:45:00Z",
-			Additions:    85,
-			Deletions:    230,
-			ChangedFiles: 3,
-		},
-		{
-			ID:           12347,
-			Number:       44,
-			Title:        "Implement rate limiting",
-			User:         "charlie-fix",
-			State:        "merged",
-			CreatedAt:    "2024-03-19T16:00:00Z",
-			MergedAt:     "2024-03-20T09:30:00Z",
-			Additions:    320,
-			Deletions:    45,
-			ChangedFiles: 5,
-		},
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list user repos request: %w", err)
 	}
-}
+	defer resp.Body.Close()
 
-func mockPRDiff(prNumber int) string {
-	return fmt.Sprintf(`diff --git a/src/auth/auth.go b/src/auth/auth.go
-index 1234567..abcdefg 100644
---- a/src/auth/auth.go
-+++ b/src/auth/auth.go
-@@ -10,6 +10,12 @@ import (
- 	"time"
- )
- 
-+// JWTManager handles JWT token generation and validation
-+type JWTManager struct {
-+	secret string
-+}
-+
- func NewJWTManager(secret string) *JWTManager {
- 	return &JWTManager{secret: secret}
- }
-@@ -45,7 +51,15 @@ func (m *JWTManager) Validate(token string) (*Claims, error) {
- 		return nil, err
- 	}
- 	
--	// TODO: validate claims
-+	if claims.ExpiresAt < time.Now().Unix() {
-+		return nil, errors.New("token expired")
-+	}
-+	
-+	if claims.Issuer != "repobounty" {
-+		return nil, errors.New("invalid issuer")
-+	}
-+	
- 	return claims, nil
- }`)
-}
-
-func mockReviews(prNumber int) []Review {
-	return []Review{
-		{
-			ID:          789,
-			User:        "bob-builder",
-			State:       "APPROVED",
-			Body:        "Looks good! The token validation is more robust now.",
-			SubmittedAt: "2024-03-16T15:00:00Z",
-		},
-		{
-			ID:          790,
-			User:        "charlie-fix",
-			State:       "COMMENTED",
-			Body:        "Consider adding rate limiting for the token refresh endpoint.",
-			SubmittedAt: "2024-03-16T15:30:00Z",
-		},
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list user repos returned %d", resp.StatusCode)
 	}
+
+	var payload []struct {
+		Name  string `json:"name"`
+		Owner struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+	}
+
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("parse user repos: %w", err)
+	}
+
+	results := make([]RepoSearchResult, len(payload))
+	for i, item := range payload {
+		results[i] = RepoSearchResult{
+			Name:  item.Name,
+			Owner: item.Owner.Login,
+		}
+	}
+
+	return results, nil
 }

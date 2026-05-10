@@ -40,11 +40,11 @@ export default function Profile() {
   }, [user]);
 
   useEffect(() => {
-    if (!user && !publicKey) {
+    const walletAddr = publicKey?.toBase58();
+    if (!walletAddr) {
       return;
     }
     let cancelled = false;
-    const walletAddr = publicKey?.toBase58() || user?.wallet_address;
     api
       .getMyCampaigns(walletAddr)
       .then((data) => {
@@ -62,7 +62,7 @@ export default function Profile() {
     return () => {
       cancelled = true;
     };
-  }, [user, publicKey]);
+  }, [publicKey]);
 
   if (!user && !publicKey) {
     return (
@@ -72,20 +72,15 @@ export default function Profile() {
     );
   }
 
-  const walletAddr = publicKey ? publicKey.toBase58() : user?.wallet_address;
+  const walletAddr = publicKey?.toBase58() || user?.wallet_address;
+  const totalAllocated = claims.reduce((sum, c) => sum + c.amount, 0);
   const totalAvailable = claims.filter((c) => !c.claimed).reduce((sum, c) => sum + c.amount, 0);
   const totalClaimed = claims.filter((c) => c.claimed).reduce((sum, c) => sum + c.amount, 0);
-  const claimedCount = claims.filter((c) => c.claimed).length;
-  const activeCampaigns = myCampaigns.filter((c) => c.state === 'active').length;
-  const finalizedCampaigns = myCampaigns.filter((c) => c.state === 'finalized').length;
-  const closedCampaigns = myCampaigns.filter(
-    (c) => c.state === 'closed' || c.state === 'completed'
-  ).length;
   const totalFunded = myCampaigns.reduce((sum, c) => sum + c.pool_amount, 0);
 
   return (
     <div className="max-w-5xl mx-auto">
-      {/* User header — horizontal */}
+      {/* User header */}
       <div className="card card-accent mb-5 animate-fade-in-up">
         <div className="flex items-center gap-4">
           {user ? (
@@ -118,141 +113,155 @@ export default function Profile() {
         </div>
       </div>
 
-      {/* 💰 My Campaigns Table */}
-      <div className="card mb-5 animate-fade-in-up" style={{ animationDelay: '80ms' }}>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-gray-300">My Campaigns</h2>
-        </div>
+      {/* Contributor Rewards */}
+      {user && (
+        <div className="mb-5 animate-fade-in-up" style={{ animationDelay: '80ms' }}>
+          <h2 className="text-sm font-semibold text-gray-300 mb-3">
+            Contributor Rewards
+          </h2>
 
-        {/* Campaigns Stats */}
-        <div className="grid grid-cols-5 gap-3 mb-4">
-          <div className="stat-block text-center">
-            <p className="text-[10px] text-gray-600 uppercase">Campaigns</p>
-            <p className="text-xl font-bold">{myCampaigns.length}</p>
+          <div className="grid grid-cols-3 gap-3 mb-3">
+            <div className="stat-block text-center">
+              <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">
+                Available
+              </p>
+              <p className="text-xl font-bold text-solana-green">{formatSOL(totalAvailable)}</p>
+            </div>
+            <div className="stat-block text-center">
+              <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">
+                Claimed
+              </p>
+              <p className="text-xl font-bold">{formatSOL(totalClaimed)}</p>
+            </div>
+            <div className="stat-block text-center">
+              <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">
+                Total Allocated
+              </p>
+              <p className="text-xl font-bold">{formatSOL(totalAllocated)}</p>
+            </div>
           </div>
-          <div className="stat-block text-center">
-            <p className="text-[10px] text-gray-600 uppercase">Active</p>
-            <p className="text-xl font-bold">{activeCampaigns}</p>
-          </div>
-          <div className="stat-block text-center">
-            <p className="text-[10px] text-gray-600 uppercase">Finalized</p>
-            <p className="text-xl font-bold">{finalizedCampaigns}</p>
-          </div>
-          <div className="stat-block text-center">
-            <p className="text-[10px] text-gray-600 uppercase">Closed</p>
-            <p className="text-xl font-bold">{closedCampaigns}</p>
-          </div>
-          <div className="stat-block text-center">
-            <p className="text-[10px] text-gray-600 uppercase">Total Funded</p>
-            <p className="text-xl font-bold text-solana-green">{formatSOL(totalFunded)}</p>
-          </div>
-        </div>
 
-        {/* Error */}
-        {errorCampaigns && (
-          <div className="bg-red-500/5 border border-red-500/15 rounded-lg p-3 text-xs text-red-400 mb-4">
-            {errorCampaigns}
-          </div>
-        )}
+          <div className="card">
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-xs text-gray-500">
+                {claims.length} reward{claims.length !== 1 ? 's' : ''} from {new Set(claims.map((c) => c.campaign_id)).size} campaign{new Set(claims.map((c) => c.campaign_id)).size !== 1 ? 's' : ''}
+              </span>
+              <span className="text-sm font-bold text-solana-green">
+                {formatSOL(totalAvailable)} SOL available
+              </span>
+            </div>
 
-        {/* Campaigns Table or Empty State */}
-        {myCampaigns.length === 0 ? (
-          <p className="text-xs text-gray-600 text-center py-4">
-            No campaigns found. Create one or contribute to existing campaigns.
-          </p>
-        ) : (
-          /* Campaigns Table */
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-solana-border/50">
-                  <th className="text-left py-2 px-3 text-gray-500">Campaign ID</th>
-                  <th className="text-left py-2 px-3 text-gray-500">Repo</th>
-                  <th className="text-left py-2 px-3 text-gray-500">State</th>
-                  <th className="text-left py-2 px-3 text-gray-500">Amount</th>
-                  <th className="text-left py-2 px-3 text-gray-500">Started</th>
-                  <th className="text-left py-2 px-3 text-gray-500">Deadline</th>
-                  <th className="text-right py-2 px-3 text-gray-500">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {myCampaigns.map((c) => (
-                  <CampaignRow key={c.campaign_id} campaign={c} user={user} publicKey={publicKey} />
+            {errorClaims ? (
+              <div className="bg-red-500/5 border border-red-500/15 rounded-lg p-3 text-xs text-red-400">
+                {errorClaims}
+              </div>
+            ) : claims.length === 0 ? (
+              <p className="text-xs text-gray-600 text-center py-4">
+                No rewards yet. Contribute to finalized campaigns to earn rewards.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {claims.map((claim) => (
+                  <Link
+                    key={`${claim.campaign_id}-${claim.contributor}`}
+                    to={`/campaign/${claim.campaign_id}`}
+                    className="block group"
+                  >
+                    <div className="flex items-center justify-between px-3 py-2.5 rounded-lg border border-solana-border/50 hover:border-solana-border-light hover:bg-solana-card-hover transition-all duration-200">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-xs font-mono text-gray-300 truncate">
+                          {claim.repo}
+                        </span>
+                        {claim.claimed ? (
+                          <span className="badge badge-completed text-[9px]">Claimed</span>
+                        ) : (
+                          <span className="badge badge-funded text-[9px]">Available</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        <span className="text-xs text-gray-500">
+                          {(claim.percentage / 100).toFixed(1)}%
+                        </span>
+                        <span
+                          className={`text-sm font-semibold ${claim.claimed ? 'text-gray-400' : 'text-solana-green'}`}
+                        >
+                          {claim.amount_sol} SOL
+                        </span>
+                        <span className="text-[10px] text-gray-600 group-hover:text-solana-purple transition-colors">
+                          &rarr;
+                        </span>
+                      </div>
+                    </div>
+                  </Link>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Stats inline */}
-      <div
-        className="grid grid-cols-3 gap-3 mb-5 animate-fade-in-up"
-        style={{ animationDelay: '80ms' }}
-      >
-        <div className="stat-block text-center">
-          <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Bounties</p>
-          <p className="text-xl font-bold">{claims.length}</p>
-        </div>
-        <div className="stat-block text-center">
-          <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Claimed</p>
-          <p className="text-xl font-bold">{claimedCount}</p>
-        </div>
-        <div className="stat-block text-center">
-          <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-0.5">Earned</p>
-          <p className="text-xl font-bold text-solana-green">{formatSOL(totalClaimed)}</p>
-        </div>
-      </div>
+      {/* Sponsored Campaigns */}
+      {publicKey && (
+        <div className="mb-5 animate-fade-in-up" style={{ animationDelay: '160ms' }}>
+          <h2 className="text-sm font-semibold text-gray-300 mb-3">Sponsored Campaigns</h2>
 
-      {/* 🎁 My Claims History */}
-      <div className="card mb-5 animate-fade-in-up" style={{ animationDelay: '200ms' }}>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-gray-300">My Claims History</h2>
-          <span className="text-2xl font-bold text-solana-green">
-            {formatSOL(totalAvailable)} SOL
-          </span>
-        </div>
-
-        {errorClaims ? (
-          <div className="bg-red-500/5 border border-red-500/15 rounded-lg p-3 text-xs text-red-400">
-            {errorClaims}
+          <div className="grid grid-cols-3 gap-3 mb-3">
+            <div className="stat-block text-center">
+              <p className="text-[10px] text-gray-600 uppercase">Campaigns</p>
+              <p className="text-xl font-bold">{myCampaigns.length}</p>
+            </div>
+            <div className="stat-block text-center">
+              <p className="text-[10px] text-gray-600 uppercase">Active</p>
+              <p className="text-xl font-bold">
+                {myCampaigns.filter((c) => c.state === 'active' || c.state === 'funded').length}
+              </p>
+            </div>
+            <div className="stat-block text-center">
+              <p className="text-[10px] text-gray-600 uppercase">Total Funded</p>
+              <p className="text-xl font-bold text-solana-green">{formatSOL(totalFunded)}</p>
+            </div>
           </div>
-        ) : claims.length === 0 ? (
-          <p className="text-xs text-gray-600 text-center py-4">
-            No claimable rewards. Contribute to finalized campaigns to earn rewards.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {claims.map((claim) => (
-              <Link
-                key={`${claim.campaign_id}-${claim.contributor}`}
-                to={`/campaign/${claim.campaign_id}`}
-                className="block group"
-              >
-                <div className="flex items-center justify-between px-3 py-2.5 rounded-lg border border-solana-border/50 hover:border-solana-border-light hover:bg-solana-card-hover transition-all duration-200">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="text-xs font-mono text-gray-300 truncate">{claim.repo}</span>
-                    {claim.claimed && (
-                      <span className="badge badge-completed text-[9px]">Claimed</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 flex-shrink-0">
-                    <span className="text-xs text-gray-500">
-                      {(claim.percentage / 100).toFixed(1)}%
-                    </span>
-                    <span className="text-sm font-semibold text-solana-green">
-                      {claim.amount_sol} SOL
-                    </span>
-                    <span className="text-[10px] text-gray-600 group-hover:text-solana-purple transition-colors">
-                      &rarr;
-                    </span>
-                  </div>
-                </div>
-              </Link>
-            ))}
+
+          <div className="card">
+            {errorCampaigns && (
+              <div className="bg-red-500/5 border border-red-500/15 rounded-lg p-3 text-xs text-red-400 mb-4">
+                {errorCampaigns}
+              </div>
+            )}
+
+            {myCampaigns.length === 0 ? (
+              <p className="text-xs text-gray-600 text-center py-4">
+                No sponsored campaigns yet for this wallet.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-solana-border/50">
+                      <th className="text-left py-2 px-3 text-gray-500">Campaign</th>
+                      <th className="text-left py-2 px-3 text-gray-500">Repo</th>
+                      <th className="text-left py-2 px-3 text-gray-500">State</th>
+                      <th className="text-left py-2 px-3 text-gray-500">Amount</th>
+                      <th className="text-left py-2 px-3 text-gray-500">Deadline</th>
+                      <th className="text-right py-2 px-3 text-gray-500">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {myCampaigns.map((c) => (
+                      <SponsoredCampaignRow
+                        key={c.campaign_id}
+                        campaign={c}
+                        publicKey={publicKey}
+                        user={user}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Quick actions */}
       <div
@@ -282,39 +291,26 @@ export default function Profile() {
   );
 }
 
-function CampaignRow({
+function SponsoredCampaignRow({
   campaign,
-  user,
   publicKey,
+  user,
 }: {
   campaign: MyCampaign;
-  user: User | null;
   publicKey: PublicKey | null;
+  user: User | null;
 }) {
   const navigate = useNavigate();
   const walletAddr = publicKey?.toBase58() || user?.wallet_address;
-
-  const isSponsor =
-    walletAddr && (campaign.sponsor === walletAddr || campaign.authority === walletAddr);
-  const isContributor =
-    user?.github_username &&
-    campaign.allocations?.some((a) => a.contributor === user.github_username);
-  const allocation = campaign.allocations?.find((a) => a.contributor === user?.github_username);
-  const canClaim =
-    isContributor &&
-    (campaign.state === 'finalized' || campaign.state === 'completed') &&
-    allocation &&
-    !allocation.claimed;
-  const canRefund = isSponsor && campaign.can_refund;
+  const canRefund = walletAddr && campaign.can_refund;
 
   const stateColors: Record<string, string> = {
     active: 'text-solana-green',
+    funded: 'text-solana-green',
     finalized: 'text-solana-purple',
     closed: 'text-gray-500',
     completed: 'text-solana-purple',
   };
-
-  const deadline = new Date(campaign.deadline);
 
   return (
     <tr className="border-b border-solana-border/30 hover:bg-solana-card-hover/50 transition-colors">
@@ -343,23 +339,10 @@ function CampaignRow({
         {formatSOL(campaign.pool_amount)} SOL
       </td>
       <td className="py-2.5 px-3 text-gray-400">
-        {new Date(campaign.created_at).toLocaleDateString()}
+        {new Date(campaign.deadline).toLocaleDateString()}
       </td>
-      <td className="py-2.5 px-3 text-gray-400">{deadline.toLocaleDateString()}</td>
       <td className="py-2.5 px-3 text-right">
         <div className="flex items-center justify-end gap-1.5">
-          {canClaim && allocation && (
-            <button
-              onClick={() =>
-                navigate(
-                  `/campaign/${campaign.campaign_id}?action=claim&contributor=${allocation.contributor}`
-                )
-              }
-              className="btn-primary text-[10px] px-2 py-1"
-            >
-              Claim {formatSOL(allocation.amount)} SOL
-            </button>
-          )}
           {canRefund && (
             <button
               onClick={() => navigate(`/campaign/${campaign.campaign_id}?action=refund`)}
@@ -367,9 +350,6 @@ function CampaignRow({
             >
               Refund
             </button>
-          )}
-          {allocation && allocation.claimed && (
-            <span className="badge badge-completed text-[9px]">Claimed</span>
           )}
         </div>
       </td>

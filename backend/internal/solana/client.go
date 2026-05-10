@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -55,8 +56,12 @@ func NewClient(rpcURL, privateKeyBase58, programIDStr string) (*Client, error) {
 		return nil, fmt.Errorf("parse program ID: %w", err)
 	}
 
+	rpcClient := rpc.NewWithCustomRPCClient(rpcjson.NewClientWithOpts(rpcURL, &rpcjson.RPCClientOpts{
+		HTTPClient: &http.Client{Timeout: 15 * time.Second},
+	}))
+
 	return &Client{
-		rpcClient:  rpc.New(rpcURL),
+		rpcClient:  rpcClient,
 		privateKey: privKey,
 		programID:  programID,
 	}, nil
@@ -548,58 +553,6 @@ func (c *Client) VerifyRefundTransaction(ctx context.Context, campaignID string,
 	return verifyRefundTransaction(tx, campaignID, sponsor, c.programID)
 }
 
-func (c *Client) ClaimAllocation(ctx context.Context, campaignID, contributorGitHub string, contributorWallet string) (string, error) {
-	if !c.IsConfigured() {
-		return "", ErrNotConfigured
-	}
-
-	campaignPDA, _, err := solana.FindProgramAddress(
-		[][]byte{
-			[]byte("campaign"),
-			[]byte(campaignID),
-		},
-		c.programID,
-	)
-	if err != nil {
-		return "", fmt.Errorf("derive campaign PDA: %w", err)
-	}
-
-	vaultPDA, _, err := solana.FindProgramAddress(
-		[][]byte{
-			[]byte("vault"),
-			campaignPDA.Bytes(),
-		},
-		c.programID,
-	)
-	if err != nil {
-		return "", fmt.Errorf("derive vault PDA: %w", err)
-	}
-
-	contributorKey, err := solana.PublicKeyFromBase58(contributorWallet)
-	if err != nil {
-		return "", fmt.Errorf("parse contributor wallet: %w", err)
-	}
-
-	discriminator := anchorDiscriminator("global:claim")
-
-	data := discriminator
-	data = appendBorshString(data, contributorGitHub)
-
-	instruction := solana.NewInstruction(
-		c.programID,
-		solana.AccountMetaSlice{
-			solana.NewAccountMeta(campaignPDA, true, false),
-			solana.NewAccountMeta(vaultPDA, true, false),
-			solana.NewAccountMeta(c.privateKey.PublicKey(), false, true), // authority signer
-			solana.NewAccountMeta(contributorKey, true, false),
-			solana.NewAccountMeta(solana.SystemProgramID, false, false),
-		},
-		data,
-	)
-
-	return c.sendTransaction(ctx, instruction)
-}
-
 type FundTransaction struct {
 	Transaction  string `json:"transaction"`
 	CampaignPDA  string `json:"campaign_pda"`
@@ -718,65 +671,55 @@ func (c *Client) BuildFundTransaction(
 	}, nil
 }
 
-func (c *Client) CreateCampaign(ctx context.Context, campaignID, repo string, poolAmount uint64, deadline int64, sponsorPubkey string) (string, string, string, error) {
-	if !c.IsConfigured() {
-		return "", "", "", ErrNotConfigured
+type FinalizeBatchPlan struct {
+	BatchIndex  int
+	Allocations []AllocationInput
+	HasMore     bool
+}
+
+func BuildFinalizeBatches(allocations []AllocationInput, batchSize int, totalRewardAmount uint64) ([]FinalizeBatchPlan, error) {
+	if len(allocations) == 0 {
+		return nil, fmt.Errorf("allocations must not be empty")
+	}
+	if batchSize < 1 {
+		batchSize = 1
 	}
 
-	authority := c.privateKey.PublicKey()
-	campaignPDA, _, err := solana.FindProgramAddress(
-		[][]byte{
-			[]byte("campaign"),
-			[]byte(campaignID),
-		},
-		c.programID,
-	)
-	if err != nil {
-		return "", "", "", fmt.Errorf("derive campaign PDA: %w", err)
+	var batches []FinalizeBatchPlan
+	for i := 0; i < len(allocations); i += batchSize {
+		end := i + batchSize
+		if end > len(allocations) {
+			end = len(allocations)
+		}
+		batch := allocations[i:end]
+
+		var runningTotal uint64
+		for _, b := range allocations[:end] {
+			runningTotal += b.Amount
+		}
+
+		isLast := end >= len(allocations)
+		hasMore := !isLast
+
+		if runningTotal == totalRewardAmount && hasMore {
+			return nil, fmt.Errorf("batch plan invariant violation: allocated amount equals total reward but has_more would be true")
+		}
+
+		batches = append(batches, FinalizeBatchPlan{
+			BatchIndex:  len(batches),
+			Allocations: batch,
+			HasMore:     hasMore,
+		})
 	}
 
-	vaultPDA, _, err := solana.FindProgramAddress(
-		[][]byte{
-			[]byte("vault"),
-			campaignPDA.Bytes(),
-		},
-		c.programID,
-	)
-	if err != nil {
-		return "", "", "", fmt.Errorf("derive vault PDA: %w", err)
+	if len(batches) > 0 {
+		last := &batches[len(batches)-1]
+		if last.HasMore {
+			last.HasMore = false
+		}
 	}
 
-	sponsorKey, err := solana.PublicKeyFromBase58(sponsorPubkey)
-	if err != nil {
-		return "", "", "", fmt.Errorf("parse sponsor pubkey: %w", err)
-	}
-
-	discriminator := anchorDiscriminator("global:create_campaign")
-
-	data := discriminator
-	data = appendBorshString(data, campaignID)
-	data = appendBorshString(data, repo)
-	data = appendBorshU64(data, poolAmount)
-	data = appendBorshI64(data, deadline)
-	data = append(data, sponsorKey.Bytes()...)
-
-	instruction := solana.NewInstruction(
-		c.programID,
-		solana.AccountMetaSlice{
-			solana.NewAccountMeta(campaignPDA, true, false),
-			solana.NewAccountMeta(authority, true, true),
-			solana.NewAccountMeta(vaultPDA, false, false),
-			solana.NewAccountMeta(solana.SystemProgramID, false, false),
-		},
-		data,
-	)
-
-	txSig, err := c.sendTransaction(ctx, instruction)
-	if err != nil {
-		return "", "", "", err
-	}
-
-	return txSig, campaignPDA.String(), vaultPDA.String(), nil
+	return batches, nil
 }
 
 type AllocationInput struct {

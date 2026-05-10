@@ -160,6 +160,9 @@ bin/
 vendor/
 *.test
 *.out
+*.db
+*.db-shm
+*.db-wal
 
 # Rust / Solana / Anchor
 target/

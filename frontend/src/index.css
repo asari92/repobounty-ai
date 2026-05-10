@@ -1,4 +1,4 @@
-@import "@solana/wallet-adapter-react-ui/styles.css";
+@import '@solana/wallet-adapter-react-ui/styles.css';
 
 @tailwind base;
 @tailwind components;
@@ -7,14 +7,14 @@
 body {
   margin: 0;
   font-family:
-    "Inter",
+    'Inter',
     -apple-system,
     BlinkMacSystemFont,
-    "Segoe UI",
+    'Segoe UI',
     Roboto,
     sans-serif;
   -webkit-font-smoothing: antialiased;
-  background-color: #0B0B0F;
+  background-color: #0b0b0f;
   color: #fff;
 }
 
@@ -58,7 +58,7 @@ body {
 }
 
 .card-accent::before {
-  content: "";
+  content: '';
   position: absolute;
   top: 0;
   left: 0;
@@ -104,20 +104,20 @@ body {
 }
 
 /* Status accent colors for card left border */
-.accent-funded { border-left: 3px solid #14F195; }
-.accent-created { border-left: 3px solid #9945FF; }
-.accent-finalized { border-left: 3px solid #14F195; }
-.accent-completed { border-left: 3px solid #3b82f6; }
+.accent-funded {
+  border-left: 3px solid #14f195;
+}
+.accent-created {
+  border-left: 3px solid #9945ff;
+}
+.accent-finalized {
+  border-left: 3px solid #14f195;
+}
+.accent-completed {
+  border-left: 3px solid #3b82f6;
+}
 
 /* Stat block */
 .stat-block {
   @apply bg-solana-dark/60 rounded-lg px-4 py-3 border border-solana-border/50;
 }
-
-/* Stagger delays */
-.stagger-1 { animation-delay: 50ms; }
-.stagger-2 { animation-delay: 100ms; }
-.stagger-3 { animation-delay: 150ms; }
-.stagger-4 { animation-delay: 200ms; }
-.stagger-5 { animation-delay: 250ms; }
-.stagger-6 { animation-delay: 300ms; }

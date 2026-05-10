@@ -8,7 +8,7 @@ import (
 func TestJWTManager_GenerateAndValidate(t *testing.T) {
 	mgr := NewJWTManager("test-secret-key-123")
 
-	token, err := mgr.GenerateToken("testuser")
+	token, err := mgr.GenerateToken(12345, "testuser")
 	if err != nil {
 		t.Fatalf("GenerateToken: %v", err)
 	}
@@ -20,11 +20,14 @@ func TestJWTManager_GenerateAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ValidateToken: %v", err)
 	}
-	if claims.Sub != "testuser" {
-		t.Errorf("Sub = %q, want %q", claims.Sub, "testuser")
+	if claims.Sub != "12345" {
+		t.Errorf("Sub = %q, want %q", claims.Sub, "12345")
 	}
 	if claims.Name != "testuser" {
 		t.Errorf("Name = %q, want %q", claims.Name, "testuser")
+	}
+	if len(claims.Audience) != 1 || claims.Audience[0] != "enshor-api" {
+		t.Errorf("Audience = %v, want [enshor-api]", claims.Audience)
 	}
 }
 
@@ -41,7 +44,7 @@ func TestJWTManager_WrongSecret(t *testing.T) {
 	mgr1 := NewJWTManager("secret-1")
 	mgr2 := NewJWTManager("secret-2")
 
-	token, _ := mgr1.GenerateToken("testuser")
+	token, _ := mgr1.GenerateToken(12345, "testuser")
 	_, err := mgr2.ValidateToken(token)
 	if err != ErrInvalidToken {
 		t.Errorf("ValidateToken with wrong secret = %v, want ErrInvalidToken", err)
@@ -50,7 +53,7 @@ func TestJWTManager_WrongSecret(t *testing.T) {
 
 func TestJWTManager_TokenExpiry(t *testing.T) {
 	mgr := NewJWTManager("test-secret")
-	token, _ := mgr.GenerateToken("testuser")
+	token, _ := mgr.GenerateToken(12345, "testuser")
 
 	// Token should be valid right now
 	claims, err := mgr.ValidateToken(token)

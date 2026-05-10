@@ -18,7 +18,7 @@ func TestFetchContributionWindowDataUsesRepositoryHistoryInMVP(t *testing.T) {
 	oldMergedAt := now.Add(-30 * 24 * time.Hour)
 	recentMergedAt := now.Add(-2 * time.Hour)
 
-	client := NewClientWithEnv("", false)
+	client := NewClient("")
 	client.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		recorder := responseRecorder{header: make(http.Header)}
 
@@ -136,7 +136,7 @@ func TestFetchContributionWindowDataUsesFullHistoryEvenForProductionClient(t *te
 	windowEnd := now
 
 	// Production client — should still use full history in MVP.
-	client := NewClientWithEnv("", true)
+	client := NewClient("")
 	client.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		recorder := responseRecorder{header: make(http.Header)}
 		switch {

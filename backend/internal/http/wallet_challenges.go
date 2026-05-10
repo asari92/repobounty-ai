@@ -73,7 +73,11 @@ func (h *Handlers) ClaimChallenge(w http.ResponseWriter, r *http.Request) {
 
 	issuedAt := time.Now().UTC()
 	expiresAt := issuedAt.Add(walletproof.ChallengeTTL)
-	challengeID := generateState()
+	challengeID, err := generateState()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate challenge id")
+		return
+	}
 	payload := claimChallengePayload{
 		GitHubUsername:    user.GitHubUsername,
 		CampaignID:        id,
@@ -141,8 +145,8 @@ func normalizeCreateCampaignRequest(repo string, poolAmount uint64, deadlineValu
 	return normalizeCreateCampaignRequestWithLeadTime(repo, poolAmount, deadlineValue, sponsorWallet, minCampaignAmount, minLeadTime)
 }
 
-func normalizeCreateCampaignConfirmRequest(repo string, poolAmount uint64, deadlineValue string, sponsorWallet string, minCampaignAmount uint64) (time.Time, error) {
-	return normalizeCreateCampaignRequestWithLeadTime(repo, poolAmount, deadlineValue, sponsorWallet, minCampaignAmount, 0)
+func normalizeCreateCampaignConfirmRequest(repo string, poolAmount uint64, deadlineValue string, sponsorWallet string, minCampaignAmount uint64, minLeadTime time.Duration) (time.Time, error) {
+	return normalizeCreateCampaignRequestWithLeadTime(repo, poolAmount, deadlineValue, sponsorWallet, minCampaignAmount, minLeadTime)
 }
 
 func normalizeCreateCampaignRequestWithLeadTime(repo string, poolAmount uint64, deadlineValue string, sponsorWallet string, minCampaignAmount uint64, minLeadTime time.Duration) (time.Time, error) {

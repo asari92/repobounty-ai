@@ -48,7 +48,7 @@ export default function CampaignDetails() {
           setCampaign(data);
           // Track which contributors have already claimed their rewards
           const claimedMap: Record<string, boolean> = {};
-          data.allocations.forEach((a) => {
+          (data.allocations || []).forEach((a) => {
             if (a.claimed) {
               claimedMap[a.contributor] = true;
             }
@@ -175,9 +175,31 @@ export default function CampaignDetails() {
       await api.claimConfirm(id, contributor, publicKey.toBase58(), txSignature);
       const updated = await api.getCampaign(id);
       setCampaign(updated);
-      setClaimedContributors(prev => ({...prev, [contributor]: true}));
+      setClaimedContributors((prev) => ({ ...prev, [contributor]: true }));
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Claim failed');
+      let msg = 'Claim failed';
+      if (e instanceof Error) {
+        const code = (e as Error & { code?: string }).code;
+        if (code === 'CLAIM_ALREADY_CLAIMED') {
+          msg = 'You have already claimed your reward for this campaign.';
+          try {
+            const updated = await api.getCampaign(id);
+            setCampaign(updated);
+          } catch {
+            // ignore refresh error
+          }
+          setClaimedContributors((prev) => ({ ...prev, [contributor]: true }));
+        } else if (
+          e.message.includes('ClaimAlreadyClaimed') ||
+          e.message.includes('already claimed')
+        ) {
+          msg = 'You have already claimed your reward for this campaign.';
+          setClaimedContributors((prev) => ({ ...prev, [contributor]: true }));
+        } else {
+          msg = e.message;
+        }
+      }
+      setError(msg);
     } finally {
       setClaiming(null);
     }
@@ -317,27 +339,6 @@ export default function CampaignDetails() {
           </div>
         )}
       </div>
-
-      {/* GitHub App Install Banner */}
-      {!isFinalized && !isCompleted && (
-        <div className="card !border-blue-500/15 !bg-blue-500/[0.02] mb-5 flex items-center gap-3 !p-3">
-          <span className="text-sm">🔔</span>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs text-blue-300 font-medium">Auto-notify contributors</p>
-            <p className="text-[10px] text-gray-600 mt-0.5">
-              Install the GitHub App to post reward notifications on PRs.
-            </p>
-          </div>
-          <a
-            href="https://github.com/apps/repobounty-ai/installations/new"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 px-2.5 py-1 rounded-md transition-colors border border-blue-500/15 flex-shrink-0"
-          >
-            Install
-          </a>
-        </div>
-      )}
 
       {/* Finalize Actions */}
       {canShowFinalizeCard && (
@@ -538,7 +539,9 @@ export default function CampaignDetails() {
                       ) : (
                         <button
                           onClick={() => handleClaim(a.contributor)}
-                          disabled={isCurrentlyClaiming || a.claimed || claimedContributors[a.contributor]}
+                          disabled={
+                            isCurrentlyClaiming || a.claimed || claimedContributors[a.contributor]
+                          }
                           className="btn-primary text-[10px] !py-1 !px-3"
                         >
                           {isCurrentlyClaiming ? 'Claiming...' : `Claim ${formatSOL(a.amount)} SOL`}

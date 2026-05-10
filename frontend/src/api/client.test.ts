@@ -10,16 +10,19 @@ describe('api.searchGitHub', () => {
       clear: vi.fn(() => {}),
     });
 
-    vi.stubGlobal('fetch', vi.fn(() =>
-      Promise.resolve({
-        ok: true,
-        json: () =>
-          Promise.resolve([
-            { login: 'testuser', avatar_url: 'https://example.com/avatar.png' },
-            { name: 'testrepo', owner: 'testowner' },
-          ]),
-      })
-    ));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve([
+              { login: 'testuser', avatar_url: 'https://example.com/avatar.png' },
+              { name: 'testrepo', owner: 'testowner' },
+            ]),
+        })
+      )
+    );
   });
 
   afterEach(() => {

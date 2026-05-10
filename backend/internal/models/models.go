@@ -17,6 +17,15 @@ const (
 	StateCompleted CampaignState = "completed"
 )
 
+const (
+	MinAllocationLamports uint64 = 50_000_000
+
+	FinalizationStatusPending     = "pending"
+	FinalizationStatusAnalyzing   = "analyzing"
+	FinalizationStatusNeedsReview = "needs_manual_review"
+	FinalizationStatusFinalized   = "finalized"
+)
+
 type AllocationMode = string
 
 const (
@@ -62,6 +71,8 @@ type Campaign struct {
 	CreatedAt           time.Time     `json:"created_at"`
 	FinalizedAt         *time.Time    `json:"finalized_at,omitempty"`
 	TxSignature         string        `json:"tx_signature,omitempty"`
+	FinalizationStatus  string        `json:"finalization_status,omitempty"`
+	FinalizationError   string        `json:"finalization_error,omitempty"`
 }
 
 // Allocation holds both V2 and V1 fields.
@@ -163,7 +174,7 @@ type FinalizePreviewResponse struct {
 	CampaignID     string          `json:"campaign_id"`
 	Repo           string          `json:"repo"`
 	Contributors   []Contributor   `json:"contributors"`
-	Allocations    interface{}     `json:"allocations"`
+	Allocations    []Allocation    `json:"allocations"`
 	AIModel        string          `json:"ai_model"`
 	AllocationMode AllocationMode  `json:"allocation_mode,omitempty"`
 	Snapshot       SnapshotSummary `json:"snapshot,omitempty"`
@@ -173,7 +184,7 @@ type FinalizeResponse struct {
 	CampaignID        string           `json:"campaign_id"`
 	State             CampaignState    `json:"state,omitempty"`
 	Status            string           `json:"status,omitempty"`
-	Allocations       interface{}      `json:"allocations"`
+	Allocations       []Allocation     `json:"allocations"`
 	TxSignature       string           `json:"tx_signature,omitempty"`
 	TxSignatures      []string         `json:"tx_signatures,omitempty"`
 	TotalBatches      int              `json:"total_batches,omitempty"`
@@ -222,6 +233,8 @@ type GitHubAuthResponse struct {
 
 type LinkWalletRequest struct {
 	WalletAddress string `json:"wallet_address"`
+	ChallengeID   string `json:"challenge_id"`
+	Signature     string `json:"signature"`
 }
 
 type ClaimAllocationRequest struct {

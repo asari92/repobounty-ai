@@ -316,6 +316,10 @@ func (h *Handlers) CreateCampaignConfirm(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "tx_signature is required")
 		return
 	}
+	if !isValidTxSignature(req.TxSignature) {
+		writeError(w, http.StatusBadRequest, "invalid tx_signature format")
+		return
+	}
 
 	deadline, err := normalizeCreateCampaignConfirmRequest(
 		req.Repo,
@@ -323,6 +327,7 @@ func (h *Handlers) CreateCampaignConfirm(w http.ResponseWriter, r *http.Request)
 		req.Deadline,
 		req.SponsorWallet,
 		h.minCampaignAmount(),
+		h.minCampaignLeadTime(),
 	)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -458,7 +463,7 @@ func (h *Handlers) FinalizePreview(w http.ResponseWriter, r *http.Request) {
 	result, err := h.calculateAllocations(r.Context(), campaign, allocationOptions{})
 	if err != nil {
 		log.Printf("finalize preview: allocation failed for %s: %v", campaign.CampaignID, err)
-		writeError(w, http.StatusInternalServerError, "failed to build allocation snapshot")
+		writeError(w, http.StatusInternalServerError, userFacingAllocationError(err))
 		return
 	}
 
@@ -525,7 +530,11 @@ func (h *Handlers) FinalizeChallenge(w http.ResponseWriter, r *http.Request) {
 
 	issuedAt := time.Now().UTC()
 	expiresAt := issuedAt.Add(walletproof.ChallengeTTL)
-	challengeID := generateState()
+	challengeID, err := generateState()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate challenge id")
+		return
+	}
 
 	payload := finalizeChallengePayload{
 		CampaignID:    id,
@@ -647,7 +656,7 @@ func (h *Handlers) FinalizeWithWalletProof(w http.ResponseWriter, r *http.Reques
 		result, calcErr := h.calculateAllocations(r.Context(), campaign, allocationOptions{})
 		if calcErr != nil {
 			log.Printf("finalize wallet: allocation failed for %s: %v", campaign.CampaignID, calcErr)
-			writeError(w, http.StatusInternalServerError, "failed to build allocation snapshot")
+			writeError(w, http.StatusInternalServerError, userFacingAllocationError(calcErr))
 			return
 		}
 		snapshot, snapshotErr = h.createFinalizeSnapshot(campaign, result, "")
@@ -669,6 +678,91 @@ func (h *Handlers) FinalizeWithWalletProof(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func userFacingAllocationError(err error) string {
+	msg := err.Error()
+	if strings.Contains(msg, "no valid commits with real GitHub author identity") {
+		return "No eligible GitHub-linked contributors found. The repository has commits, but GitHub could not associate them with GitHub user accounts. Please use commits authored with a verified GitHub email or GitHub web commits."
+	}
+	return fmt.Sprintf("failed to build allocation snapshot: %v", err)
+}
+
+func validateAllocationsPreFinalize(allocations []models.Allocation, contributorIDs map[uint64]bool, poolAmount uint64) error {
+	if len(allocations) == 0 {
+		return fmt.Errorf("allocation validation failed: no allocations")
+	}
+
+	var sum uint64
+	for i, a := range allocations {
+		if a.GithubUserID == 0 {
+			return fmt.Errorf("allocation validation failed: allocation %d has github_user_id=0", i)
+		}
+		if !contributorIDs[a.GithubUserID] {
+			return fmt.Errorf("allocation validation failed: github_user_id %d not in repository identity set", a.GithubUserID)
+		}
+		if a.Amount < models.MinAllocationLamports {
+			return fmt.Errorf("allocation validation failed: allocation for github_user_id %d has amount %d below minimum %d",
+				a.GithubUserID, a.Amount, models.MinAllocationLamports)
+		}
+		sum += a.Amount
+	}
+
+	if sum != poolAmount {
+		return fmt.Errorf("allocation validation failed: sum %d != pool %d", sum, poolAmount)
+	}
+
+	return nil
+}
+
+func redistributeBelowMinimum(allocations []models.Allocation, poolAmount uint64) []models.Allocation {
+	if len(allocations) == 0 {
+		return allocations
+	}
+
+	sort.Slice(allocations, func(i, j int) bool {
+		if allocations[i].Amount != allocations[j].Amount {
+			return allocations[i].Amount > allocations[j].Amount
+		}
+		return allocations[i].GithubUserID < allocations[j].GithubUserID
+	})
+
+	originalTop1 := allocations[0]
+
+	var kept []models.Allocation
+	var filteredSum uint64
+	for _, a := range allocations {
+		if a.Amount >= models.MinAllocationLamports {
+			kept = append(kept, a)
+		} else {
+			filteredSum += a.Amount
+		}
+	}
+
+	if len(kept) == 0 {
+		return []models.Allocation{
+			{
+				GithubUserID:   originalTop1.GithubUserID,
+				GithubUsername: originalTop1.GithubUsername,
+				Contributor:    originalTop1.Contributor,
+				Percentage:     10000,
+				Amount:         poolAmount,
+				Reasoning:      "TOR 13.6: all other contributors below MIN_ALLOCATION, entire pool assigned to top-1 contributor",
+			},
+		}
+	}
+
+	var keptSum uint64
+	for _, a := range kept {
+		keptSum += a.Amount
+	}
+
+	remainder := poolAmount - keptSum
+	if remainder > 0 {
+		kept[0].Amount += remainder
+	}
+
+	return kept
+}
+
 // commitFinalize sends the finalization transaction to Solana and persists the
 // result. It is the shared core called by the GitHub-auth Finalize handler,
 // the FinalizeWithWalletProof handler, and the auto-finalize worker.
@@ -681,11 +775,26 @@ func (h *Handlers) commitFinalize(
 		return models.FinalizeResponse{}, solana.ErrNotConfigured
 	}
 
+	contributorIDs := make(map[uint64]bool, len(result.contributors))
+	for _, c := range result.contributors {
+		if c.GithubUserID != 0 {
+			contributorIDs[c.GithubUserID] = true
+		}
+	}
+
+	result.allocations = redistributeBelowMinimum(result.allocations, campaign.PoolAmount)
+
+	if err := validateAllocationsPreFinalize(result.allocations, contributorIDs, campaign.PoolAmount); err != nil {
+		campaign.FinalizationStatus = models.FinalizationStatusNeedsReview
+		campaign.FinalizationError = err.Error()
+		if updateErr := h.store.Update(campaign); updateErr != nil {
+			log.Printf("WARNING: failed to persist finalization failure for %s: %v", campaign.CampaignID, updateErr)
+		}
+		return models.FinalizeResponse{}, err
+	}
+
 	solanaInputs := make([]solana.AllocationInput, len(result.allocations))
 	for i, a := range result.allocations {
-		if a.GithubUserID == 0 {
-			return models.FinalizeResponse{}, fmt.Errorf("missing github_user_id for allocation %s", a.Contributor)
-		}
 		solanaInputs[i] = solana.AllocationInput{
 			GithubUserID: a.GithubUserID,
 			Amount:       a.Amount,
@@ -702,6 +811,8 @@ func (h *Handlers) commitFinalize(
 	campaign.Allocations = result.allocations
 	campaign.FinalizedAt = &now
 	campaign.TxSignature = txSig
+	campaign.FinalizationStatus = models.FinalizationStatusFinalized
+	campaign.FinalizationError = ""
 
 	if err := h.store.Update(campaign); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -854,14 +965,16 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 
 	if err := validateClaimInputs(user.GitHubUsername, campaign, req.ContributorGithub, req.WalletAddress); err != nil {
 		switch err.Error() {
-		case "campaign is not finalized", "allocation already claimed":
-			writeError(w, http.StatusConflict, err.Error())
+		case "allocation already claimed":
+			writeCodedError(w, http.StatusConflict, "You have already claimed your reward for this campaign.", "CLAIM_ALREADY_CLAIMED")
+		case "campaign is not finalized":
+			writeCodedError(w, http.StatusConflict, err.Error(), "CAMPAIGN_NOT_FINALIZED")
 		case "can only claim your own allocation":
-			writeError(w, http.StatusForbidden, err.Error())
+			writeCodedError(w, http.StatusForbidden, err.Error(), "CLAIM_NOT_YOUR_OWN")
 		case "contributor not found in allocations":
-			writeError(w, http.StatusNotFound, err.Error())
+			writeCodedError(w, http.StatusNotFound, err.Error(), "CONTRIBUTOR_NOT_FOUND")
 		default:
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeCodedError(w, http.StatusBadRequest, err.Error(), "BAD_REQUEST")
 		}
 		return
 	}
@@ -900,6 +1013,18 @@ func (h *Handlers) Claim(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to map contributor identities for on-chain claim")
 		return
 	}
+
+	claimStatus, err := h.solana.GetClaimStatus(r.Context(), campaign.CampaignID, campaign.Sponsor, matchedAlloc.GithubUserID)
+	if err == nil && claimStatus.Claimed {
+		if !matchedAlloc.Claimed {
+			matchedAlloc.Claimed = true
+			matchedAlloc.ClaimantWallet = claimStatus.RecipientWallet
+			_ = h.store.Update(campaign)
+		}
+		writeCodedError(w, http.StatusConflict, "You have already claimed your reward for this campaign.", "CLAIM_ALREADY_CLAIMED")
+		return
+	}
+
 	if err := h.markWalletChallengeUsed(req.ChallengeID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1048,7 +1173,11 @@ func (h *Handlers) ClaimConfirm(w http.ResponseWriter, r *http.Request) {
 		TxSignature: req.TxSignature,
 	}
 	if req.TxSignature != "" {
-		response.SolanaExplorerURL = fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", req.TxSignature)
+		if !isValidTxSignature(req.TxSignature) {
+			req.TxSignature = ""
+		} else {
+			response.SolanaExplorerURL = fmt.Sprintf("https://explorer.solana.com/tx/%s?cluster=devnet", req.TxSignature)
+		}
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -1140,6 +1269,10 @@ func (h *Handlers) RefundConfirm(w http.ResponseWriter, r *http.Request) {
 	txSignature := strings.TrimSpace(req.TxSignature)
 	if txSignature == "" {
 		writeError(w, http.StatusBadRequest, "tx_signature is required")
+		return
+	}
+	if !isValidTxSignature(txSignature) {
+		writeError(w, http.StatusBadRequest, "invalid tx_signature format")
 		return
 	}
 
@@ -1308,26 +1441,12 @@ func (h *Handlers) GetMyCampaigns(w http.ResponseWriter, r *http.Request) {
 		isSponsor := filterWallet != "" &&
 			(campaign.Sponsor == filterWallet || campaign.Authority == filterWallet)
 
-		isContributor := false
-		if user != nil && user.GitHubUsername != "" {
-			if campaign.OwnerGitHubUsername == user.GitHubUsername {
-				isContributor = true
-			} else if campaign.Allocations != nil {
-				for _, alloc := range campaign.Allocations {
-					if alloc.Contributor == user.GitHubUsername {
-						isContributor = true
-						break
-					}
-				}
-			}
-		}
-
-		if !isSponsor && !isContributor {
+		if !isSponsor {
 			continue
 		}
 
 		refundDeadline := campaign.Deadline.AddDate(0, 0, 365)
-		canRefund := isSponsor && now.After(refundDeadline)
+		canRefund := now.After(refundDeadline)
 
 		myCampaigns = append(myCampaigns, myCampaign{
 			CampaignID:  campaign.CampaignID,
@@ -1370,6 +1489,27 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, models.ErrorResponse{Error: msg})
+}
+
+type codedErrorResponse struct {
+	Error string `json:"error"`
+	Code  string `json:"code"`
+}
+
+func writeCodedError(w http.ResponseWriter, status int, msg, code string) {
+	writeJSON(w, status, codedErrorResponse{Error: msg, Code: code})
+}
+
+func isValidTxSignature(s string) bool {
+	if len(s) < 2 || len(s) > 512 {
+		return false
+	}
+	for _, c := range s {
+		if c < 32 || c > 126 {
+			return false
+		}
+	}
+	return true
 }
 
 type healthResponse struct {
@@ -1586,14 +1726,24 @@ func (h *Handlers) calculateAllocations(
 	campaign *models.Campaign,
 	options allocationOptions,
 ) (*allocationResult, error) {
+	campaign.FinalizationStatus = models.FinalizationStatusAnalyzing
+	campaign.FinalizationError = ""
+	if err := h.store.Update(campaign); err != nil {
+		log.Printf("WARNING: failed to persist analyzing status for %s: %v", campaign.CampaignID, err)
+	}
+
 	windowStart, windowEnd := campaignContributionWindow(campaign)
 	windowData, err := h.github.FetchContributionWindowData(ctx, campaign.Repo, windowStart, windowEnd)
 	if err != nil {
-		return nil, fmt.Errorf("fetch contribution window: %w", err)
+		failMsg := fmt.Sprintf("fetch contribution window: %v", err)
+		campaign.FinalizationStatus = models.FinalizationStatusNeedsReview
+		campaign.FinalizationError = failMsg
+		if updateErr := h.store.Update(campaign); updateErr != nil {
+			log.Printf("WARNING: failed to persist finalization failure for %s: %v", campaign.CampaignID, updateErr)
+		}
+		return nil, fmt.Errorf("%s", failMsg)
 	}
 
-	// Check if PR diffs contain real data
-	// Empty PR diffs mean "no merged PRs available", not "try mock fallback"
 	hasRealPRs := len(windowData.ContributorPRDiffs) > 0
 
 	if hasRealPRs {
@@ -1648,7 +1798,11 @@ func (h *Handlers) calculateAllocations(
 }
 
 func (h *Handlers) GetGitHubAuthURL(w http.ResponseWriter, r *http.Request) {
-	state := generateState()
+	state, err := generateState()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate state")
+		return
+	}
 
 	h.oauthStatesMu.Lock()
 	// Clean expired states
@@ -1729,7 +1883,7 @@ func (h *Handlers) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 		existingUser = newUser
 	}
 
-	token, err := h.jwt.GenerateToken(existingUser.GitHubUsername)
+	token, err := h.jwt.GenerateToken(existingUser.GitHubID, existingUser.GitHubUsername)
 	if err != nil {
 		log.Printf("github oauth: generate token failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to generate session token")
@@ -1773,8 +1927,30 @@ func (h *Handlers) LinkWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.WalletAddress != "" && !isValidSolanaAddress(req.WalletAddress) {
+	if req.WalletAddress == "" {
+		writeError(w, http.StatusBadRequest, "wallet_address is required")
+		return
+	}
+
+	if !isValidSolanaAddress(req.WalletAddress) {
 		writeError(w, http.StatusBadRequest, "invalid wallet address format")
+		return
+	}
+
+	challenge, err := h.loadAndVerifyWalletChallenge(
+		models.WalletChallengeActionLink,
+		req.ChallengeID,
+		req.WalletAddress,
+		req.Signature,
+	)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.markWalletChallengeUsed(challenge.ChallengeID); err != nil {
+		log.Printf("wallet link: mark challenge used failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to verify wallet proof")
 		return
 	}
 
@@ -1788,10 +1964,10 @@ func (h *Handlers) LinkWallet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, user)
 }
 
-func generateState() string {
+func generateState() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+		return "", fmt.Errorf("crypto/rand: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }

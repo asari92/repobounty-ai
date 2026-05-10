@@ -101,7 +101,7 @@ func TestCreateCampaignConfirmAllowsDelayedConfirmationWithinMinimumLeadWindow(t
 
 	campaignID := "123"
 	walletAddress := testWalletAddress(t)
-	deadline := time.Now().UTC().Add(2 * time.Minute).Format(time.RFC3339)
+	deadline := time.Now().UTC().Add(16 * time.Minute).Format(time.RFC3339)
 	onChainDeadline := deadlineTime(deadline)
 
 	handlers := NewHandlers(
@@ -321,7 +321,7 @@ func performAuthedJSONRequest(
 		t.Fatal("handlers.jwt must be configured for authenticated test requests")
 	}
 
-	token, err := handlers.jwt.GenerateToken(user.GitHubUsername)
+	token, err := handlers.jwt.GenerateToken(user.GitHubID, user.GitHubUsername)
 	if err != nil {
 		t.Fatalf("GenerateToken: %v", err)
 	}

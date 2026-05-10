@@ -12,10 +12,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     return (
       <Link
         to={path}
-        className={`text-sm font-medium px-3 py-1.5 rounded-md transition-all duration-200 ${active
+        className={`text-sm font-medium px-3 py-1.5 rounded-md transition-all duration-200 ${
+          active
             ? 'bg-solana-purple/15 text-solana-purple'
             : 'text-gray-500 hover:text-gray-200 hover:bg-solana-card'
-          }`}
+        }`}
       >
         {label}
       </Link>
@@ -87,9 +88,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       <footer className="border-t border-solana-border py-5">
         <div className="max-w-6xl mx-auto px-6 flex items-center justify-between">
-          <span className="text-xs text-gray-600">
-            &copy; {new Date().getFullYear()} Enshor
-          </span>
+          <span className="text-xs text-gray-600">&copy; {new Date().getFullYear()} Enshor</span>
           <div className="flex items-center gap-4 text-xs text-gray-600">
             <span>Built on Solana</span>
             <a

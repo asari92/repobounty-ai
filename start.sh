@@ -117,7 +117,7 @@ fi
 
 # ── Start ────────────────────────────────────────────────────────
 
-echo -e "${GREEN}Starting RepoBounty AI...${NC}"
+echo -e "${GREEN}Starting Enshor...${NC}"
 echo ""
 echo -e "  Frontend : ${CYAN}http://localhost:5173${NC}"
 echo -e "  Backend  : ${CYAN}http://localhost:8080${NC}"
