@@ -381,8 +381,8 @@ export default function CreateCampaign() {
               {MIN_CAMPAIGN_POOL_SOL} SOL
             </p>
             <p>
-              <span className="text-solana-green font-medium">Merged code only</span> - only main
-              branch contributions qualify
+              <span className="text-solana-green font-medium">Repository activity</span> - commits
+              and PRs from the repository are analyzed automatically
             </p>
           </div>
 

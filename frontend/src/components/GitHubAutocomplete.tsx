@@ -14,14 +14,21 @@ export default function GitHubAutocomplete({ value, onChange }: GitHubAutocomple
   const [loading, setLoading] = useState(false);
   const [dropdownMessage, setDropdownMessage] = useState<string | null>(null);
   const requestIdRef = useRef(0);
+  const suppressSearchRef = useRef(false);
 
   const searchState = getGitHubSearchState(value);
   const showDropdown =
-    searchState.mode === 'users' || searchState.mode === 'repos'
+    !suppressSearchRef.current &&
+    (searchState.mode === 'users' || searchState.mode === 'repos')
       ? loading || dropdownMessage !== null || results.length > 0
       : false;
 
   useEffect(() => {
+    if (suppressSearchRef.current) {
+      suppressSearchRef.current = false;
+      return;
+    }
+
     if (searchState.mode !== 'users' && searchState.mode !== 'repos') {
       setResults([]);
       setSelectedIndex(-1);
@@ -67,11 +74,15 @@ export default function GitHubAutocomplete({ value, onChange }: GitHubAutocomple
   }, [searchState.mode, searchState.query, searchState.repoPrefix]);
 
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    suppressSearchRef.current = false;
     onChange(normalizeGitHubRepoInput(e.target.value));
     setSelectedIndex(-1);
+    setResults([]);
+    setDropdownMessage(null);
   }
 
   function handleSelectResult(result: UserSearchResult | RepoSearchResult) {
+    suppressSearchRef.current = true;
     if ('login' in result) {
       onChange(`${result.login}/`);
     } else {
@@ -80,6 +91,7 @@ export default function GitHubAutocomplete({ value, onChange }: GitHubAutocomple
 
     setResults([]);
     setSelectedIndex(-1);
+    setDropdownMessage(null);
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -103,6 +115,7 @@ export default function GitHubAutocomplete({ value, onChange }: GitHubAutocomple
       case 'Escape':
         e.preventDefault();
         setResults([]);
+        setDropdownMessage(null);
         break;
     }
   }

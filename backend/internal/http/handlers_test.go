@@ -409,17 +409,21 @@ func TestWorkerFiltering_SkipsNeedsManualReview(t *testing.T) {
 	}
 }
 
-func TestWorkerFiltering_ProcessesPending(t *testing.T) {
-	for _, status := range []string{"", models.FinalizationStatusPending, models.FinalizationStatusAnalyzing} {
-		c := &models.Campaign{
-			CampaignID:         "test-" + status,
-			State:              models.StateFunded,
-			Deadline:           time.Now().Add(-1 * time.Hour),
-			FinalizationStatus: status,
-		}
-		if c.FinalizationStatus == models.FinalizationStatusNeedsReview ||
-			c.FinalizationStatus == models.FinalizationStatusFinalized {
-			t.Errorf("campaign with status=%s should not be skipped", status)
-		}
+func TestUserFacingAllocationError_UnmappedCommitAuthors(t *testing.T) {
+	err := fmt.Errorf("no valid commits with real GitHub author identity on branch main")
+	msg := userFacingAllocationError(err)
+	if !strings.Contains(msg, "No eligible GitHub-linked contributors found") {
+		t.Fatalf("expected user-facing message about GitHub-linked contributors, got: %s", msg)
+	}
+	if strings.Contains(msg, "branch main") {
+		t.Fatalf("user-facing message should not contain technical branch detail, got: %s", msg)
+	}
+}
+
+func TestUserFacingAllocationError_GenericError(t *testing.T) {
+	err := fmt.Errorf("something else went wrong")
+	msg := userFacingAllocationError(err)
+	if !strings.Contains(msg, "failed to build allocation snapshot") {
+		t.Fatalf("expected generic message, got: %s", msg)
 	}
 }

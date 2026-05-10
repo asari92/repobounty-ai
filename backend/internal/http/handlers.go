@@ -463,7 +463,7 @@ func (h *Handlers) FinalizePreview(w http.ResponseWriter, r *http.Request) {
 	result, err := h.calculateAllocations(r.Context(), campaign, allocationOptions{})
 	if err != nil {
 		log.Printf("finalize preview: allocation failed for %s: %v", campaign.CampaignID, err)
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to build allocation snapshot: %v", err))
+		writeError(w, http.StatusInternalServerError, userFacingAllocationError(err))
 		return
 	}
 
@@ -656,7 +656,7 @@ func (h *Handlers) FinalizeWithWalletProof(w http.ResponseWriter, r *http.Reques
 		result, calcErr := h.calculateAllocations(r.Context(), campaign, allocationOptions{})
 		if calcErr != nil {
 			log.Printf("finalize wallet: allocation failed for %s: %v", campaign.CampaignID, calcErr)
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to build allocation snapshot: %v", calcErr))
+			writeError(w, http.StatusInternalServerError, userFacingAllocationError(calcErr))
 			return
 		}
 		snapshot, snapshotErr = h.createFinalizeSnapshot(campaign, result, "")
@@ -676,6 +676,14 @@ func (h *Handlers) FinalizeWithWalletProof(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func userFacingAllocationError(err error) string {
+	msg := err.Error()
+	if strings.Contains(msg, "no valid commits with real GitHub author identity") {
+		return "No eligible GitHub-linked contributors found. The repository has commits, but GitHub could not associate them with GitHub user accounts. Please use commits authored with a verified GitHub email or GitHub web commits."
+	}
+	return fmt.Sprintf("failed to build allocation snapshot: %v", err)
 }
 
 func validateAllocationsPreFinalize(allocations []models.Allocation, contributorIDs map[uint64]bool, poolAmount uint64) error {
