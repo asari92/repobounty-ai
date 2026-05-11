@@ -1123,15 +1123,15 @@ func (h *Handlers) ClaimConfirm(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("solana claim status lookup failed: %v", err)
-		writeError(w, http.StatusBadGateway, "failed to confirm on-chain claim")
+		writeCodedError(w, http.StatusBadGateway, "failed to confirm on-chain claim", "CLAIM_CHAIN_LOOKUP_FAILED")
 		return
 	}
 	if !claimStatus.Claimed {
-		writeError(w, http.StatusConflict, "claim is not confirmed on-chain yet")
+		writeCodedError(w, http.StatusConflict, "claim is not confirmed on-chain yet", "CLAIM_NOT_CONFIRMED_ON_CHAIN")
 		return
 	}
 	if claimStatus.RecipientWallet != "" && claimStatus.RecipientWallet != req.WalletAddress {
-		writeError(w, http.StatusConflict, "claim was finalized to a different wallet")
+		writeCodedError(w, http.StatusConflict, "claim was finalized to a different wallet", "CLAIM_WALLET_MISMATCH")
 		return
 	}
 

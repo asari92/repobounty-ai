@@ -186,3 +186,5 @@ docs/superpowers/
 # Temporary TZ presentations
 TZ_*.md
 ТЗ_*.md
+
+.openspec/
