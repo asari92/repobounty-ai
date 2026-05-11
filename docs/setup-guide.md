@@ -1,513 +1,371 @@
-# Enshor — Полная инструкция по запуску и деплою
+# Setup Guide
 
-## Содержание
+This guide describes the current Enshor development, Docker, and Solana setup. It is intentionally written for the current repository state, including runtime-dependent behavior and known MVP limitations.
 
-1. [Требования](#1-требования)
-2. [Локальный запуск (разработка)](#2-локальный-запуск-разработка)
-3. [Запуск через Docker](#3-запуск-через-docker)
-4. [Настройка внешних сервисов](#4-настройка-внешних-сервисов)
-5. [Solana: сборка и деплой смарт-контракта](#5-solana-сборка-и-деплой-смарт-контракта)
-6. [Подключение к devnet (тестовая сеть)](#6-подключение-к-devnet-тестовая-сеть)
-7. [Подключение к mainnet-beta (основная сеть)](#7-подключение-к-mainnet-beta-основная-сеть)
-8. [Полный e2e flow](#8-полный-e2e-flow)
-9. [Устранение проблем](#9-устранение-проблем)
+## Prerequisites
 
----
+Local development:
 
-## 1. Требования
+| Component | Version or Notes |
+|---|---|
+| Go | `1.25+` for the backend. |
+| Node.js | `20+` for the frontend. |
+| npm | Used by the frontend and Anchor TypeScript test tooling. |
+| Docker and Docker Compose | Recommended for app startup and Solana program tooling. |
+| Solana wallet | Phantom or another wallet compatible with `@solana/wallet-adapter`. |
 
-### Системные
+Solana program work:
 
-| Компонент | Версия |
-|-----------|--------|
-| Go | 1.25+ |
-| Node.js | 20+ |
-| Rust | 1.79+ (stable) |
-| Solana CLI | 1.18+ (agave) |
-| Anchor CLI | 0.30.1 |
-| Docker & Docker Compose | latest |
+| Component | Version or Notes |
+|---|---|
+| Rust | Docker image uses Rust `1.85.0`. |
+| Anchor CLI | Docker image installs Anchor `0.32.1`. |
+| Solana/Agave tooling | Docker image installs configured runtime/build versions. |
 
-### Установка Solana CLI
+You can avoid installing Anchor and Solana CLI locally by using the Docker Compose `deploy` profile.
 
-```bash
-# Установка (macOS/Linux)
-sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+## Repository Layout
 
-# Добавить в PATH (~/.zshrc или ~/.bashrc)
-export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
-
-# Проверка
-solana --version
+```text
+backend/    Go API, GitHub OAuth, allocation, SQLite storage, Solana builders
+frontend/   React 18 + Vite + TypeScript + Tailwind SPA
+program/    Anchor/Solana program and program tooling scripts
+docs/       Project documentation
 ```
 
-### Установка Anchor CLI
+## Environment Files
+
+The backend loads `.env` from the current working directory and also from the repository root when running from `backend/`.
+
+Create a root `.env` from the repository example:
 
 ```bash
-# Через cargo
-cargo install --git https://github.com/coral-xyz/anchor --tag v0.30.1 anchor-cli
-
-# Проверка
-anchor --version
-```
-
----
-
-## 2. Локальный запуск (разработка)
-
-### 2.1. Клонирование и подготовка
-
-```bash
-git clone <repo-url> repobounty-ai
-cd repobounty-ai
-```
-
-### 2.2. Настройка переменных окружения
-
-```bash
-cd backend
 cp .env.example .env
 ```
 
-Отредактируй `.env`:
+Minimum local `.env` shape:
 
 ```env
-# === Обязательные ===
-PORT=8080
-JWT_SECRET=your-secret-minimum-32-characters-long-string
-FRONTEND_URL=http://localhost:3000
+JWT_SECRET=change-me-to-a-random-string-at-least-32-chars
 
-# === GitHub ===
-GITHUB_TOKEN=ghp_xxxxxxxxxxxx          # Personal Access Token (classic), scopes: repo, read:user
-GITHUB_CLIENT_ID=Ov23li...             # OAuth App → Client ID
-GITHUB_CLIENT_SECRET=...               # OAuth App → Client Secret
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+GITHUB_TOKEN=
 
-# === Solana ===
 SOLANA_RPC_URL=https://api.devnet.solana.com
-SERVICE_PRIVATE_KEY=<base58-или-json> # service_wallet (см. раздел 5)
-PROGRAM_ID=<вставь после deploy из program/.artifacts/program-id>
+SERVICE_PRIVATE_KEY=
+PROGRAM_ID=
+SOLANA_DEPLOY_WALLET=
 
-# === AI (опционально) ===
-OPENROUTER_API_KEY=sk-or-...           # Без ключа работает deterministic fallback
+OPENROUTER_API_KEY=
 MODEL=nvidia/nemotron-3-super-120b-a12b:free
 
-# === Storage ===
-DATABASE_PATH=enshor.db            # Пустое = in-memory
+FRONTEND_URL=http://localhost:5173
+ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
+PORT=8080
+DATABASE_PATH=repobounty.db
 ```
 
-> **Без внешних ключей** backend запустится в mock-режиме: mock GitHub data, deterministic AI, mock Solana transactions.
+Important runtime behavior:
 
-### 2.3. Запуск backend
+- `JWT_SECRET` is required in production and must be at least 32 characters there.
+- If `SERVICE_PRIVATE_KEY` or `PROGRAM_ID` is missing, the backend starts but disables on-chain create, finalize, claim, and refund transaction flows.
+- If `OPENROUTER_API_KEY` is missing or model calls fail, deterministic allocation fallback is used.
+- `DATABASE_PATH=repobounty.db` stores SQLite data under `backend/` when the backend is run from that directory.
+- `DATABASE_PATH=` enables in-memory storage and should only be used for throwaway testing.
+
+Backend config also supports these operational knobs:
+
+```env
+ENV=development
+TREASURY_WALLET=
+MIN_CAMPAIGN_AMOUNT=500000000
+MIN_ALLOCATION_AMOUNT=50000000
+MAX_ALLOCATIONS=200
+MIN_DEADLINE_SECONDS=300
+FINALIZE_BATCH_SIZE=5
+AUTO_FINALIZE_INTERVAL_SECONDS=60
+GITHUB_APP_ID=0
+GITHUB_APP_PRIVATE_KEY=
+```
+
+The frontend currently uses relative `/api` requests. For wallet RPC selection, it reads:
+
+```env
+VITE_SOLANA_NETWORK=devnet
+VITE_SOLANA_RPC_URL=
+```
+
+If `VITE_SOLANA_RPC_URL` is empty, the frontend uses `clusterApiUrl(VITE_SOLANA_NETWORK || "devnet")`.
+
+## Local Development
+
+Install and run the backend:
 
 ```bash
 cd backend
-go mod tidy
+go mod download
 go run ./cmd/api
-# → Listening on :8080
 ```
 
-### 2.4. Запуск frontend
+The backend listens on `http://localhost:8080` by default.
+
+Install and run the frontend:
 
 ```bash
 cd frontend
 npm install
 npm run dev
-# → http://localhost:3000
-# Vite проксирует /api → http://localhost:8080
 ```
 
-### 2.5. Проверка
+Vite serves the frontend at `http://localhost:5173` by default.
+
+Check backend health:
 
 ```bash
 curl http://localhost:8080/api/health
-# → {"status":"ok"}
 ```
 
----
+Expected shape:
 
-## 3. Запуск через Docker
+```json
+{
+  "status": "ok",
+  "solana": false,
+  "github": true,
+  "ai_model": "deterministic-fallback",
+  "store": true
+}
+```
+
+`solana` is `false` until `SERVICE_PRIVATE_KEY` and `PROGRAM_ID` are configured.
+
+## Docker Startup
+
+Run the app stack:
 
 ```bash
-# Из корня проекта
 docker compose up --build
-
-# Frontend: http://localhost:5173
-# Backend:  http://localhost:8080
 ```
 
-Docker Compose по умолчанию поднимает 2 сервиса:
-- `backend` — Go API сервер
-- `frontend` — nginx + собранный React SPA, проксирует `/api` на backend
+Default URLs:
 
-Для программы есть отдельный deploy-профиль:
+- Frontend: `http://localhost:5173`
+- Backend inside Compose network: `http://backend:8080`
+- Backend direct host port is not published by the current compose file; frontend Nginx proxies `/api` to the backend.
 
-```bash
-docker compose --profile deploy run --rm solana-check
-```
+Compose services:
 
-Он выполняет безопасную локальную проверку:
-- `anchor build`
-- `anchor deploy --provider.cluster localnet`
-- TypeScript-тесты
-- без деплоя в `devnet`
+| Service | Purpose |
+|---|---|
+| `backend` | Go API, SQLite volume at `/data/repobounty.db`, healthcheck on `/api/health`. |
+| `frontend` | Built React SPA served by Nginx on host port `5173`. |
+| `solana-check` | Deploy-profile program check workflow. |
+| `solana-deployer` | Deploy-profile devnet deploy workflow. |
 
-Когда локальная проверка прошла и нужен реальный деплой:
+## GitHub Setup
 
-```bash
-docker compose --profile deploy run --rm solana-deployer
-```
+GitHub OAuth is required for login, owner-gated preview/finalize, and contributor claim authorization.
 
-Он:
-- повторяет локальный `build + localnet deploy + test`
-- выполняет `anchor deploy --provider.cluster devnet`
-- инициализирует или обновляет on-chain config так, чтобы:
-  `admin_wallet = SOLANA_DEPLOY_WALLET`
-  `finalize_authority = SERVICE_PRIVATE_KEY`
-  `claim_authority = SERVICE_PRIVATE_KEY`
-  `treasury_wallet = SERVICE_PRIVATE_KEY`
-- пишет итоговый `PROGRAM_ID` в `program/.artifacts/program-id`
+Create a GitHub OAuth App:
 
-Нужные переменные в корневом `.env`:
+1. Go to `https://github.com/settings/developers`.
+2. Create a new OAuth App.
+3. Set Homepage URL to `http://localhost:5173` for local development.
+4. Set Authorization callback URL to `http://localhost:5173/auth/callback`.
+5. Copy Client ID to `GITHUB_CLIENT_ID`.
+6. Generate a client secret and copy it to `GITHUB_CLIENT_SECRET`.
+
+GitHub API access:
+
+- `GITHUB_TOKEN` is used for repository and contributor API calls.
+- Public GitHub access may work for some calls, but rate limits are lower.
+- The OAuth scope used by the backend is `read:user,user:email`.
+
+## OpenRouter Setup
+
+OpenRouter is optional for the demo flow.
+
+1. Create an API key at `https://openrouter.ai`.
+2. Set `OPENROUTER_API_KEY`.
+3. Optionally override `MODEL`.
+
+If OpenRouter is not configured, the backend uses deterministic fallback allocation.
+
+## Solana Keys and Roles
+
+The MVP has two operational key roles:
+
+| Role | Config | Purpose |
+|---|---|---|
+| Admin wallet | `SOLANA_DEPLOY_WALLET` | Deploys the program and initializes/updates config. |
+| Service wallet | `SERVICE_PRIVATE_KEY` | Backend finalize authority, claim authority, and treasury wallet in the MVP deploy flow. |
+
+The program supports separate `admin_wallet`, `finalize_authority`, `claim_authority`, and `treasury_wallet`. The MVP deploy script may configure the service wallet for finalize, claim, and treasury roles.
+
+`SERVICE_PRIVATE_KEY` can be a base58 private key or a 64-byte JSON keypair array.
+
+Example:
 
 ```env
-SOLANA_DEPLOY_WALLET=/home/<user>/.config/solana
-SERVICE_PRIVATE_KEY=<base58-или-json>
+SERVICE_PRIVATE_KEY=base58-private-key
 ```
 
----
-
-## 4. Настройка внешних сервисов
-
-### 4.1. GitHub Personal Access Token
-
-1. https://github.com/settings/tokens → **Generate new token (classic)**
-2. Scopes: `repo`, `read:user`, `user:email`
-3. Скопируй токен → `GITHUB_TOKEN` в `.env`
-
-### 4.2. GitHub OAuth App (для логина пользователей)
-
-1. https://github.com/settings/developers → **New OAuth App**
-2. Application name: `Enshor`
-3. Homepage URL: `http://localhost:3000`
-4. Authorization callback URL: `http://localhost:3000/auth/callback`
-5. Скопируй Client ID → `GITHUB_CLIENT_ID`
-6. Generate client secret → `GITHUB_CLIENT_SECRET`
-
-> Для продакшена замени URLs на реальный домен.
-
-### 4.3. OpenRouter (AI, опционально)
-
-1. https://openrouter.ai → Sign up → API Keys
-2. Скопируй ключ → `OPENROUTER_API_KEY`
-3. По умолчанию используется бесплатная модель `nvidia/nemotron-3-super-120b-a12b:free`
-
----
-
-## 5. Solana: сборка и деплой смарт-контракта
-
-### 5.1. Два рабочих ключа
-
-Для MVP снаружи проекта используются две роли:
-
-- `SOLANA_DEPLOY_WALLET` — `admin_wallet`
-  Используется для деплоя программы и admin-действий:
-  `initialize_config`, `update_config`, `set_paused`.
-- `SERVICE_PRIVATE_KEY` — `service_wallet`
-  Используется backend-сервисом для рабочих on-chain операций:
-  finalize, claim, fee/treasury.
-
-### 5.2. Admin wallet
-
-`SOLANA_DEPLOY_WALLET` должен указывать на директорию, где лежит `id.json`:
-
-```env
-SOLANA_DEPLOY_WALLET=/home/<user>/.config/solana
-```
-
-Если кошелька еще нет:
-
-```bash
-solana-keygen new -o ~/.config/solana/id.json
-solana-keygen pubkey ~/.config/solana/id.json
-```
-
-Для devnet выдай ему SOL:
-
-```bash
-solana airdrop 5 <ADMIN_WALLET_ADDRESS> --url https://api.devnet.solana.com
-```
-
-### 5.3. Service wallet
-
-`SERVICE_PRIVATE_KEY` можно задавать:
-
-```env
-SERVICE_PRIVATE_KEY=<base58-строка>
-```
-
-или:
+or:
 
 ```env
 SERVICE_PRIVATE_KEY=[174,23,45,...]
 ```
 
-### 5.4. Без локальной установки Anchor и Solana
+For devnet, fund the admin and service wallets with devnet SOL.
 
-Проверка программы без деплоя в сеть:
+## Solana Program Check and Deploy
+
+Run the local/containerized program check:
 
 ```bash
 docker compose --profile deploy run --rm solana-check
 ```
 
-Публикация в devnet:
+The check profile uses the program Docker image and project scripts. It is intended to validate the program workflow without deploying to devnet.
+
+Deploy to devnet:
 
 ```bash
 docker compose --profile deploy run --rm solana-deployer
 ```
 
-После успешного деплоя готовый `PROGRAM_ID` лежит в:
-
-```text
-program/.artifacts/program-id
-```
-
-Его нужно перенести в корневой `.env`:
+After deployment, copy the generated program id into `.env`:
 
 ```env
-PROGRAM_ID=<значение из program/.artifacts/program-id>
+PROGRAM_ID=<deployed-program-id>
 ```
 
-### 5.5. Локальная разработка программы
+The current Anchor program id in source is declared in `program/programs/repobounty/src/lib.rs`; the runtime backend uses the `PROGRAM_ID` environment variable.
 
-Если хочешь запускать программу вне Docker:
+## Devnet Frontend Wallet Setup
+
+Use Phantom or another Solana wallet:
+
+1. Enable developer/testnet mode.
+2. Select Solana Devnet.
+3. Fund the sponsor wallet with enough devnet SOL for reward pool, service fee, rent, and network fees.
+4. Fund contributor wallets if using the current user-paid claim path.
+
+Current claim fee behavior:
+
+- The on-chain claim instruction accepts both user-paid and backend-paid payer-mode values.
+- The shipped backend/frontend claim path currently builds user-paid claim transactions.
+- Contributors need enough SOL for the claim transaction fee in the current UI flow.
+
+## End-to-End Demo Flow
+
+Use a small public repository and a short MVP deadline.
+
+1. Start backend and frontend locally or through Docker.
+2. Confirm `/api/health` reports `solana: true` for real on-chain flows.
+3. Open `http://localhost:5173`.
+4. Connect the sponsor wallet.
+5. Create a campaign with at least `0.5 SOL` reward amount.
+6. Sign the create-with-deposit transaction in the wallet.
+7. Let the frontend call create-confirm after transaction submission.
+8. Wait until the campaign deadline has passed.
+9. Use manual finalize or sponsor wallet finalize if auto-finalization has not completed yet.
+10. Log in through GitHub as an allocated contributor.
+11. Connect a wallet and run the claim flow.
+12. Let the backend confirm claim state from the on-chain ClaimRecord.
+
+For hackathon demos, avoid very large recipient counts. The Solana program supports batch finalization semantics, but durable backend multi-batch orchestration is not complete.
+
+## Verification Commands
+
+Backend:
 
 ```bash
-cd program
-npm ci
-anchor build
-anchor test
+cd backend
+go test ./...
 ```
 
----
+Frontend:
 
-## 6. Подключение к devnet (тестовая сеть)
+```bash
+cd frontend
+npm run build
+```
 
-Devnet — основная среда для разработки и демонстрации. SOL бесплатный.
+Program through Docker:
 
-### Backend
+```bash
+docker compose --profile deploy run --rm solana-check
+```
+
+Compose syntax check:
+
+```bash
+docker compose config
+```
+
+## Troubleshooting
+
+### Backend starts, but Solana actions are unavailable
+
+Check `/api/health`. If `solana` is `false`, set both:
 
 ```env
-SOLANA_RPC_URL=https://api.devnet.solana.com
+SERVICE_PRIVATE_KEY=<service-wallet-private-key>
+PROGRAM_ID=<deployed-program-id>
 ```
 
-### Frontend
+The backend intentionally disables real on-chain transaction endpoints when Solana is not configured.
 
-В `frontend/src/main.tsx` (уже настроено по умолчанию):
-```typescript
-const endpoint = clusterApiUrl("devnet");
-```
+### `JWT_SECRET` error in production
 
-### Solana CLI
-
-```bash
-solana config set --url https://api.devnet.solana.com
-```
-
-### Получение тестовых SOL
-
-```bash
-# Через CLI
-solana airdrop 5
-
-# Через faucet (если CLI лимитирует)
-# https://faucet.solana.com
-```
-
-### Phantom Wallet
-
-1. Открой Phantom → Settings → Developer Settings
-2. Включи **Testnet Mode**
-3. Выбери **Solana Devnet**
-4. Запроси SOL через faucet в Phantom или через CLI
-
-### Просмотр транзакций
-
-Все транзакции видны на [Solana Explorer (devnet)](https://explorer.solana.com/?cluster=devnet).
-
----
-
-## 7. Подключение к mainnet-beta (основная сеть)
-
-> **Внимание:** на mainnet используются реальные SOL. Убедись, что контракт протестирован на devnet.
-
-### 7.1. Backend
-
-```env
-SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
-```
-
-Для продакшена рекомендуется платный RPC (Helius, QuickNode, Alchemy):
-```env
-SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
-```
-
-### 7.2. Frontend
-
-Измени `frontend/src/main.tsx`:
-```typescript
-// Было:
-const endpoint = clusterApiUrl("devnet");
-
-// Стало (публичный RPC):
-const endpoint = clusterApiUrl("mainnet-beta");
-
-// Или кастомный RPC:
-const endpoint = "https://mainnet.helius-rpc.com/?api-key=YOUR_KEY";
-```
-
-### 7.3. Деплой программы на mainnet
-
-```bash
-# Переключи CLI
-solana config set --url https://api.mainnet-beta.solana.com
-
-# Убедись, что на кошельке деплойера достаточно SOL (~3-5 SOL)
-solana balance
-
-# Деплой
-cd program
-anchor deploy --provider.cluster mainnet
-```
-
-### 7.4. Обнови Anchor.toml
-
-```toml
-[programs.mainnet]
-repobounty = "<PROGRAM_ID>"
-
-[provider]
-cluster = "mainnet"
-```
-
-### 7.5. Phantom Wallet
-
-1. Отключи Testnet Mode в настройках Phantom
-2. Сеть автоматически переключится на mainnet
-
-### 7.6. Чеклист перед mainnet
-
-- [ ] Все тесты проходят на devnet
-- [ ] Полный e2e flow протестирован (create → fund → finalize → claim)
-- [ ] Программа проверена на уязвимости (overflow, authority checks, PDA seed collisions)
-- [ ] Backend authority keypair в безопасном хранилище (не в git!)
-- [ ] Rate limiting включен
-- [ ] CORS ограничен вашим доменом
-- [ ] HTTPS настроен на фронтенде и бэкенде
-
----
-
-## 8. Полный e2e flow
-
-Пошаговая проверка всего сценария:
-
-### 1. Запуск
-
-```bash
-# Терминал 1: backend
-cd backend && go run ./cmd/api
-
-# Терминал 2: frontend
-cd frontend && npm run dev
-```
-
-### 2. Настройка Phantom
-
-- Откройте Phantom в браузере
-- Переключитесь на Devnet
-- Запросите SOL: `solana airdrop 5 <ваш_phantom_адрес>`
-
-### 3. Создание кампании
-
-1. Откройте http://localhost:3000
-2. Подключите Phantom wallet (кнопка Connect Wallet)
-3. Нажмите Create Campaign
-4. Заполните: репозиторий (`owner/repo`), сумма (SOL), дедлайн (мин. 15 мин от текущего времени)
-5. Подтвердите создание → на шаге 2 подпишите транзакцию funding через Phantom
-
-### 4. Ожидание дедлайна
-
-- Auto-finalize worker проверяет кампании каждые 5 минут
-- Или дождитесь дедлайна и нажмите Finalize вручную на странице кампании
-
-### 5. Finalize
-
-- Backend собирает GitHub данные → AI распределяет → транзакция finalize на Solana
-- Кампания переходит в статус Finalized
-- Аллокации видны на странице кампании
-
-### 6. Claim
-
-1. Залогиньтесь через GitHub (Login with GitHub)
-2. Привяжите wallet на странице Profile
-3. Перейдите на страницу кампании или Profile
-4. Нажмите Claim → SOL переведутся из vault на ваш кошелек
-
-### 7. Проверка
-
-```bash
-# Баланс vault (должен уменьшиться)
-solana balance <vault_pda_address>
-
-# Баланс получателя (должен увеличиться)
-solana balance <contributor_wallet>
-```
-
----
-
-## 9. Устранение проблем
-
-### Backend не стартует
-
-```
-Error: failed to parse SERVICE_PRIVATE_KEY
-```
-→ Проверь формат ключа. Должен быть Base58 строка или JSON массив `[u8,u8,...]`.
-
-### "Mock mode" в логах
-
-```
-Using mock Solana client
-```
-→ `SERVICE_PRIVATE_KEY` или `PROGRAM_ID` не заданы. Задай их для реальных on-chain транзакций.
-
-### anchor build fails
-
-```
-error: package `solana-program v...` not found
-```
-→ Проверь `rust-toolchain.toml` в `program/`. Для текущего Docker flow используется Rust 1.85.0 и совместимый Solana/Anchor toolchain внутри контейнера.
-
-### Phantom не подключается
-
-→ Убедись, что Phantom на правильной сети (Devnet vs Mainnet). В testnet mode Phantom не видит mainnet.
-
-### Transaction simulation failed
-
-```
-Error: Blockhash not found
-```
-→ Devnet иногда нестабильна. Повтори через 5-10 секунд или используй кастомный RPC.
-
-### "Insufficient funds"
-
-```
-Transfer: insufficient lamports
-```
-→ Пополни кошелек: `solana airdrop 5` (devnet) или переведи SOL (mainnet).
-
-### CORS ошибки
-
-→ Проверь `ALLOWED_ORIGINS` в `.env`. Для локальной разработки должно быть `http://localhost:3000,http://localhost:5173`.
+Production requires `JWT_SECRET` and it must be at least 32 characters.
 
 ### GitHub OAuth redirect mismatch
 
-→ Authorization callback URL в настройках GitHub OAuth App должен совпадать с `{FRONTEND_URL}/auth/callback`.
+The GitHub OAuth App callback URL must match:
+
+```text
+<FRONTEND_URL>/auth/callback
+```
+
+For local Vite development, use:
+
+```text
+http://localhost:5173/auth/callback
+```
+
+### CORS errors
+
+In development, the backend allows `http://localhost:3000` and `http://localhost:5173`.
+
+In production, set `ALLOWED_ORIGINS` explicitly:
+
+```env
+ALLOWED_ORIGINS=https://your-domain.example
+```
+
+### Sponsor wallet has insufficient funds
+
+Campaign creation requires reward pool, service fee, account rent, and network fee. The service fee is:
+
+```text
+max(0.5% of reward_pool, 0.05 SOL)
+```
+
+Fund the wallet on devnet and retry.
+
+### Claim fails for an otherwise valid contributor
+
+Check these conditions:
+
+- Campaign must be finalized.
+- The authenticated GitHub username must match the allocation contributor.
+- The claim record must not already be claimed.
+- The claim transaction must be confirmed on-chain before `claim-confirm` succeeds.
+- The contributor wallet needs transaction-fee SOL in the current user-paid claim flow.
+
+### Finalization enters manual review
+
+The auto-finalize worker retries failed campaign-level finalization attempts and then marks campaigns as `needs_manual_review`. This does not automatically call the on-chain `close_unfinalizable_campaign` instruction in the current backend.
