@@ -188,3 +188,6 @@ TZ_*.md
 ТЗ_*.md
 
 .openspec/
+
+docs/hackathon*.md
+docs/spec*.md
