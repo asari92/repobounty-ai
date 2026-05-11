@@ -2,6 +2,16 @@ export default function About() {
   return (
     <div className="space-y-16">
       <section className="flex flex-col md:flex-row gap-8 md:gap-12 items-center animate-fade-in-up">
+        <div className="flex-1 w-full flex justify-center md:justify-end">
+          <div className="relative w-full max-w-[320px] sm:max-w-[360px] md:max-w-[390px] lg:max-w-[410px]">
+            <div className="absolute inset-8 rounded-full bg-cyan-400/10 blur-3xl" />
+            <img
+              src="/brand/enshor-about-visual.png"
+              alt="Enshor visual"
+              className="relative w-full object-contain mix-blend-screen drop-shadow-[0_0_36px_rgba(34,211,238,0.18)]"
+            />
+          </div>
+        </div>
         <div className="flex-1">
           <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-3">
             <span className="gradient-text">About Enshor</span>
@@ -14,13 +24,6 @@ export default function About() {
             repositories, analyze contributor impact with AI, and distribute
             rewards through Solana-powered on-chain claims.
           </p>
-        </div>
-        <div className="flex-1 max-w-md w-full">
-          <img
-            src="/brand/enshor-about-visual.png"
-            alt="Enshor visual"
-            className="w-full rounded-xl"
-          />
         </div>
       </section>
 
