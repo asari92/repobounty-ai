@@ -21,6 +21,115 @@ function AllocationBar({ percentage }: { percentage: number }) {
   );
 }
 
+function getErrorCode(e: unknown): string | undefined {
+  if (!(e instanceof Error)) return undefined;
+  return (e as Error & { code?: string }).code;
+}
+
+function isNetworkError(e: unknown): boolean {
+  if (e instanceof TypeError && e.message === 'Failed to fetch') return true;
+  if (e instanceof DOMException && e.name === 'AbortError') return true;
+  if (e instanceof Error && e.message === 'Request timed out') return true;
+  return false;
+}
+
+type ClaimPhase =
+  | { status: 'idle' }
+  | { status: 'wallet_prompt'; contributor: string }
+  | { status: 'tx_building'; contributor: string }
+  | { status: 'tx_confirming'; contributor: string }
+  | { status: 'confirming_backend'; contributor: string }
+  | { status: 'refetching'; contributor: string }
+  | { status: 'wallet_rejected'; contributor: string }
+  | { status: 'sync_failed'; contributor: string; message: string }
+  | { status: 'validation_error'; contributor: string; message: string };
+
+const ACTIVE_FLOW_STATES = new Set([
+  'wallet_prompt',
+  'tx_building',
+  'tx_confirming',
+  'confirming_backend',
+  'refetching',
+]);
+
+async function retryClaimConfirm(
+  campaignId: string,
+  contributor: string,
+  walletAddress: string,
+  txSignature: string
+): Promise<void> {
+  const CONFIRM_TOTAL = 5;
+  const INFRA_TOTAL = 3;
+  const confirmDelays = [1000, 2000, 4000, 8000];
+  const infraDelays = [2000, 4000];
+
+  let confirmAttempts = 0;
+  let infraAttempts = 0;
+
+  while (true) {
+    let delay = 0;
+    if (confirmAttempts > 0) {
+      delay = confirmDelays[Math.min(confirmAttempts - 1, confirmDelays.length - 1)];
+    } else if (infraAttempts > 0) {
+      delay = infraDelays[Math.min(infraAttempts - 1, infraDelays.length - 1)];
+    }
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+
+    try {
+      await api.claimConfirm(campaignId, contributor, walletAddress, txSignature);
+      return;
+    } catch (e: unknown) {
+      const code = getErrorCode(e);
+
+      if (code === 'CLAIM_ALREADY_CLAIMED') return;
+
+      if (code === 'CLAIM_NOT_CONFIRMED_ON_CHAIN') {
+        confirmAttempts++;
+        if (confirmAttempts < CONFIRM_TOTAL) continue;
+        throw e;
+      }
+
+      if (code === 'CLAIM_CHAIN_LOOKUP_FAILED' || (!code && isNetworkError(e))) {
+        infraAttempts++;
+        if (infraAttempts < INFRA_TOTAL) continue;
+        throw e;
+      }
+
+      throw e;
+    }
+  }
+}
+
+async function refetchCampaign(id: string): Promise<Campaign | null> {
+  const MAX = 3;
+  const delay = 500;
+  for (let i = 0; i < MAX; i++) {
+    try {
+      return await api.getCampaign(id);
+    } catch {
+      if (i < MAX - 1) await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  return null;
+}
+
+function claimStatusMessage(status: ClaimPhase['status']): string | null {
+  switch (status) {
+    case 'wallet_prompt':
+      return 'Signing message...';
+    case 'tx_building':
+      return 'Building transaction...';
+    case 'tx_confirming':
+      return 'Confirming on-chain...';
+    case 'confirming_backend':
+      return 'Finalizing claim...';
+    case 'refetching':
+      return 'Claim confirmed. Refreshing latest data...';
+    default:
+      return null;
+  }
+}
+
 export default function CampaignDetails() {
   const { id } = useParams<{ id: string }>();
   const { connection } = useConnection();
@@ -32,7 +141,7 @@ export default function CampaignDetails() {
   const [loading, setLoading] = useState(true);
   const [finalizing, setFinalizing] = useState(false);
   const [previewing, setPreviewing] = useState(false);
-  const [claiming, setClaiming] = useState<string | null>(null);
+  const [claimPhase, setClaimPhase] = useState<ClaimPhase>({ status: 'idle' });
   const [sponsorFinalizing, setSponsorFinalizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [solanaReady, setSolanaReady] = useState(true);
@@ -152,56 +261,122 @@ export default function CampaignDetails() {
       setError('Claims are unavailable until backend is connected to Solana.');
       return;
     }
-    setClaiming(contributor);
-    setError(null);
+
+    const walletAddress = publicKey.toBase58();
+    setClaimPhase({ status: 'wallet_prompt', contributor });
+
     try {
       const challenge = await api.claimChallenge(id, {
         contributor_github: contributor,
-        wallet_address: publicKey.toBase58(),
+        wallet_address: walletAddress,
       });
-      const signatureBytes = await signMessage(new TextEncoder().encode(challenge.message));
-      const claimTx = await api.claimAllocation(
-        id,
-        contributor,
-        publicKey.toBase58(),
-        challenge.challenge_id,
-        bs58.encode(signatureBytes)
-      );
+
+      let signatureBytes: Uint8Array;
+      try {
+        signatureBytes = await signMessage(new TextEncoder().encode(challenge.message));
+      } catch {
+        setClaimPhase({ status: 'wallet_rejected', contributor });
+        return;
+      }
+
+      setClaimPhase({ status: 'tx_building', contributor });
+
+      let claimTx: { partial_tx: string };
+      try {
+        claimTx = await api.claimAllocation(
+          id,
+          contributor,
+          walletAddress,
+          challenge.challenge_id,
+          bs58.encode(signatureBytes)
+        );
+      } catch (e: unknown) {
+        const code = getErrorCode(e);
+        if (code === 'CLAIM_ALREADY_CLAIMED') {
+          setClaimedContributors((prev) => ({ ...prev, [contributor]: true }));
+          setClaimPhase({ status: 'refetching', contributor });
+          const refreshed = await refetchCampaign(id);
+          if (refreshed) setCampaign(refreshed);
+          setClaimPhase({ status: 'idle' });
+          return;
+        }
+        setClaimPhase({
+          status: 'validation_error',
+          contributor,
+          message: e instanceof Error ? e.message : 'Failed to build claim transaction',
+        });
+        return;
+      }
+
       const txBytes = bs58.decode(claimTx.partial_tx);
       const transaction = Transaction.from(txBytes);
-      const signedTransaction = await signTransaction(transaction);
-      const txSignature = await connection.sendRawTransaction(signedTransaction.serialize());
-      await connection.confirmTransaction(txSignature, 'confirmed');
-      await api.claimConfirm(id, contributor, publicKey.toBase58(), txSignature);
-      const updated = await api.getCampaign(id);
-      setCampaign(updated);
-      setClaimedContributors((prev) => ({ ...prev, [contributor]: true }));
-    } catch (e: unknown) {
-      let msg = 'Claim failed';
-      if (e instanceof Error) {
-        const code = (e as Error & { code?: string }).code;
-        if (code === 'CLAIM_ALREADY_CLAIMED') {
-          msg = 'You have already claimed your reward for this campaign.';
-          try {
-            const updated = await api.getCampaign(id);
-            setCampaign(updated);
-          } catch {
-            // ignore refresh error
-          }
-          setClaimedContributors((prev) => ({ ...prev, [contributor]: true }));
-        } else if (
-          e.message.includes('ClaimAlreadyClaimed') ||
-          e.message.includes('already claimed')
-        ) {
-          msg = 'You have already claimed your reward for this campaign.';
-          setClaimedContributors((prev) => ({ ...prev, [contributor]: true }));
-        } else {
-          msg = e.message;
-        }
+
+      let signedTransaction: typeof transaction;
+      try {
+        signedTransaction = await signTransaction(transaction);
+      } catch {
+        setClaimPhase({ status: 'wallet_rejected', contributor });
+        return;
       }
-      setError(msg);
-    } finally {
-      setClaiming(null);
+
+      const txSignature = await connection.sendRawTransaction(signedTransaction.serialize());
+
+      setClaimPhase({ status: 'tx_confirming', contributor });
+
+      try {
+        await connection.confirmTransaction(txSignature, 'confirmed');
+      } catch {
+        setClaimPhase({
+          status: 'sync_failed',
+          contributor,
+          message:
+            'Confirmation is taking longer than expected. Your claim may still be processing.',
+        });
+        return;
+      }
+
+      setClaimedContributors((prev) => ({ ...prev, [contributor]: true }));
+      setClaimPhase({ status: 'confirming_backend', contributor });
+
+      try {
+        await retryClaimConfirm(id, contributor, walletAddress, txSignature);
+      } catch (e: unknown) {
+        const code = getErrorCode(e);
+        if (code === 'CLAIM_WALLET_MISMATCH') {
+          const refreshed = await refetchCampaign(id);
+          if (refreshed) {
+            setCampaign(refreshed);
+            const alloc = refreshed.allocations?.find((a) => a.contributor === contributor);
+            if (alloc?.claimed) {
+              setClaimPhase({ status: 'idle' });
+              return;
+            }
+          }
+          setClaimPhase({
+            status: 'sync_failed',
+            contributor,
+            message: 'This reward was claimed to a different wallet.',
+          });
+          return;
+        }
+        setClaimPhase({
+          status: 'sync_failed',
+          contributor,
+          message: 'Your claim was submitted and is being confirmed. Refresh the page to check your status.',
+        });
+        return;
+      }
+
+      setClaimPhase({ status: 'refetching', contributor });
+      const refreshed = await refetchCampaign(id);
+      if (refreshed) setCampaign(refreshed);
+      setClaimPhase({ status: 'idle' });
+    } catch (e: unknown) {
+      setClaimPhase({
+        status: 'validation_error',
+        contributor,
+        message: e instanceof Error ? e.message : 'An unexpected error occurred',
+      });
     }
   }
 
@@ -499,7 +674,8 @@ export default function CampaignDetails() {
           <div className="space-y-2">
             {campaign.allocations.map((a) => {
               const isOwnAllocation = user?.github_username === a.contributor;
-              const isCurrentlyClaiming = claiming === a.contributor;
+              const isActiveClaim =
+                claimPhase.status !== 'idle' && claimPhase.contributor === a.contributor;
 
               return (
                 <div
@@ -523,37 +699,78 @@ export default function CampaignDetails() {
                   </div>
                   <AllocationBar percentage={a.percentage} />
                   {a.reasoning && <p className="text-[10px] text-gray-600 mt-1">{a.reasoning}</p>}
+                  {a.claimed && a.claimant_wallet && (
+                    <p className="text-[10px] text-gray-600 mt-1 font-mono">
+                      → {a.claimant_wallet.slice(0, 8)}...{a.claimant_wallet.slice(-8)}
+                    </p>
+                  )}
                   {isOwnAllocation && !a.claimed && !claimedContributors[a.contributor] && (
                     <div className="mt-2 pt-2 border-t border-solana-border/30">
-                      {!publicKey ? (
+                      {isActiveClaim &&
+                        ACTIVE_FLOW_STATES.has(claimPhase.status) && (
+                          <p className="text-xs text-gray-400">
+                            {claimStatusMessage(claimPhase.status)}
+                          </p>
+                        )}
+                      {isActiveClaim && claimPhase.status === 'sync_failed' && (
+                        <p className="text-xs text-yellow-300">{claimPhase.message}</p>
+                      )}
+                      {isActiveClaim &&
+                        claimPhase.status === 'wallet_rejected' && (
+                          <div className="space-y-1.5">
+                            <p className="text-xs text-gray-400">Transaction was not approved.</p>
+                            <button
+                              onClick={() => handleClaim(a.contributor)}
+                              className="btn-primary text-[10px] !py-1 !px-3"
+                            >
+                              Claim {formatSOL(a.amount)} SOL
+                            </button>
+                          </div>
+                        )}
+                      {isActiveClaim &&
+                        claimPhase.status === 'validation_error' && (
+                          <div className="space-y-1.5">
+                            <p className="text-xs text-red-400">{claimPhase.message}</p>
+                            <button
+                              onClick={() => handleClaim(a.contributor)}
+                              className="btn-primary text-[10px] !py-1 !px-3"
+                            >
+                              Claim {formatSOL(a.amount)} SOL
+                            </button>
+                          </div>
+                        )}
+                      {!isActiveClaim && !publicKey && (
                         <button
                           onClick={() => setVisible(true)}
                           className="btn-primary text-[10px] !py-1 !px-3"
                         >
                           Connect Wallet
                         </button>
-                      ) : !solanaReady ? (
+                      )}
+                      {!isActiveClaim && publicKey && !solanaReady && (
                         <button disabled className="btn-primary text-[10px] !py-1 !px-3 opacity-50">
                           Solana Required
                         </button>
-                      ) : (
+                      )}
+                      {!isActiveClaim && publicKey && solanaReady && (
                         <button
                           onClick={() => handleClaim(a.contributor)}
-                          disabled={
-                            isCurrentlyClaiming || a.claimed || claimedContributors[a.contributor]
-                          }
+                          disabled={ACTIVE_FLOW_STATES.has(claimPhase.status)}
                           className="btn-primary text-[10px] !py-1 !px-3"
                         >
-                          {isCurrentlyClaiming ? 'Claiming...' : `Claim ${formatSOL(a.amount)} SOL`}
+                          Claim {formatSOL(a.amount)} SOL
                         </button>
                       )}
                     </div>
                   )}
-                  {a.claimed && a.claimant_wallet && (
-                    <p className="text-[10px] text-gray-600 mt-1 font-mono">
-                      → {a.claimant_wallet.slice(0, 8)}...{a.claimant_wallet.slice(-8)}
-                    </p>
-                  )}
+                  {isOwnAllocation &&
+                    !a.claimed &&
+                    claimedContributors[a.contributor] &&
+                    !isActiveClaim && (
+                      <p className="text-xs text-gray-400 mt-2 pt-2 border-t border-solana-border/30">
+                        Claim confirmed.
+                      </p>
+                    )}
                 </div>
               );
             })}
