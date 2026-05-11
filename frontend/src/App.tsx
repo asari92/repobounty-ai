@@ -5,6 +5,7 @@ import Home from './pages/Home';
 import CreateCampaign from './pages/CreateCampaign';
 import CampaignDetails from './pages/CampaignDetails';
 import Profile from './pages/Profile';
+import About from './pages/About';
 import { AuthProvider } from './hooks/useAuth';
 import { AuthCallback } from './components/AuthCallback';
 
@@ -34,6 +35,7 @@ export default function App() {
             <Route path="/create" element={<CreateCampaign />} />
             <Route path="/campaign/:id" element={<CampaignDetails />} />
             <Route path="/profile" element={<Profile />} />
+            <Route path="/about" element={<About />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
