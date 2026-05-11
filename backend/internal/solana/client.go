@@ -392,7 +392,9 @@ func (c *Client) GetClaimStatus(
 		return nil, fmt.Errorf("derive claim record PDA: %w", err)
 	}
 
-	account, err := c.rpcClient.GetAccountInfo(ctx, claimRecordPDA)
+	account, err := c.rpcClient.GetAccountInfoWithOpts(ctx, claimRecordPDA, &rpc.GetAccountInfoOpts{
+		Commitment: rpc.CommitmentConfirmed,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get claim record: %w", err)
 	}
