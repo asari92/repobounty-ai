@@ -11,20 +11,20 @@
   <img src="https://img.shields.io/badge/Status-MVP-blue" alt="MVP" />
 </p>
 
-> Escrow-backed GitHub reward campaigns on Solana.  
-> Sponsors lock SOL upfront, contributor reward rights are finalized on-chain, and contributors can claim later with the wallet they choose for that campaign.
+> Transparent funding for open-source contributors.  
+> Sponsors lock SOL upfront, reward rights are finalized on-chain, and contributors claim their share through a verifiable, deadline-driven flow.
 
 <p align="center">
   <a href="https://enshor.duckdns.org/">Live App</a>
   ·
-  <a href="https://youtu.be/oIxKo_K1Q0E">Video Walkthrough</a>
+  <a href="https://www.youtube.com/watch?v=RNdNvIYouGk">Video Walkthrough</a>
 </p>
 
 ---
 
 ## Submission
 
-Enshor is being prepared as a submission for the **Solana Frontier Hackathon by Colosseum**.
+Enshor is a submission to the **Solana Frontier Hackathon by Colosseum**.
 
 | Name | Role |
 |------|------|
@@ -32,70 +32,156 @@ Enshor is being prepared as a submission for the **Solana Frontier Hackathon by 
 
 ---
 
-## Problem and Solution
+## The Problem
 
-### 1. Manual reward distribution is subjective
-- **Problem:** Sponsors and maintainers often decide rewards manually, which makes the process inconsistent, opaque, and hard to verify.
-- **Enshor:** Uses GitHub repository activity with backend allocation logic, including AI-assisted scoring with deterministic fallback, to generate a structured reward distribution flow.
+Open-source produces enormous value, but the way contributors get paid still lags behind the work itself. Funding is informal, payout decisions are hard to defend, and the whole process leaks trust at every step:
 
-### 2. Funding is often not locked upfront
-- **Problem:** A sponsor can promise rewards without actually securing funds, which weakens trust for contributors.
-- **Enshor:** Creates campaign-linked SOL escrow on Solana so campaign funding is committed on-chain from the start.
+- rewards get promised but rarely locked,
+- contribution-based payouts are hard to justify and easy to dispute,
+- contributors may not have a wallet — or even know they will be paid — when the work happens,
+- maintainers and sponsors end up running payout logistics by hand.
 
-### 3. Contributors need transparent payout rights
-- **Problem:** Even if contributors are selected fairly, they still need a reliable way to verify and claim rewards.
-- **Enshor:** Finalizes allocations on-chain and allows contributors to claim later through a GitHub-authenticated flow plus wallet signing.
+The result is a funding layer that depends on goodwill and spreadsheets rather than verifiable commitments.
 
-### 4. Open-source reward programs do not scale well
-- **Problem:** Running reward campaigns across repositories becomes operationally heavy when review, accounting, and payout are all manual.
-- **Enshor:** Combines GitHub identity, backend orchestration, allocation logic, and Solana claim bookkeeping into one deadline-based workflow.
+## The Approach
+
+Enshor turns reward distribution into a structured, on-chain flow:
+
+1. a sponsor opens a campaign for a public repository,
+2. the reward pool is locked on-chain in SOL at creation,
+3. after the deadline, contributor reward rights are finalized on-chain from contribution data,
+4. contributors authenticate and claim their share with any wallet they choose,
+5. any unclaimed funds can be returned to the sponsor after the claim window closes.
+
+The funding commitment, finalized reward rights, and payout results are all recorded on-chain.
+
+---
+
+## Why Open Source First
+
+Open-source repositories are the cleanest starting point for contribution-based funding. The work is public, the history is inspectable, and "who contributed what" is a question that can be answered with data instead of opinion.
+
+Open source also has a sustainability problem: the projects that the rest of the industry depends on are largely maintained by people whose compensation does not match the value of the work. Funding exists — through sponsorships, grants, and corporate budgets — but it rarely reaches the contributors who actually move a project forward, and when it does, the path is manual and opaque.
+
+Enshor is designed to help open-source teams move funding out of private chats and ad-hoc transfers into something legible:
+
+- funding is committed up front, not promised,
+- contributor reward rights become fixed on-chain after the deadline,
+- payout happens through a verifiable claim,
+- sponsor refunds are delayed until the claim window ends, so the commitment is real.
+
+The same primitives generalize to bounties, grants, and contribution-weighted payouts beyond OSS, but open source is where transparency matters most and where it is easiest to deliver.
+
+---
+
+## What Enshor Changes in Open-Source Contribution
+
+Enshor is built around a simple bet: making the funding side of open-source contribution as legible and durable as the code itself will let more people sustain the work. To do that, contribution has to be a first-class object — visible, attributable, and rewardable — without forcing the people doing the work to also run the payout logistics.
+
+### For contributors
+
+- Work is recognized through a structured allocation grounded in repository data, not a private decision.
+- No wallet is required at the time of contribution. The right to a reward exists first; the wallet attaches when the contributor is ready to claim.
+- Claims are self-serve: a contributor authenticates with GitHub, sees what is owed, and claims when convenient. No DMs, no "send me your address" threads.
+- Every claim leaves an on-chain record, building a verifiable trail of paid contribution history that lives outside any single platform.
+
+### For maintainers
+
+- Reward decisions move from spreadsheets and side channels into a transparent process anchored on actual contribution data.
+- Allocation logic is consistent across campaigns, with AI-assisted scoring and a deterministic fallback for reproducibility.
+- The operational tax of running a payout — collecting wallets, chasing signatures, splitting transfers, handling no-shows — is replaced by a single deadline-driven flow.
+- Recognition becomes routine rather than ceremonial: campaigns can recur, and contributors who do not respond to one campaign are not lost from future ones.
+
+### For sponsors
+
+- Funding is committed up front and locked on-chain, not promised in a Discord channel.
+- The reward pool, service fee, and refund window are all enforced by the program, not by trust in the recipient.
+- Unclaimed balances can be returned to the sponsor after the claim deadline, so commitments do not become open-ended liabilities.
+- Sponsorship leaves a public, structured record — a useful signal for companies that want to demonstrate real support for the projects they depend on.
+
+### For the ecosystem
+
+- Contribution and payout share the same ledger as the original commitment, so the question "did anyone actually get paid for this work?" stops being a matter of taking someone's word.
+- Over time, finalized campaigns and claim history could become a useful public signal of paid contribution history — portable, verifiable, and independent of any single platform's metrics.
 
 ---
 
 ## Why Solana
 
-- **Speed:** campaign funding, finalization, and claims need fast confirmation for a usable contributor experience.
-- **Low cost:** Enshor may require multiple on-chain actions per campaign, so transaction cost matters.
-- **Deterministic state:** PDAs are a clean fit for campaigns, escrow vaults, and claim records.
-- **Wallet UX:** sponsor funding and contributor claims work naturally with standard Solana wallet flows.
+Solana is the execution layer that makes this MVP practical:
 
-For Enshor, Solana is not an add-on. It is the execution layer that makes escrow-backed and verifiable contributor rewards practical.
+- campaign funds are locked on-chain at creation,
+- reward pool and service fee are separated cleanly,
+- finalized claim rights are stored per contributor,
+- claims confirm fast and at low cost,
+- double claims are prevented by the program,
+- refund timing is enforced on-chain rather than by a backend cron.
 
----
-
-## Summary of Features
-
-- Sponsor-funded reward campaigns for public GitHub repositories
-- SOL escrow and campaign state on Solana
-- GitHub OAuth for authenticated user flows
-- Allocation pipeline based on GitHub activity
-- AI-assisted scoring with deterministic fallback
-- Finalize-preview and finalize flows aligned with the same allocation logic
-- Contributor claim flow after campaign finalization
-- Backend + on-chain separation of responsibilities for MVP delivery
+A defining property of Enshor: reward rights are finalized by `github_user_id`, while the payout wallet is chosen later at claim time. A contributor does not need a wallet — or even an account — at the moment funding is committed. The right exists first; the wallet attaches when the contributor is ready.
 
 ---
 
-## What Ships in the MVP
+## Current MVP Flow
 
-Enshor currently supports this deadline-based flow:
+The repository implements this end-to-end path:
 
-1. Sponsor connects a Solana wallet.
-2. Sponsor creates a campaign for a public GitHub repository.
-3. Backend validates the repository and builds a create-with-deposit transaction.
-4. Sponsor signs and sends the transaction.
-5. After the deadline, allocations are calculated and finalized on-chain.
-6. Contributors authenticate with GitHub, connect a wallet, and claim rewards.
-
-The backend acts as the trust layer for GitHub identity, allocation orchestration, and claim transaction preparation. The Solana program enforces campaign state, escrow, deadlines, allocation bookkeeping, and claim tracking.
+1. Sponsor creates a campaign for a public repository.
+2. Backend validates the repository and builds a Solana create-with-deposit transaction.
+3. Sponsor signs the transaction in the frontend.
+4. Backend confirms the on-chain campaign and stores off-chain metadata.
+5. After the deadline, the backend computes allocations from contribution data using AI-assisted scoring with deterministic fallback.
+6. Backend finalizes allocations on-chain by creating claim records.
+7. A contributor authenticates, sees available claims in their profile, connects a wallet, and requests a claim transaction.
+8. The contributor signs and submits the claim transaction.
+9. Backend confirms the claim against on-chain claim-record state.
+10. After the claim deadline, the sponsor can refund any unclaimed balance.
 
 ---
 
-## Why Enshor Is Interesting
+## Core Properties
 
-A key property of the MVP is that contributor reward rights are finalized by **GitHub user identity**, while the actual recipient wallet can be chosen later at claim time.
+- sponsor-funded reward campaigns for public repositories
+- SOL escrow at campaign creation
+- separated reward pool and service fee
+- contributor reward rights fixed on-chain after finalization
+- claim records keyed by contributor identity, not by wallet
+- GitHub-authenticated claim flow
+- on-chain double-claim protection
+- delayed sponsor refund window
+- AI-assisted allocation with deterministic fallback
+- full create → finalize → claim path on devnet
 
-That means a contributor does **not** need to have a wallet when the campaign is created or finalized. The payout right exists first, and the wallet gets attached when the contributor is ready to claim.
+---
+
+## Architecture
+
+```text
+Frontend (React + Wallet Adapter)
+        |
+        v
+Backend (Go API, OAuth/JWT, contribution fetches, allocation logic, SQLite)
+        |
+        v
+Solana Program (Anchor)
+```
+
+### On-chain responsibilities
+- campaign account and status
+- escrow PDA for locked reward funds
+- claim records keyed by campaign and `github_user_id`
+- service fee transfer
+- deadline enforcement
+- claim invariants
+- refund invariants
+- admin config and pause controls
+
+### Off-chain responsibilities
+- repository validation
+- contributor identity and authentication
+- contribution data collection
+- allocation logic
+- transaction construction and orchestration
+- UI state and off-chain campaign metadata
 
 ---
 
@@ -113,48 +199,17 @@ That means a contributor does **not** need to have a wallet when the campaign is
 
 ---
 
-## Architecture
-
-```text
-Frontend (React + Wallet)
-        |
-        v
-Backend (Go API, GitHub OAuth/JWT, GitHub fetches, allocation logic, SQLite)
-        |
-        v
-Solana Program (Anchor)
-```
-
-### On-chain responsibilities
-- campaign account and status
-- escrow PDA for locked reward funds
-- claim records keyed by campaign and `github_user_id`
-- service fee transfer
-- deadline enforcement
-- claim invariants
-- refund invariants
-- admin config and pause controls
-
-### Off-chain responsibilities
-- GitHub OAuth and session handling
-- public repository validation
-- repository data collection
-- allocation logic
-- transaction construction and orchestration
-- UI state and off-chain campaign metadata
-
----
-
-## Current Demo Path
+## Demo Path
 
 Best live demo path:
 
-1. Create a campaign for a small public GitHub repository.
+1. Create a campaign for a small public repository.
 2. Lock SOL on devnet at campaign creation.
 3. Finalize allocations after the deadline.
-4. Log in as an allocated GitHub user.
-5. Connect a wallet and claim.
-6. Show the claim state update after backend confirmation of the on-chain claim record.
+4. Log in as an allocated contributor.
+5. Show available claims in profile.
+6. Connect a wallet and claim.
+7. Show the claim state update after backend confirmation of the on-chain claim record.
 
 ---
 
@@ -183,7 +238,7 @@ Copy and configure the root environment file:
 cp .env.example .env
 ```
 
-Typical runtime values include:
+Typical runtime values:
 
 ```env
 JWT_SECRET=change-me-to-a-random-string-at-least-32-chars
@@ -225,21 +280,13 @@ Then open:
 - Frontend: `http://localhost:5173`
 - Backend API: `http://localhost:8080`
 
-### Contract already deployed
-
-If you already have a deployed program, set `PROGRAM_ID` in `.env` and run:
-
-```bash
-./start.sh
-```
-
 ### Local build, test, and deploy check
 
 ```bash
 docker compose --profile deploy run --rm solana-check
 ```
 
-### Real devnet deploy
+### Devnet deploy
 
 ```bash
 docker compose --profile deploy run --rm solana-deployer
@@ -260,15 +307,6 @@ docs/            supporting documentation
 
 ---
 
-## Demo Resources
-
-- Live App
-- Video Walkthrough
-- Devnet deployment
-- Supporting docs in `docs/`
-
----
-
 ## One-Line Summary
 
-**Enshor is an escrow-backed GitHub reward campaign MVP: sponsors lock SOL upfront, backend logic produces contributor allocations, and a Solana program enforces claim rights, double-claim protection, and delayed refunds.**
+**Enshor brings transparent funding to open-source contributors: sponsors lock SOL upfront, reward rights are finalized on-chain, and payouts happen through a verifiable claim flow.**
